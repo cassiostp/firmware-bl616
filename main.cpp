@@ -33,6 +33,8 @@ extern "C" {
 #include "overlay.h"
 #include "init.h"
 #include "menu_manager.h"
+#include "settings.h"
+#include "game_controls.h"
 
 // Uncomment this to enable UART console (use with caution. it may interfere with MCU-FPGA communication)
 #define UART_CONSOLE
@@ -93,6 +95,11 @@ USB_NOCACHE_RAM_SECTION BYTE __attribute__((aligned(64))) fbuf[BLOCK_SIZE];
 FRESULT res_sd;
 FileChooser file_chooser;
 
+// The game that is running, so MODE and the reset combo can reload it
+static struct core_info *last_core;     // NULL if no ROM was loaded
+static string last_rom;
+static string last_core_file;           // bitstream of the running core
+
 // #define PAGESIZE 22
 // #define TOPLINE 2
 // #define PWD_SIZE 1024
@@ -105,6 +112,44 @@ FileChooser file_chooser;
 
 /////////////////////////////////////////////////////////////////////////////////
 // Menu display and user interaction
+
+// Load `rom` on `core`, programming the core's bitstream first if it isn't
+// running (or always, with force_program). Returns 1 if the ROM was loaded,
+// -1 on error.
+static int load_game(core_info *core, const string &rom, bool force_program) {
+    active_core = get_core_id();
+
+    if (force_program || active_core != core->id) {
+        string fname_core;
+        if (find_core_for_board(fname_core, core->core_file)) {
+            fpga_program(fname_core.c_str());
+            last_core_file = fname_core;
+            core_running = false;           // new bitstream, nothing loaded yet
+            _overlay_on = 1;
+
+            // allow 2 seconds for core to start
+            uint64_t start = bflb_mtimer_get_time_ms();
+            while (bflb_mtimer_get_time_ms() - start < 2000) {
+                send_blank_packet();
+                active_core = get_core_id();
+                if (active_core == core->id)
+                    break;
+            }
+        }
+    }
+
+    if (active_core == core->id) {
+        overlay_status("Loading ROM: %s\n", rom.c_str());
+        last_core = core;
+        last_rom = rom;
+        core->load_rom(rom.c_str());
+        return 1;
+    } else {
+        overlay_status("Core failed to load\n");
+        delay(1000);
+        return -1;
+    }
+}
 
 // Menus for "NES", "SNES" ... entries
 // dir: initial dir including the drive name (e.g. "sd:nes", "usb:cores")
@@ -128,6 +173,10 @@ static int menu_loadrom(const char *dir) {
     if (fname.find(string(drv) + "cores") == 0) {
         overlay_status("Core: %s", fname.c_str());
         fpga_program(fname.c_str());
+        last_core = NULL;
+        last_rom.clear();
+        last_core_file = fname;
+        core_running = false;
         _overlay_on = 1;                // turn on overlay after core is loaded
         return 0;       // return to main menu
     } 
@@ -148,45 +197,7 @@ static int menu_loadrom(const char *dir) {
         return -1;
     }
 
-    // user chose a ROM file
-    active_core = get_core_id();
-
-    // load core if needed
-    if (core != NULL) {
-        if (active_core != core->id) {      // active core is not what we need
-            string fname_core;
-            if (find_core_for_board(fname_core, core->core_file)) {
-                // load core
-                fpga_program(fname_core.c_str());
-                _overlay_on = 1;
-
-                // allow 2 seconds for core to start
-                uint64_t start = bflb_mtimer_get_time_ms();
-                while (bflb_mtimer_get_time_ms() - start < 2000) {
-                    send_blank_packet();
-                    active_core = get_core_id();
-                    if (active_core == core->id)
-                        break;
-                }
-            } 
-        }
-
-        // Attemp to load ROM
-        if (active_core == core->id) {
-            overlay_status("Loading ROM: %s\n", fname.c_str());
-            core->load_rom(fname.c_str());
-            return 1;
-        } else {
-            overlay_status("Core failed to load\n");
-            delay(1000);
-            return -1;
-        }
-    }
-    return -1;
-}
-
-static void menu_options(void) {
-    // to be implemented
+    return load_game(core, fname, false);
 }
 
 // keep sending HID state to core until OSD is turned on
@@ -194,6 +205,7 @@ static void send_hid_to_core(void) {
     uint16_t hid1_old = 0, hid2_old = 0;
     bool first = true;
     dprint("Start sending HID to core...");
+    game_watch_start(active_core);
     while (1) {
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
@@ -211,6 +223,8 @@ static void send_hid_to_core(void) {
             break;
         }
         if (overlay_on())      // turned off by keyboard
+            break;
+        if (game_watch_poll(joy1 | hid1, joy2 | hid2))     // combo or MODE
             break;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -377,6 +391,62 @@ static void uart1_rx_task(void *pvParameters)
     }
 }
 
+// Reprogram the running game's core and reload its ROM. Used after MODE
+// reloaded the FPGA from flash, which drops the game.
+static void reload_game(void) {
+    overlay(1);
+    if (last_core) {
+        load_game(last_core, last_rom, true);
+    } else if (!last_core_file.empty()) {   // a core loaded from Cores, no ROM
+        fpga_program(last_core_file.c_str());
+        core_running = false;
+        _overlay_on = 1;
+        active_core = get_core_id();
+    }
+}
+
+// Reset the running game. Falls back to a full reload.
+static void reset_game(void) {
+    if (!last_core && last_core_file.empty())
+        return;                             // nothing running
+    reload_game();
+}
+
+// Act on a combo or MODE press seen while a game was running.
+// Returns true if the main menu should be redrawn.
+static bool handle_game_action(void) {
+    GameAction action = pending_action;
+    pending_action = ACTION_NONE;
+    switch (action) {
+    case ACTION_MENU:
+        menu_clear();
+        // ask twice, so one dropped reply doesn't reprogram the FPGA
+        if (get_core_id() != active_core && get_core_id() != active_core) {
+            // MODE reloaded the FPGA from flash: put the real menu core back
+            string fname;
+            if (find_core_for_board(fname, "monitor.bin"))
+                fpga_program(fname.c_str());
+            last_core = NULL;
+            last_rom.clear();
+            last_core_file.clear();
+            core_running = false;
+            active_core = get_core_id();
+        }
+        overlay(1);
+        return true;
+    case ACTION_RESET:
+        overlay_status("Resetting game");
+        reset_game();
+        return true;
+    case ACTION_RELOAD:
+        overlay_status("FPGA reloaded, restarting game");
+        reload_game();
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Display main menu and call other menu functions
 static void main_task(void *pvParameters)
 {
@@ -407,6 +477,8 @@ static void main_task(void *pvParameters)
             overlay_status("USB drive mounted in %d ms", bflb_mtimer_get_time_ms() - start);
         }
     }
+
+    settings_load();
 
     // load monitor core at startup
     string fname;
@@ -480,6 +552,10 @@ static void main_task(void *pvParameters)
 
             bool before_overlay = overlay_on();
             int r = joy_choice(line_start+2, menu_cnt, &choice, OSD_KEY_CODE);
+            if (handle_game_action()) {
+                redraw = true;
+                continue;
+            }
             if (r == 1) break;
 
             if (!before_overlay && overlay_on() && active_core > 0) {
@@ -528,6 +604,7 @@ static void main_task(void *pvParameters)
             // Options
             menu_options();
         } 
+        handle_game_action();               // combo pressed in the file browser
 
         delay(300);
     }

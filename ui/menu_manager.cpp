@@ -4,6 +4,7 @@
 
 #include "utils.h"
 #include "console.h"
+#include "game_controls.h"
 
 std::vector<std::unique_ptr<Menu>> menu_stack;
 
@@ -36,7 +37,7 @@ void menu_input_loop() {
     DEBUG("Menu input loop\n");
     std::vector<int> options = menu_current()->get_options();
     int last = 0, active = 0;
-    while (menu_is_active() && overlay_on()) {
+    while (menu_is_active() && overlay_on() && pending_action == ACTION_NONE) {
         if (menu_current()->redraw) {
             menu_current()->render();
             menu_current()->redraw = false;
