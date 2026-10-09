@@ -85,6 +85,16 @@ static const save_geom save_geoms[] = {
     // tolerate it, so there is no "right" blank byte: we pick 0xFF, matching
     // the SMS entry and the mostly-high power-up state of SRAM chips.
     {1, 16, "nes", 0xFF, false},  // own SDRAM slot, idle-only: no pause
+    // GBA: the block count is per game, from the backup ID string in the ROM
+    // (saves_set_blocks in core/gba.cpp: EEPROM 16, SRAM 64, FLASH 128,
+    // FLASH1M 256 blocks). MiSTer's GBA core (GBA_MiSTer) keeps the same raw
+    // layout and is interchangeable: its <rom>.sav is a plain dump of the
+    // backup RAM at those same sizes -- save_sz is 8'hF / 8'h3F /
+    // {flash_1m, 7'h7F} sectors in GBA.sv, and it tells 512K from 1M flash by
+    // scanning the ROM stream for "FLASH1M_V", the same string we match.
+    // gbatang's save channel is an idle-only SDRAM client (and the EEPROM's
+    // second port), so a dump never delays the game: no pause.
+    {3, 0, "gba", 0xFF, false},
     // MegaDrive / Genesis: the cart SRAM the core decodes at $200000-$37FFFF,
     // streamed byte-wise from its own SDRAM slot (sdram.v port 3, lowest
     // priority: never delays the game, so no pause). MiSTer's MegaDrive core

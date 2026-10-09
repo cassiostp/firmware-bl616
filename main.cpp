@@ -579,11 +579,11 @@ static core_info *loaded_core(void) {
 
 // Reset the running game. Holding the core in loading state with no data, then
 // releasing it, restarts it with the ROM still in memory: the same path as
-// loading a second ROM, minus the data. Genesis used to reload the ROM here:
-// an empty load used to zero its ROM size, and mdtang now keeps it (mdtang_top
-// holds ROMSZ when a load sends no data). The save RAM rides in SDRAM through
-// the whole toggle -- untouched, and no restore runs, so a reset can neither
-// lose nor overwrite it; saves_settle()/saves_rearm() bracket the path.
+// loading a second ROM, minus the data (mdtang_top keeps ROMSZ when a load
+// sends no data). The save RAM stays put through the whole toggle --
+// untouched, and no restore runs, so a reset can neither lose nor overwrite
+// it; saves_settle()/saves_rearm() bracket the path. The GBA core forgets its
+// backup chip type at loading=1, so it gets the type again before the release.
 static void reset_game(void) {
     saves_settle();                     // flush any pending save before the core restarts
     if (!last_core) {                       // a core from Cores: restart it
@@ -600,6 +600,8 @@ static void reset_game(void) {
     overlay_status("Resetting %s", last_core->display_name);
     set_loading_state(1);
     delay(20);
+    if (last_core->id == 3)
+        gba_resend_backup_type();
     set_loading_state(0);
     overlay(0);
     saves_rearm();                      // the same game runs again
