@@ -1013,6 +1013,7 @@ bool fpga_program(const char *fname) {
         f_read(&fcore, fbuf, BLOCK_SIZE, &bytes);
         if (bytes == 0) break;
         total += bytes;
+        heartbeat_bump();           // inside a critical section: feed directly
         jtag_writeTDI_msb_first_gpio_out_mode(fbuf, bytes, total >= len);
         if (bytes < BLOCK_SIZE) break;
     }
@@ -1042,6 +1043,7 @@ bool fpga_program(const char *fname) {
             fbuf_cached[j] = lookup[fbuf[j] & 0xf] << 4 | lookup[fbuf[j] >> 4];
 
         total += bytes;
+        heartbeat_bump();           // inside a critical section: feed directly
         uint64_t time_jtag_start = bflb_mtimer_get_time_us();
         if (!writeSRAM_send(fbuf_cached, bytes*8, total >= len)) {
             overlay_status("Failed to send data to SRAM\n");

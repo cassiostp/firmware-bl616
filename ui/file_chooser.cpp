@@ -34,11 +34,17 @@ bool FileChooser::list_files(string dir, vector<FileEntry> &files, int start, in
 
     FILINFO fno;
     while (f_readdir(&d, &fno) == FR_OK && fno.fname[0] != 0) {
+        heartbeat_bump();           // big directories take a while to list
+        bool is_dir = fno.fattrib & AM_DIR;
+        // Hide files no loader accepts (e.g. gba_bios.bin in the GBA folder).
+        // Directories are always shown so the user can navigate.
+        if (!is_dir && !has_any_ext(fno.fname, filter_exts.c_str()))
+            continue;
         (*count)++;
         if (start > 0) {
             start--;
         } else if (files.size() < len)
-            files.push_back({fno.fname, fno.fattrib & AM_DIR});
+            files.push_back({fno.fname, is_dir});
     }
     f_closedir(&d);
     return true;

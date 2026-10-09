@@ -5,6 +5,7 @@
 #include "ff.h"
 #include "menu_manager.h"
 #include "overlay.h"
+#include "utils.h"
 
 // null-terminated list of core info
 std::vector<core_info> core_info_list;
@@ -20,6 +21,11 @@ struct core_info *find_core_by_id(uint16_t id) {
     return NULL;
 }
 
+bool core_supports_file(const struct core_info *core, const char *fname) {
+    if (!core || !fname) return false;
+    return has_any_ext(fname, core->rom_exts);
+}
+
 Menu *create_default_menu(const char *imgdir) {
     dprint("Creating default menu\n");
     return new DefaultMenu();
@@ -32,12 +38,12 @@ Menu *create_pcxt_menu(const char *imgdir) {
 
 void init_core_list() {
     core_info_list = {
-        {1, "NES", "nes", "nestang.bin", loadnes, create_default_menu},
-        {2, "SNES", "snes", "snestang.bin", loadsnes, create_default_menu},
-        {3, "Game Boy Advance", "gba", "gbatang.bin", loadgba, create_default_menu},
-        {4, "MegaDrive / Genesis", "genesis", "mdtang.bin", loadmd, create_default_menu},
-        {5, "Sega Master System", "sms", "smstang.bin", loadsms, create_default_menu},
-        {6, "IBM PC/XT", "pc", "pctang.bin", loadpc, create_pcxt_menu}
+        {1, "NES", "nes", "nestang.bin", ".nes", loadnes, create_default_menu},
+        {2, "SNES", "snes", "snestang.bin", ".smc;.sfc", loadsnes, create_default_menu},
+        {3, "Game Boy Advance", "gba", "gbatang.bin", ".gba", loadgba, create_default_menu},
+        {4, "MegaDrive / Genesis", "genesis", "mdtang.bin", ".bin;.md;.gen", loadmd, create_default_menu},
+        {5, "Sega Master System", "sms", "smstang.bin", ".sms;.sg", loadsms, create_default_menu},
+        {6, "IBM PC/XT", "pc", "pctang.bin", ".img", loadpc, create_pcxt_menu}
     };
 
     main_menu_config = {1,2,
@@ -50,7 +56,7 @@ void init_core_list() {
 
 
 extern const char *BOARD_NAME;
-extern char *drv;
+extern const char *drv;
 
 // Find a core file in the search order:
 // usb:cores/${BOARD_NAME}/${core_name}

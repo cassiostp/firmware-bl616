@@ -26,10 +26,14 @@ void send_fbuf_data(uint16_t len) {
         fpga_tx_byte(fbuf[i]);
     }
     taskEXIT_CRITICAL();
+    heartbeat_bump();               // ROM transfers call this in a tight loop
 }
 
 // set loading state
 void set_loading_state(int state) {
+    // a ROM load (or reset) mustn't run with the core paused
+    if (state && (get_core_config() & CORE_CFG_MENU_PAUSE))
+        set_core_config(get_core_config() & ~CORE_CFG_MENU_PAUSE);
     taskENTER_CRITICAL();
     fpga_tx_header(0x06, 2);
     fpga_tx_byte(state);        
@@ -59,6 +63,34 @@ const char *cstr_find_ignore_case(const char *str, const char *substr) {
     return str + (it - s.begin());
 }
 
+bool has_ext(const char *fname, const char *ext) {
+    if (!fname || !ext || !*ext) return false;
+    size_t fl = strlen(fname), el = strlen(ext);
+    if (fl < el) return false;
+    return strcasecmp(fname + fl - el, ext) == 0;
+}
+
+bool has_any_ext(const char *fname, const char *exts) {
+    if (!fname) return false;
+    if (!exts || !*exts) return true;   // no filter: accept everything
+    // `exts` is a ';'-separated list like ".bin;.md;.gen;.smd"
+    char one[16];
+    const char *p = exts;
+    while (*p) {
+        while (*p == ';') p++;
+        if (!*p) break;
+        size_t i = 0;
+        while (*p && *p != ';') {
+            if (i + 1 < sizeof(one)) one[i++] = *p;
+            p++;
+        }
+        one[i] = '\0';
+        if (i > 0 && has_ext(fname, one))
+            return true;
+    }
+    return false;
+}
+
 static uint32_t core_config;
 
 uint32_t get_core_config(void) {
@@ -85,6 +117,15 @@ volatile uint16_t hid2_state = 0;
 volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
+volatile uint32_t heartbeat;                // last activity tick (watchdog)
+
+// Count a beat, and feed the watchdog here too: some bump sites run inside
+// critical sections, where the watchdog task can't.
+void heartbeat_bump(void) {
+    heartbeat++;
+    if (wdg_dev)                    // NULL until main() sets the watchdog up
+        bflb_wdg_reset_countervalue(wdg_dev);
+}
 
 static uint16_t suppress_mask[4];   // per pad: buttons ignored until released
 
@@ -103,6 +144,7 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
         }
         xSemaphoreGive(state_mutex);
     }
+    heartbeat_bump();       // every menu/input loop calls this: alive
 }
 
 void suppress_held_buttons(void)

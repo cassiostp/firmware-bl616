@@ -4,6 +4,7 @@
 #include <strings.h>
 
 #include "settings.h"
+#include "overlay.h"
 #include "utils.h"
 #include "overlay.h"
 
@@ -42,6 +43,8 @@ void settings_defaults(Settings &s) {
     s.reset_enabled = true;
     s.close_hold_ms = 3000;
     s.diag = false;
+    s.scanlines = false;
+    s.pause_in_menu = true;
 }
 
 int combo_count(uint16_t combo) {
@@ -124,6 +127,10 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         if (v >= 1000 && v <= 10000) s.close_hold_ms = v;
     } else if (strcasecmp(key, "diag") == 0) {
         s.diag = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "scanlines") == 0) {
+        s.scanlines = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "pause_in_menu") == 0) {
+        s.pause_in_menu = strtol(val, NULL, 10) != 0;
     }
 }
 
@@ -180,10 +187,15 @@ bool settings_save() {
         "reset_combo=%s\n"
         "reset_enabled=%d\n"
         "close_hold_ms=%lu\n"
-        "# 1 shows a diagnostic line at the bottom of menus.\n"
-        "diag=%d\n",
+        "# 1 shows a diagnostic line at the top of menus.\n"
+        "diag=%d\n"
+        "# 1 darkens one line per picture line (NES, SNES, MegaDrive, SMS).\n"
+        "scanlines=%d\n"
+        "# 0 keeps the game running while a menu is shown over it.\n"
+        "pause_in_menu=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
-        (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0);
+        (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
+        settings.scanlines ? 1 : 0, settings.pause_in_menu ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 
@@ -193,4 +205,14 @@ bool settings_save() {
     FRESULT r = f_write(&fcfg, cfgbuf, len, &bw);
     FRESULT rc = f_close(&fcfg);           // flushes the data
     return r == FR_OK && rc == FR_OK && bw == (UINT)len;
+}
+
+// Drive the core_config option bits from the settings. The game pauses while
+// any menu is shown over it. The low 16 bits are core specific (e.g. GBA's
+// prefetch delay), so keep whatever the firmware last sent there.
+void apply_core_config() {
+    bool pause = settings.pause_in_menu && _overlay_on && core_running;
+    set_core_config((get_core_config() & 0xffff) |
+                    (settings.scanlines ? CORE_CFG_SCANLINES : 0) |
+                    (pause ? CORE_CFG_MENU_PAUSE : 0));
 }

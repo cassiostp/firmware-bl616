@@ -6,6 +6,7 @@
 extern "C" {
 #include "bflb_gpio.h"
 #include "bflb_uart.h"
+#include "bflb_wdg.h"
 
 #include <FreeRTOS.h>
 #include "task.h"
@@ -75,11 +76,16 @@ static inline bool prefix(const char *pre, const char *str)
 }
 extern "C" char *strcasestr(const char *haystack, const char *needle);
 
+// True if `fname` ends with `ext` (case-insensitive), e.g. has_ext("GAME.GBA", ".gba").
+// Unlike strcasestr, this is a suffix match: "gba_bios.bin" does not match ".gba".
+bool has_ext(const char *fname, const char *ext);
+// True if `fname` ends with any of the ';'-separated extensions in `exts`
+// (e.g. ".bin;.md;.gen;.smd"). An empty list matches everything.
+bool has_any_ext(const char *fname, const char *exts);
+
 // return true if core is ready. then core_id is set.
 // return false if timeout after 100ms
 bool get_core_status(void);
-// read joypad states, joy1/2 comes from FPGA, hid1/2 comes from USB
-void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2);
 extern int joy_choice(int start_line, int len, int *active);
 // Ignore the buttons held right now until each is released, so a button that
 // triggered something doesn't also act on whatever comes next.
@@ -113,6 +119,14 @@ extern USB_NOCACHE_RAM_SECTION BYTE __attribute__((aligned(64))) fbuf[BLOCK_SIZE
 extern bool mounted_a;
 
 extern struct bflb_device_s *uart1_dev;
+extern struct bflb_device_s *wdg_dev;
+
+// Watchdog heartbeat: bumped by the input, file listing and data transfer
+// paths, so any of them counts as "the firmware is doing something". The
+// watchdog task (main.cpp) feeds the hardware watchdog only while this keeps
+// moving; when a crash or deadlock stops the bumps, the chip resets.
+extern volatile uint32_t heartbeat;
+extern void heartbeat_bump(void);
 
 // len: length of payload including the command (>=1)
 extern void fpga_tx_header(int cmd, int len);
@@ -137,5 +151,11 @@ extern void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, ui
 extern int16_t get_core_id(void);
 extern uint32_t get_core_config(void);
 extern void set_core_config(uint32_t config);
+
+// core_config option bits shared by all game cores. Bit 16 enables the
+// optional scanline effect, bit 17 pauses the game while the game menu is
+// open. Every core defaults them to 0 (off).
+#define CORE_CFG_SCANLINES (1u << 16)
+#define CORE_CFG_MENU_PAUSE (1u << 17)
 
 extern const char *cstr_find_ignore_case(const char *str, const char *substr);

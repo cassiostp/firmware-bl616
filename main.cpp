@@ -51,6 +51,7 @@ struct core_info *core;
 struct bflb_device_s *gpio_dev;
 struct bflb_device_s *uart0_dev;
 struct bflb_device_s *uart1_dev;
+struct bflb_device_s *wdg_dev;
 
 // USB and fatfs
 struct usbh_msc *msc;
@@ -162,6 +163,14 @@ static void send_hid_state(uint16_t hid1, uint16_t hid2) {
 // running (or always, with force_program). Returns 1 if the ROM was loaded,
 // -1 on error.
 static int load_game(core_info *core, const string &rom, bool force_program) {
+    // Check the extension before touching the FPGA. Programming the core
+    // first and then rejecting the file leaves the new core running with
+    // nothing loaded and an undismissable error box.
+    if (!core_supports_file(core, rom.c_str())) {
+        overlay_message("Unsupported file type", 1);
+        return -1;
+    }
+
     active_core = get_core_id();
 
     if (force_program || active_core != core->id) {
@@ -176,6 +185,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
             uint64_t start = bflb_mtimer_get_time_ms();
             while (bflb_mtimer_get_time_ms() - start < 2000) {
                 send_blank_packet();
+                heartbeat_bump();
                 active_core = get_core_id();
                 if (active_core == core->id)
                     break;
@@ -188,6 +198,10 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         string loading = rom;               // rom may be last_rom itself
         if (core->load_rom(loading.c_str()) != 0)
             return -1;                      // the loader showed the error
+        // Drive the video options now that the core runs. A fresh core
+        // defaults every core_config bit to 0, and the low 16 bits stay as
+        // they are (core specific).
+        apply_core_config();
         last_core = core;
         last_rom = loading;
         return 1;
@@ -207,6 +221,21 @@ static int menu_loadrom(const char *dir) {
     file_chooser.rootdir = dir;
     file_chooser.curdir = dir;
     file_chooser.msg_return = "<< Return to main menu";
+    // Hide files no loader accepts. Match the entry dir against the cores'
+    // ROM dirs ("snes" contains "nes", so match the full last component).
+    // The Cores browser matches none of them and lists everything, as before.
+    file_chooser.filter_exts.clear();
+    {
+        string d = dir;
+        for (auto &c : core_info_list) {
+            string a = string(":") + c.rom_dir, b = string("/") + c.rom_dir;
+            if ((d.size() >= a.size() && d.compare(d.size() - a.size(), a.size(), a) == 0) ||
+                (d.size() >= b.size() && d.compare(d.size() - b.size(), b.size(), b) == 0)) {
+                file_chooser.filter_exts = c.rom_exts;
+                break;
+            }
+        }
+    }
     bool r = file_chooser.choose_file(fname);
     if (!r) {
         overlay_status("No file chosen");
@@ -223,6 +252,15 @@ static int menu_loadrom(const char *dir) {
         forget_game();
         last_core_file = fname;
         _overlay_on = 1;                // turn on overlay after core is loaded
+        // drive the video options once the new core answers with its ID
+        uint64_t start = bflb_mtimer_get_time_ms();
+        while (bflb_mtimer_get_time_ms() - start < 2000) {
+            send_blank_packet();
+            active_core = get_core_id();
+            if (active_core >= 0)
+                break;
+        }
+        apply_core_config();
         return 0;       // return to main menu
     } 
 
@@ -274,9 +312,10 @@ static void send_hid_to_core(void) {
     dprint("Stopped sending HID to core.");
 }
 
-// Diagnostic line on row 26 (status messages use row 27). Shows raw pad
-// states (FPGA pads J, USB pads H), the core ID, how many times the overlay
-// was hidden, and a counter that stops if this loop stops running.
+// Diagnostic line on row 0 (row 26 sits under some cores' logos, hiding it).
+// Shows raw pad states (FPGA pads J, USB pads H), the pending action and
+// whether a combo is held (a), the core ID (c), and a counter that stops if
+// this loop stops running.
 static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
     static uint64_t last_draw;
     static uint32_t beat;
@@ -284,10 +323,11 @@ static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
     if (!settings.diag || now - last_draw < 250)
         return;
     last_draw = now;
-    overlay_cursor(0, 26);
-    // fixed width, exactly 32 columns: J00000000 H00000000 c0  t00 #000
-    overlay_printf("J%04x%04x H%04x%04x c%-2d t%02lu #%03lu", joy1, joy2, hid1, hid2, active_core,
-                   (unsigned long)(overlay_hide_count % 100), (unsigned long)(beat++ % 1000));
+    overlay_cursor(0, 0);
+    // fixed width, exactly 32 columns: J00000000 H00000000 a00 c0  #000
+    overlay_printf("J%04x%04x H%04x%04x a%d%d c%-2d #%03lu", joy1, joy2, hid1, hid2,
+                   (int)pending_action, combo_in_progress(joy1 | hid1, joy2 | hid2) ? 1 : 0,
+                   active_core, (unsigned long)(beat++ % 1000));
 }
 
 // // (R L X A RT LT DN UP START SELECT Y B)
@@ -304,6 +344,14 @@ int joy_choice(int start_line, int len, int *active) {
         draw_diag_line(joy1, joy2, hid1, hid2);
     joy1 |= hid1;
     joy2 |= hid2;
+
+    // Draw the cursor before any early return: a pending action or a combo
+    // in progress used to leave the menu on screen with no cursor and dead
+    // navigation.
+    if (overlay_on()) {
+        overlay_cursor(0, start_line + (*active));
+        overlay_printf(">");
+    }
 
     if (overlay_on() && controls_poll(joy1, joy2, false, game_loaded()))
         return 0;                  // menu combo: the caller handles pending_action
@@ -330,14 +378,13 @@ int joy_choice(int start_line, int len, int *active) {
     if ((joy1 & 0x1) || (joy2 & 0x1))
         return 1;      // button B pressed
 
-    overlay_cursor(0, start_line + (*active));
-    overlay_printf(">");
-
     // overlay_cursor(0, 27);
     // overlay_printf(" j1=%04x j2=%04x h1=%04x h2=%04x", joy1, joy2, hid1, hid2);
     if (last != *active) {
         overlay_cursor(0, start_line + last);
         overlay_printf(" ");
+        overlay_cursor(0, start_line + (*active));
+        overlay_printf(">");
         delay(100);     // button debounce
     }    
     return 0;
@@ -347,6 +394,28 @@ int joy_choice(int start_line, int len, int *active) {
 #define MAIN_TASK_PRIORITY    3
 #define UART1_RX_TASK_STACK_SIZE  512
 #define UART1_RX_TASK_PRIORITY    3
+#define WATCHDOG_TASK_STACK_SIZE  256
+#define WATCHDOG_TASK_PRIORITY    4       // above main_task: feeds it mustn't miss
+#define HEARTBEAT_STALL_MS        15000   // stop feeding after this long without a beat
+#define WATCHDOG_FEED_MS          2000    // hardware timeout after feeding stops
+
+// Feed the hardware watchdog while the heartbeat keeps moving (something is
+// reading pads, listing files or sending data). If it stops - a crash, a spin
+// loop, a mutex deadlock - stop feeding and the watchdog resets the chip.
+static void watchdog_task(void *pvParameters)
+{
+    uint32_t last_beat = heartbeat;
+    uint64_t last_beat_time = bflb_mtimer_get_time_ms();
+    while (1) {
+        if (heartbeat != last_beat) {
+            last_beat = heartbeat;
+            last_beat_time = bflb_mtimer_get_time_ms();
+        }
+        if (bflb_mtimer_get_time_ms() - last_beat_time < HEARTBEAT_STALL_MS)
+            bflb_wdg_reset_countervalue(wdg_dev);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
 
 // Receive joypad updates and other UART responses from the FPGA
 static void uart1_rx_task(void *pvParameters)
@@ -358,7 +427,10 @@ static void uart1_rx_task(void *pvParameters)
     uint64_t last_byte = 0;
     
     while (1) {
-        if (bflb_uart_rxavailable(uart1_dev)) {
+        // drain everything waiting before sleeping: one byte per 1 ms tick
+        // capped replies at ~1 KB/s and overflowed the UART FIFO on 515-byte
+        // floppy frames
+        while (bflb_uart_rxavailable(uart1_dev)) {
             uint8_t ch = bflb_uart_getchar(uart1_dev);
             uint64_t now = bflb_mtimer_get_time_ms();
             // a frame's bytes arrive back to back at 2 Mbaud. A long gap means
@@ -488,6 +560,7 @@ static void reset_game(void) {
             forget_game();
             last_core_file = fname;
             active_core = get_core_id();
+            apply_core_config();       // the new bitstream starts with 0
         }
         return;
     }
@@ -627,8 +700,10 @@ static void main_task(void *pvParameters)
     uint64_t start = bflb_mtimer_get_time_ms();
     FRESULT res;
     overlay_status("Mounting sd card...", drv);
-    while ((res = f_mount(&fs, "sd:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 500)
+    while ((res = f_mount(&fs, "sd:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 500) {
+        heartbeat_bump();
         delay(100);
+    }
 
     if (res == FR_OK) {
         overlay_status("SD card mounted in %d ms", bflb_mtimer_get_time_ms() - start);
@@ -636,8 +711,10 @@ static void main_task(void *pvParameters)
         overlay_status("SD not found. Mounting USB...");
         drv = "usb:";
         start = bflb_mtimer_get_time_ms();
-        while ((res = f_mount(&fs, "usb:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 2000)
+        while ((res = f_mount(&fs, "usb:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 2000) {
+            heartbeat_bump();
             delay(100);
+        }
         if (res != FR_OK) {
             overlay_status("Failed to mount USB drive");
         } else {
@@ -670,8 +747,17 @@ static void main_task(void *pvParameters)
                 overlay_status("core_id=%d", active_core);
                 if (active_core >= 0) redraw = true;    // redraw immediately if core is detected
             }
-            if (now - last_redraw_time > 5000) 
-                redraw = true;
+            // Poll the core ID without blanking the menu: the old code set
+            // redraw = true every 5 s, and the redraw's overlay_clear()
+            // blinked the menu off briefly.
+            if (now - last_redraw_time > 5000) {
+                last_redraw_time = now;
+                int16_t id = get_core_id();
+                if (id >= 0 && id != active_core) {
+                    active_core = id;
+                    redraw = true;
+                }
+            }
             if (redraw) {
                 active_core = get_core_id();            // allow jtag to change core underneath us
                 overlay(overlay_on());                  // set correct overlay state
@@ -799,10 +885,23 @@ int main(void)
     fatfs_usbh_driver_register();
     usb_gamepad_init();
 
+    // Hardware watchdog: ~2 s without a feed resets the chip. Feeding it is
+    // the watchdog task's job, and that stops when the heartbeat does.
+    wdg_dev = bflb_device_get_by_name("watchdog");
+    struct bflb_wdg_config_s wdg_cfg = {
+        .clock_source = WDG_CLKSRC_32K,
+        .clock_div = 31,            // 32 kHz / 32 = 1 kHz: one count per ms
+        .comp_val = WATCHDOG_FEED_MS,
+        .mode = WDG_MODE_RESET,
+    };
+    bflb_wdg_init(wdg_dev, &wdg_cfg);
+    bflb_wdg_start(wdg_dev);
+
     overlay_status("Creating tasks...");
     // Create the tasks
     xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle);
     xTaskCreate(uart1_rx_task, "uart1_rx_task", UART1_RX_TASK_STACK_SIZE, NULL, UART1_RX_TASK_PRIORITY, &uart1_rx_task_handle);
+    xTaskCreate(watchdog_task, "watchdog", WATCHDOG_TASK_STACK_SIZE, NULL, WATCHDOG_TASK_PRIORITY, NULL);
     
     vTaskStartScheduler();
 

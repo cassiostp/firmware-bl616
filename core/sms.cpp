@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <string.h>
 
 #include "utils.h"
 #include "cores.h"
@@ -9,10 +9,10 @@ int loadsms(const char *fname) {
     DEBUG("loadsms start\n");
     FRESULT r = FR_NO_FILE;
 
-    // check extension .bin
-    char *p = strcasestr(fname, ".sms");
-    if (p == NULL) {
-        overlay_message("Only .sms, .gg, and .sg supported", 1);
+    // check extension .sms/.sg (SG-1000 runs in the SMS VDP's legacy modes;
+    // Game Gear needs the core's GG mode, which isn't wired up yet)
+    if (!has_any_ext(fname, ".sms;.sg")) {
+        overlay_message("Only .sms and .sg supported", 1);
         return r;
     }
 
