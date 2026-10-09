@@ -97,6 +97,10 @@ uint32_t get_core_config(void) {
     return core_config;
 }
 
+void forget_core_config(void) {
+    core_config = 0;
+}
+
 void set_core_config(uint32_t config) {
     core_config = config;
     taskENTER_CRITICAL();

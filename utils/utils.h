@@ -151,6 +151,7 @@ extern void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, ui
 extern int16_t get_core_id(void);
 extern uint32_t get_core_config(void);
 extern void set_core_config(uint32_t config);
+extern void forget_core_config(void);     // a new bitstream: our copy is 0 again
 
 // core_config option bits shared by all game cores. Bit 16 enables the
 // optional scanline effect, bit 17 pauses the game while the game menu is
