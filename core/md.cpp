@@ -3,7 +3,39 @@
 
 #include "utils.h"
 #include "cores.h"
+#include "saves.h"
 #include "overlay.h"
+
+// The Sega spec puts the backup-RAM info in the ROM header at $1B0: the
+// device name "RA" (battery-backed RAM installed), two device/type bytes,
+// then the big-endian SRAM start/end addresses at $1B4/$1B8 (MiSTer's
+// MegaDrive core loads <rom>.sav for every game, so it reads none of this;
+// we use it to size the save and to skip games that have no battery).
+// The address range is only a size here: mdtang decodes cart SRAM at the
+// $200000-$37FFFF window and uses only A[16:1] (system.sv), so every window
+// and mirror aliases onto image bytes 0.., and .bin/.md/.gen are plain
+// binary -- the header sits at file offset $1B0 with no SMD interleave.
+// Returns the save size in bytes, 0 if this ROM has no backup RAM.
+static int md_sram_size(FIL *fp, unsigned int file_size) {
+    unsigned char hdr[12];
+    unsigned int br = 0;
+    if (file_size <= 0x1bc)
+        return 0;                       // too small to carry a header
+    if (f_lseek(fp, 0x1b0))
+        return 0;
+    if (f_read(fp, hdr, 12, &br) != FR_OK || br != 12)
+        return 0;
+    if (!((hdr[0] == 'R' && hdr[1] == 'A') || (hdr[0] == 'r' && hdr[1] == 'a')))
+        return 0;                       // no backup RAM
+    unsigned int start = ((unsigned int)hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7];
+    unsigned int end = ((unsigned int)hdr[8] << 24) | (hdr[9] << 16) | (hdr[10] << 8) | hdr[11];
+    if (end < start)
+        return 0;                       // malformed range: nothing to save
+    unsigned int size = end - start + 1;
+    if (size > 0x10000)
+        size = 0x10000;                 // the core's save region is 64 KB
+    return size;
+}
 
 int loadmd(const char *fname) {
     DEBUG("loadmd start\n");
@@ -22,6 +54,10 @@ int loadmd(const char *fname) {
     }
     unsigned int off = 0, br, total = 0;
     unsigned int size = get_file_size(fname);
+
+    // the game's save RAM size, from the header, before the restore below
+    int save_size = md_sram_size(&fcore, size);
+    saves_set_battery(save_size != 0);
 
     // load actual ROM
     set_loading_state(1);		// enable game loading, this resets the core
@@ -46,6 +82,15 @@ int loadmd(const char *fname) {
 
     DEBUG("loadmd: %d bytes\n", total);
     overlay_status("Success");
+    // The game's save RAM goes in now, while the core is still held in the
+    // loading state. Size from the header, rounded up to whole 512-byte
+    // blocks and capped at the core's 128 blocks (64 KB); with no "RA" the
+    // engine stays passive. restore() sends the .sav, a recovered .sav.tmp,
+    // or the blank image, so the previous game's SRAM cannot leak into this
+    // one.
+    if (save_size)
+        saves_set_blocks((save_size + 511) >> 9);
+    saves_restore();
     core_running = true;
 
     overlay(0);		// turn off OSD
