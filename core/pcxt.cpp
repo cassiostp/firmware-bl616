@@ -175,7 +175,7 @@ void PcxtMenu::render() {
     overlay_cursor(0, 15);
     overlay_printf("  Reset Core\n");
     overlay_cursor(0, 17);
-    overlay_printf("  << Main Menu\n");
+    overlay_printf("  << Back\n");
 }
 
 std::vector<int> PcxtMenu::get_options() {
@@ -211,7 +211,6 @@ bool PcxtMenu::on_choose(int idx) {
         overlay(0);
         return true;            // close menu
     } else if (idx == 3) {
-        overlay_printf("<< Main Menu\n");
         return true;
     }
     return false;

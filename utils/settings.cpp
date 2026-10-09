@@ -38,9 +38,7 @@ static const struct {
 
 void settings_defaults(Settings &s) {
     s.menu_combo = BTN_SELECT | BTN_START | BTN_L;
-    s.reset_combo = BTN_SELECT | BTN_START | BTN_R;
-    s.mode_hold_ms = 3000;
-    s.mode_reload_ms = 1000;
+    s.quit_combo = BTN_SELECT | BTN_START | BTN_R;
     s.diag = false;
 }
 
@@ -49,8 +47,7 @@ int combo_count(uint16_t combo) {
 }
 
 // A combo must be exactly COMBO_BUTTONS buttons and include Select or Start,
-// so it doesn't fire during normal play. It must not contain the OSD key
-// (Select+Right), or pressing it would pass through the OSD key.
+// so it doesn't fire during normal play.
 bool combo_valid(uint16_t combo, const char **why) {
     const char *dummy;
     if (!why) why = &dummy;
@@ -60,10 +57,6 @@ bool combo_valid(uint16_t combo, const char **why) {
     }
     if (!(combo & (BTN_SELECT | BTN_START))) {
         *why = "Must include SEL or START";
-        return false;
-    }
-    if ((combo & OSD_KEY_CODE) == OSD_KEY_CODE) {
-        *why = "Can't contain the OSD key";
         return false;
     }
     *why = NULL;
@@ -119,15 +112,9 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
     if (strcasecmp(key, "menu_combo") == 0) {
         uint16_t c = combo_from_string(val);
         if (combo_valid(c, NULL)) s.menu_combo = c;
-    } else if (strcasecmp(key, "reset_combo") == 0) {
-        uint16_t c = combo_from_string(val);
-        if (combo_valid(c, NULL)) s.reset_combo = c;
-    } else if (strcasecmp(key, "mode_hold_ms") == 0) {
-        long v = strtol(val, NULL, 10);
-        if (v >= 500 && v <= 10000) s.mode_hold_ms = v;
-    } else if (strcasecmp(key, "mode_reload_ms") == 0) {
-        long v = strtol(val, NULL, 10);
-        if (v >= 0 && v <= 10000) s.mode_reload_ms = v;
+    } else if (strcasecmp(key, "quit_combo") == 0 || strcasecmp(key, "reset_combo") == 0) {
+        uint16_t c = combo_from_string(val);         // reset_combo: older files
+        if (combo_valid(c, NULL)) s.quit_combo = c;
     } else if (strcasecmp(key, "diag") == 0) {
         s.diag = strtol(val, NULL, 10) != 0;
     }
@@ -169,7 +156,7 @@ void settings_load() {
         }
         overlay_status("Settings loaded from %s", path.c_str());
     }
-    if (s.menu_combo == s.reset_combo)      // keep the two combos distinct
+    if (s.menu_combo == s.quit_combo)       // keep the two combos distinct
         settings_defaults(s);
     settings = s;
 }
@@ -177,21 +164,15 @@ void settings_load() {
 bool settings_save() {
     std::string path = settings_path();
     std::string menu = combo_to_string(settings.menu_combo, false);
-    std::string reset = combo_to_string(settings.reset_combo, false);
+    std::string quit = combo_to_string(settings.quit_combo, false);
     int len = snprintf(cfgbuf, SETTINGS_BUF_SIZE,
         "# TangCore settings. Buttons: B Y SELECT START UP DOWN LEFT RIGHT A X L R\n"
-        "# In game, hold menu_combo to return to the main menu, reset_combo to reset the game.\n"
+        "# In game, menu_combo opens the game menu; holding quit_combo for 3 s closes the game.\n"
         "menu_combo=%s\n"
-        "reset_combo=%s\n"
-        "# Holding MODE at least this long returns to the main menu. A shorter press resets the game.\n"
-        "mode_hold_ms=%lu\n"
-        "# Time the FPGA needs to reload from flash after MODE. Measured per board.\n"
-        "mode_reload_ms=%lu\n"
+        "quit_combo=%s\n"
         "# 1 shows a diagnostic line at the bottom of menus.\n"
         "diag=%d\n",
-        menu.c_str(), reset.c_str(),
-        (unsigned long)settings.mode_hold_ms, (unsigned long)settings.mode_reload_ms,
-        settings.diag ? 1 : 0);
+        menu.c_str(), quit.c_str(), settings.diag ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 

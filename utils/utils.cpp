@@ -86,7 +86,9 @@ volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
 
-// read joypad states
+static uint16_t suppress_mask;      // buttons ignored until released
+
+// read joypad states, without suppressed buttons
 void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2)
 {
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
@@ -94,6 +96,19 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
         *joy2 = joy2_state;
         *hid1 = hid1_state;
         *hid2 = hid2_state;
+        suppress_mask &= *joy1 | *joy2 | *hid1 | *hid2;    // released: stop ignoring
+        *joy1 &= ~suppress_mask;
+        *joy2 &= ~suppress_mask;
+        *hid1 &= ~suppress_mask;
+        *hid2 &= ~suppress_mask;
+        xSemaphoreGive(state_mutex);
+    }
+}
+
+void suppress_held_buttons(void)
+{
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        suppress_mask |= joy1_state | joy2_state | hid1_state | hid2_state;
         xSemaphoreGive(state_mutex);
     }
 }

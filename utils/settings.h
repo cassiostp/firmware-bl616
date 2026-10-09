@@ -22,10 +22,8 @@
 
 // Persistent firmware settings, stored as key=value lines in <drv>tangcore.cfg
 struct Settings {
-    uint16_t menu_combo;        // in game: hold to return to the main menu
-    uint16_t reset_combo;       // in game: hold to reset the game
-    uint32_t mode_hold_ms;      // MODE held at least this long goes to the main menu
-    uint32_t mode_reload_ms;    // time the FPGA takes to reload from flash after MODE
+    uint16_t menu_combo;        // opens the game menu in game, closes the menus outside
+    uint16_t quit_combo;        // in game, held 3 s: close the game
     bool diag;                  // show the diagnostic line at the bottom of menus
 };
 

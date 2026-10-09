@@ -43,7 +43,6 @@ extern "C" {
 /////////////////////////////////////////////////////////////////////////////////
 // Global state
 
-int option_osd_key = OPTION_OSD_KEY_SELECT_RIGHT;
 int16_t active_core = -1;           // firmware detected this core as active
 bool core_running;                  // a rom is loaded and running on the core
 struct core_info *core;
@@ -101,6 +100,10 @@ static struct core_info *last_core;     // NULL if no ROM was loaded
 static string last_rom;
 static string last_core_file;           // bitstream of the running core
 
+bool game_loaded(void) {
+    return last_core != NULL || !last_core_file.empty();
+}
+
 // #define PAGESIZE 22
 // #define TOPLINE 2
 // #define PWD_SIZE 1024
@@ -113,6 +116,17 @@ static string last_core_file;           // bitstream of the running core
 
 /////////////////////////////////////////////////////////////////////////////////
 // Menu display and user interaction
+
+static void clear_pad_states(void);
+
+// Program a bitstream. The new core is silent while it starts, and pads read
+// by the FPGA restart from nothing, so reset what tracks them.
+static bool program_fpga(const char *fname) {
+    bool r = fpga_program(fname);
+    clear_pad_states();
+    controls_reset();
+    return r;
+}
 
 // The FPGA no longer runs the recorded game (a new bitstream was programmed)
 static void forget_game(void) {
@@ -152,7 +166,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
     if (force_program || active_core != core->id) {
         string fname_core;
         if (find_core_for_board(fname_core, core->core_file)) {
-            fpga_program(fname_core.c_str());
+            program_fpga(fname_core.c_str());
             forget_game();                  // new bitstream, nothing loaded yet
             last_core_file = fname_core;
             _overlay_on = 1;
@@ -204,7 +218,7 @@ static int menu_loadrom(const char *dir) {
     // load core if in cores/ dir
     if (fname.find(string(drv) + "cores") == 0) {
         overlay_status("Core: %s", fname.c_str());
-        fpga_program(fname.c_str());
+        program_fpga(fname.c_str());
         forget_game();
         last_core_file = fname;
         _overlay_on = 1;                // turn on overlay after core is loaded
@@ -235,7 +249,6 @@ static void send_hid_to_core(void) {
     uint16_t hid1_old = 0, hid2_old = 0;
     bool first = true;
     dprint("Start sending HID to core...");
-    game_watch_start(last_core != NULL || !last_core_file.empty());
     while (1) {
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
@@ -245,12 +258,12 @@ static void send_hid_to_core(void) {
             hid2_old = hid2;
             first = false;
         }
-        if (joy1 == OSD_KEY_CODE || joy2 == OSD_KEY_CODE || hid1 == OSD_KEY_CODE || hid2 == OSD_KEY_CODE) {
+        if (overlay_on()) {     // turned on by the keyboard's OSD key (F12)
+            if (game_loaded())
+                pending_action = ACTION_GAME_MENU;
             break;
         }
-        if (overlay_on())      // turned off by keyboard
-            break;
-        if (game_watch_poll(joy1 | hid1, joy2 | hid2))     // combo or MODE
+        if (controls_poll(joy1 | hid1, joy2 | hid2, true, game_loaded()))
             break;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -276,7 +289,7 @@ static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
 // // (R L X A RT LT DN UP START SELECT Y B)
 // Return: 1 button B pressed, 4: button A pressed, 2: next page, 3: previous page
 // active is the entry chosen
-int joy_choice(int start_line, int len, int *active, int overlay_key_code) {
+int joy_choice(int start_line, int len, int *active) {
     if (*active < 0 || *active >= len)
         *active = 0;
     uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
@@ -288,11 +301,8 @@ int joy_choice(int start_line, int len, int *active, int overlay_key_code) {
     joy1 |= hid1;
     joy2 |= hid2;
 
-    if ((joy1 == overlay_key_code) || (joy2 == overlay_key_code)) {
-        overlay_status("OSD: %s", overlay_on() ? "ON" : "OFF");
-        overlay(!overlay_on());    // toggle OSD
-        delay(300);
-    }
+    if (overlay_on() && controls_poll(joy1, joy2, false, game_loaded()))
+        return 0;                  // menu combo: the caller handles pending_action
 
     if (!overlay_on()) {           // keep sending HID state to core when OSD is off
         send_hid_to_core();
@@ -445,99 +455,120 @@ static void uart1_rx_task(void *pvParameters)
     }
 }
 
-// Reprogram the running game's core and reload its ROM. Used after MODE
-// reloaded the FPGA from flash, which drops the game.
-static void reload_game(void) {
+// Close the game: load the menu core again, as at boot.
+static void quit_game(void) {
     overlay(1);
-    clear_pad_states();
-    if (last_core) {
-        core_info *core = last_core;
-        string rom = last_rom, drive_b;
-        if (core->id == 6) {                // PC/XT: remount the floppies in use
-            if (!floppy_path[0].empty())
-                rom = floppy_path[0];
-            drive_b = floppy_path[1];
+    overlay_status("Closing game...");
+    string fname;
+    if (find_core_for_board(fname, "monitor.bin"))
+        program_fpga(fname.c_str());
+    forget_game();
+    active_core = get_core_id();
+}
+
+static core_info *loaded_core(void) {
+    return last_core ? last_core : find_core_by_id(active_core);
+}
+
+// Menu over the running game: the menu combo opens it in game, and the main
+// menu links to it while a game is loaded.
+struct GameMenu: Menu {
+    std::string message;
+    bool pcxt;
+    std::vector<int> rows;
+
+    GameMenu() {
+        core_info *core = loaded_core();
+        pcxt = core && core->id == 6;
+        rows = pcxt ? std::vector<int>{10, 11, 12, 13, 15, 17}
+                    : std::vector<int>{10, 11, 12, 15, 17};
+    }
+
+    void render() override {
+        core_info *core = loaded_core();
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- %s ---", core ? core->display_name : "Game");
+        overlay_cursor(2, 10);
+        overlay_printf("Resume");
+        overlay_cursor(2, 11);
+        overlay_printf("Game options (soon)");
+        overlay_cursor(2, 12);
+        overlay_printf("Save states (soon)");
+        if (pcxt) {
+            overlay_cursor(2, 13);
+            overlay_printf("Floppy drives...");
         }
-        if (load_game(core, rom, true) == 1 && !drive_b.empty())
-            mount_floppy(1, drive_b.c_str());
-    } else if (!last_core_file.empty()) {   // a core loaded from Cores, no ROM
-        string fname = last_core_file;
-        fpga_program(fname.c_str());
-        forget_game();
-        last_core_file = fname;
-        _overlay_on = 1;
-        active_core = get_core_id();
+        overlay_cursor(2, 15);
+        overlay_printf("Quit game");
+        overlay_cursor(2, 17);
+        overlay_printf("<< Main menu");
+        if (!message.empty()) {
+            overlay_cursor(2, 20);
+            overlay_printf("%s", message.c_str());
+        }
     }
+
+    std::vector<int> get_options() override {
+        return rows;
+    }
+
+    bool on_choose(int idx) override {
+        int row = rows[idx];
+        if (row == 10) {
+            pending_action = ACTION_RESUME;
+            return true;
+        } else if (row == 11 || row == 12) {
+            message = "Not available yet";
+            do_redraw();
+            return false;
+        } else if (row == 13) {
+            core_info *core = loaded_core();
+            push_menu(std::unique_ptr<Menu>(create_pcxt_menu(
+                std::string(drv).append(core->rom_dir).c_str())));
+            return false;
+        } else if (row == 15) {
+            pending_action = ACTION_QUIT;
+            return true;
+        }
+        return true;                    // << Main menu: the game stays loaded
+    }
+};
+
+static void show_game_menu(void) {
+    overlay(1);
+    menu_clear();
+    push_menu(std::unique_ptr<Menu>(new GameMenu()));
+    menu_current()->do_redraw();
+    menu_input_loop();
+    menu_clear();
 }
 
-// Reset the running game, keeping the ROM already in the core's memory.
-// Toggling the loading state with no data holds the core in reset and then
-// releases it; the ROM, mapper and size settings are kept (see each core's
-// handling of rom_loading). Genesis can't do this: its loader zeroes the ROM
-// size on a load with no data (mdtang_top.sv:171-178), so it reloads the ROM.
-static void reset_game(void) {
-    if (!last_core) {
-        if (!last_core_file.empty())        // a core loaded from Cores, no ROM
-            reload_game();
-        return;
-    }
-    if (get_core_id() != last_core->id && get_core_id() != last_core->id) {
-        reload_game();                      // the game's core is gone
-        return;
-    }
-
-    switch (last_core->id) {
-    case 4:                                 // Genesis: reload the ROM
-        load_game(last_core, last_rom, false);
-        break;
-    case 3:                                 // GBA: stage 3 (config) resets without
-        set_loading_state(3);               // touching the save type
-        delay(20);
-        set_loading_state(0);
-        overlay(0);
-        break;
-    default:                                // NES, SNES, SMS, PC/XT
-        set_loading_state(1);
-        delay(20);
-        set_loading_state(0);
-        overlay(0);
-        break;
-    }
-}
-
-// Act on a combo or MODE press seen while a game was running.
-// Returns true if the main menu should be redrawn.
+// Act on what the controller or a menu asked for. Returns true if anything
+// was done, and the main menu should be redrawn.
 static bool handle_game_action(void) {
-    GameAction action = pending_action;
-    pending_action = ACTION_NONE;
-    switch (action) {
-    case ACTION_MENU:                       // the game stays loaded behind the menu
-        menu_clear();
-        overlay(1);
-        return true;
-    case ACTION_MODE_MENU: {                // the game is gone: load the real menu core
-        menu_clear();
-        string fname;
-        if (find_core_for_board(fname, "monitor.bin"))
-            fpga_program(fname.c_str());
-        forget_game();
-        clear_pad_states();
-        active_core = get_core_id();
-        overlay(1);
-        return true;
-    }
-    case ACTION_RESET:
-        overlay_status("Resetting game");
-        send_hid_state(0, 0);               // release the combo's buttons in the core
-        clear_pad_states();
-        reset_game();
-        return true;
-    case ACTION_MODE_RELOAD:
-        overlay_status("FPGA reloaded, restarting game");
-        reload_game();
-        return true;
-    default:
-        return false;
+    bool acted = false;
+    for (;;) {
+        GameAction action = pending_action;
+        pending_action = ACTION_NONE;
+        switch (action) {
+        case ACTION_GAME_MENU:
+            show_game_menu();           // may set another action
+            break;
+        case ACTION_RESUME:
+            menu_clear();
+            if (game_loaded())
+                overlay(0);             // the main loop goes back to the game
+            break;
+        case ACTION_QUIT:
+            menu_clear();
+            quit_game();
+            break;
+        default:
+            return acted;
+        }
+        acted = true;
     }
 }
 
@@ -577,33 +608,39 @@ static void main_task(void *pvParameters)
     // load monitor core at startup
     string fname;
     if (find_core_for_board(fname, "monitor.bin")) {
-        fpga_program(fname.c_str());
+        program_fpga(fname.c_str());
     } else {
         overlay_status("No monitor.bin found for board.");
     }
 
-    int line_start;
-    int menu_cnt = main_menu_config.size();
-    line_start = 13 - (menu_cnt+2+2) / 2;       // 2 lines for version, 2 lines for "TangCore"
+    controls_reset();
 
     while (1) {
         bool redraw = true;
         int choice = 0;
+        // main menu items: core IDs, -1 Cores, -2 Options, -3 the game menu
+        std::vector<int16_t> items;
+        int line_start = 0;
         for (;;) {
             uint32_t now = bflb_mtimer_get_time_ms();
             if (active_core == -1) {
-                // send_blank_packet();
                 active_core = get_core_id();            // 200ms timeout
                 overlay_status("core_id=%d", active_core);
                 if (active_core >= 0) redraw = true;    // redraw immediately if core is detected
             }
-            // if (core < 0) continue;         // do not draw or process input if core is not ready
             if (now - last_redraw_time > 5000) 
                 redraw = true;
             if (redraw) {
                 active_core = get_core_id();            // allow jtag to change core underneath us
                 overlay(overlay_on());                  // set correct overlay state
                 overlay_clear();
+
+                items.clear();
+                core_info *game = loaded_core();
+                if (game_loaded())
+                    items.push_back(-3);
+                items.insert(items.end(), main_menu_config.begin(), main_menu_config.end());
+                line_start = 13 - (items.size()+2+2) / 2;   // 2 lines for version, 2 for "TangCore"
 
                 int line = line_start;
                 overlay_cursor(0, line++);
@@ -612,19 +649,21 @@ static void main_task(void *pvParameters)
                 line++;
 
                 // display all menu items
-                for (int i = 0; i < menu_cnt; i++) {
+                for (size_t i = 0; i < items.size(); i++) {
                     overlay_cursor(2, line++);
-                    if (main_menu_config[i] > 0) {
-                        for (int j = 0; core_info_list[j].id != 0; j++) {
-                            if (core_info_list[j].id == main_menu_config[i]) {
-                                overlay_printf("%s", core_info_list[j].display_name);
-                                break;
-                            }
-                        }
-                    } else if (main_menu_config[i] == -1) {
+                    if (items[i] > 0) {
+                        core_info *c = find_core_by_id(items[i]);
+                        if (c)
+                            overlay_printf("%s", c->display_name);
+                    } else if (items[i] == -1) {
                         overlay_printf("Cores");
-                    } else if (main_menu_config[i] == -2) {
+                    } else if (items[i] == -2) {
                         overlay_printf("Options");
+                    } else if (items[i] == -3) {
+                        if (game && strlen(game->display_name) <= 18)     // 32 columns
+                            overlay_printf("Game menu (%s)", game->display_name);
+                        else
+                            overlay_printf("Game menu");
                     }
                 }
 
@@ -634,71 +673,37 @@ static void main_task(void *pvParameters)
                 overlay_printf(__DATE__);
                 last_redraw_time = now;
                 redraw = false;
-
-                // print some debug stats to UART
-                // uint16_t joy1=0, joy2=0;
-                // get_joypad_states(&joy1, &joy2);
-                // overlay_status("core=%d, j1=%04x, j2=%04x", active_core, joy1, joy2);
-                // overlay_status("Mtimer frequency: %d MHz", bflb_mtimer_get_freq() / 1000000);
-                // overlay_status("CPU frequency: %d MHz", bflb_clk_get_system_clock(BL_SYSTEM_CLOCK_MCU_CLK) / 1000000);
-                // overlay_status("GPIO0-3 status: %08x %08x %08x %08x", *reg_gpio0, *reg_gpio1, *reg_gpio2, *reg_gpio3);
             }
 
-            bool before_overlay = overlay_on();
-            int r = joy_choice(line_start+2, menu_cnt, &choice, OSD_KEY_CODE);
+            int r = joy_choice(line_start+2, items.size(), &choice);
             if (handle_game_action()) {
                 redraw = true;
                 continue;
             }
             if (r == 1) break;
 
-            if (!before_overlay && overlay_on() && active_core > 0) {
-                // overlay is turned back on, now display the pop-up menu
-                DEBUG("Displaying pop-up menu\n");
-                menu_clear();
-                // Menu *menu = core->create_menu(core->rom_dir)
-                core_info *core = find_core_by_id(active_core);
-                if (core != NULL) {
-                    DEBUG("Found core_info. Displaying menu\n");
-                    Menu *menu;
-                    if (active_core == 6) {
-                        menu = create_pcxt_menu(std::string(drv).append(core->rom_dir).c_str());
-                    } else {
-                        menu = create_default_menu(std::string(drv).append(core->rom_dir).c_str());
-                    }
-                    std::unique_ptr<Menu> menu_ptr(menu);
-                    push_menu(std::move(menu_ptr));
-                    menu->do_redraw();
-                    menu_input_loop();
-                    redraw = true;
-                }
-            }
-
             delay(20);
         }
 
-        if (main_menu_config[choice] > 0) {
+        int16_t item = items[choice];
+        if (item > 0) {
             // Load rom or core from USB drive
-            struct core_info *core = NULL;
-            for (int i = 0; core_info_list[i].id != 0; i++) {
-                if (core_info_list[i].id == main_menu_config[choice]) {
-                    core = &core_info_list[i];
-                    break;
-                }
-            }
+            struct core_info *core = find_core_by_id(item);
             if (core) {
                 std::string dir = std::string(drv).append(core->rom_dir);
                 menu_loadrom(dir.c_str());
             }
-        } else if (main_menu_config[choice] == -1) {
+        } else if (item == -1) {
             // load cores manually
             std::string dir = std::string(drv).append("cores");
             menu_loadrom(dir.c_str());
-        } else if (main_menu_config[choice] == -2) {
+        } else if (item == -2) {
             // Options
             menu_options();
-        } 
-        handle_game_action();               // combo pressed in the file browser
+        } else if (item == -3) {
+            pending_action = ACTION_GAME_MENU;
+        }
+        handle_game_action();               // game menu, or a combo in the file browser
 
         delay(300);
     }

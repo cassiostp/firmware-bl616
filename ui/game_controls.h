@@ -2,24 +2,32 @@
 
 #include <stdint.h>
 
-// Actions requested while a game is running. Set by the in-game input loop,
+// Actions requested by the controller. Set by controls_poll() or a menu,
 // handled by the main menu loop.
 enum GameAction {
     ACTION_NONE = 0,
-    ACTION_MENU,        // menu combo held: go to the main menu, game core stays loaded
-    ACTION_RESET,       // reset combo held: reset the running game
-    ACTION_MODE_MENU,   // MODE held: the FPGA reloaded from flash, go to the main menu
-    ACTION_MODE_RELOAD, // MODE tapped: the FPGA reloaded from flash, reload core + game
+    ACTION_GAME_MENU,   // open the game menu over the running game
+    ACTION_RESUME,      // close the menus and go back to the game
+    ACTION_QUIT,        // close the game and show the main menu
 };
 
 extern volatile GameAction pending_action;
 
-// In-game watcher. Call game_watch_start() when entering the in-game input
-// loop, then game_watch_poll() every iteration with the current pad states.
+// Watch the controller combos and the MODE button. Call controls_poll() on
+// every pass of an input loop, with the pad states (FPGA | USB) per player.
+// in_game: the overlay is off and input goes to the core.
+// game_loaded: a game (or a core from Cores) is loaded behind the menus.
 // Returns true when an action has been set and the loop should exit.
-// Without a game running only the combos are watched, not MODE.
-void game_watch_start(bool game_running);
-bool game_watch_poll(uint16_t pad1, uint16_t pad2);
+// MODE reloads the FPGA from flash; when that's detected, this restarts the
+// MCU (and so everything) and doesn't return.
+bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded);
+
+// Forget combo and MODE state, e.g. after the FPGA was reprogrammed (a new
+// core is silent while it starts, which must not look like MODE).
+void controls_reset(void);
+
+// A game (or a core from Cores) is loaded behind the menus. In main.cpp.
+bool game_loaded(void);
 
 // Main menu "Options" screen
 void menu_options(void);

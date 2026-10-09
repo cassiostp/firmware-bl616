@@ -48,12 +48,8 @@ void menu_input_loop() {
         joy1 |= hid1;
         joy2 |= hid2;
 
-        // DEBUG("Joy1: %04x, Joy2: %04x\n", joy1, joy2);
-
-        if (joy1 == OSD_KEY_CODE || joy2 == OSD_KEY_CODE) {
-            overlay(0);    // turn off OSD
-            delay(300);
-        }
+        if (controls_poll(joy1, joy2, false, game_loaded()))   // menu combo: back to the game
+            break;
 
         if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up
             if (active > 0) active--;
@@ -74,6 +70,7 @@ void menu_input_loop() {
             (joy1 & 0x1) || (joy2 & 0x1))       // button B pressed
         {
             int depth = menu_stack.size();
+            suppress_held_buttons();            // one press, one choice
             bool r = menu_current()->on_choose(active);
             if (r) {
                 pop_menu();

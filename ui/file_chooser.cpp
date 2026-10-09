@@ -69,7 +69,7 @@ bool FileChooser::choose_file(string &res) {
             }
             delay(300);
             while (1) {
-                int r = joy_choice(TOPLINE, files.size(), &active, OSD_KEY_CODE);
+                int r = joy_choice(TOPLINE, files.size(), &active);
                 if (pending_action != ACTION_NONE)              // combo or MODE in game
                     return false;
                 if (r == 1 || r == 4) {

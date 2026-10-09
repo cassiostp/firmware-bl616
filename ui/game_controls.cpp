@@ -15,26 +15,25 @@ extern "C" {
 volatile GameAction pending_action = ACTION_NONE;
 
 /////////////////////////////////////////////////////////////////////////////////
-// In-game watcher: button combos and the MODE (FPGA reconfig) button
+// Controller combos and the MODE (FPGA reconfig) button
 
-#define COMBO_HOLD_MS     300     // combo must be held this long to trigger
-#define COMBO_RELEASE_MS  3000    // max wait for the combo to be released
-#define CORE_POLL_MS      250     // how often to ask the FPGA for its core ID
-#define FLASH_CORE_ID     0       // what the bitstream in the FPGA's flash answers
+#define MENU_HOLD_MS      100     // menu combo: held this long (debounce)
+#define QUIT_HOLD_MS      3000    // quit combo: held this long
+#define POLL_MS_GAME      250     // how often to ask the FPGA for its core ID
+#define POLL_MS_MENU      500
+#define MODE_SILENT_MS    600     // FPGA silent this long, then back: MODE was pressed
 
-static bool watch_mode;             // a game is running: watch for MODE
-static int16_t watch_core;          // last core ID seen (for the log)
-static uint64_t combo_since;        // when the current combo started being held
 static uint16_t combo_held;         // which combo is being held (0 = none)
+static uint64_t combo_since;        // when it started being held
 static uint64_t last_poll;
+static bool seen_answer;            // the FPGA answered since the last reset
 static uint64_t silent_since;       // start of the first unanswered poll (0 = answering)
 
-void game_watch_start(bool game_running) {
-    watch_mode = game_running;
-    watch_core = -1;
-    combo_since = 0;
+void controls_reset(void) {
     combo_held = 0;
+    combo_since = 0;
     last_poll = bflb_mtimer_get_time_ms();
+    seen_answer = false;
     silent_since = 0;
 }
 
@@ -42,25 +41,12 @@ static bool pressed(uint16_t pad1, uint16_t pad2, uint16_t combo) {
     return combo && (((pad1 & combo) == combo) || ((pad2 & combo) == combo));
 }
 
-// wait until no pad holds any button of `combo`, so the release isn't seen
-// as menu input
-static void wait_combo_release(uint16_t combo) {
-    uint64_t start = bflb_mtimer_get_time_ms();
-    while (bflb_mtimer_get_time_ms() - start < COMBO_RELEASE_MS) {
-        uint16_t joy1, joy2, hid1, hid2;
-        get_joypad_states(&joy1, &joy2, &hid1, &hid2);
-        if (!(((joy1 | hid1) | (joy2 | hid2)) & combo))
-            break;
-        delay(20);
-    }
-}
-
-static bool check_combos(uint16_t pad1, uint16_t pad2) {
+static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
     uint16_t held = 0;
     if (pressed(pad1, pad2, settings.menu_combo))
         held = settings.menu_combo;
-    else if (pressed(pad1, pad2, settings.reset_combo))
-        held = settings.reset_combo;
+    else if (pressed(pad1, pad2, settings.quit_combo))
+        held = settings.quit_combo;
 
     uint64_t now = bflb_mtimer_get_time_ms();
     if (held != combo_held) {
@@ -68,59 +54,62 @@ static bool check_combos(uint16_t pad1, uint16_t pad2) {
         combo_since = now;
         return false;
     }
-    if (!held || now - combo_since < COMBO_HOLD_MS)
+    if (!held || !game_loaded)
         return false;
 
-    wait_combo_release(held);
-    pending_action = held == settings.menu_combo ? ACTION_MENU : ACTION_RESET;
-    dprint("Combo %04x: action %d", held, pending_action);
+    GameAction action = ACTION_NONE;
+    if (held == settings.menu_combo && now - combo_since >= MENU_HOLD_MS)
+        action = in_game ? ACTION_GAME_MENU : ACTION_RESUME;
+    else if (held == settings.quit_combo && in_game && now - combo_since >= QUIT_HOLD_MS)
+        action = ACTION_QUIT;
+    if (action == ACTION_NONE)
+        return false;
+
+    // act now, and keep the buttons from reaching menus or the core until
+    // they're let go
+    suppress_held_buttons();
+    combo_held = 0;
+    pending_action = action;
+    dprint("Combo %04x: action %d", held, action);
     return true;
 }
 
 // MODE is wired to the FPGA's RECONFIG_N, so firmware can't see the button.
-// What it can see: while MODE is held the FPGA is unconfigured and doesn't
-// answer, and after release the flash bitstream answers with core ID 0.
-// The silent time is roughly hold time + reload time, measured to within
-// about one poll interval either way.
-static bool check_mode_button() {
+// What it can see: the FPGA stops answering while it reloads from flash, then
+// answers again. A single missed reply is normal (one can be dropped while
+// the FPGA sends a joypad frame), so only a longer silence counts. MODE then
+// restarts everything, like a power cycle.
+static void check_mode_button(bool in_game) {
     uint64_t poll_start = bflb_mtimer_get_time_ms();
-    if (poll_start - last_poll < CORE_POLL_MS)
-        return false;
+    if (poll_start - last_poll < (in_game ? POLL_MS_GAME : POLL_MS_MENU))
+        return;
     last_poll = poll_start;
 
     int16_t id = get_core_id();         // up to 200ms when the FPGA is silent
-    if (id < 0) {                       // silent, or a dropped reply
-        if (!silent_since) silent_since = poll_start;
-        return false;
+    if (id < 0) {
+        if (seen_answer && !silent_since)
+            silent_since = poll_start;
+        return;
     }
-    if (id != FLASH_CORE_ID) {          // our game, or a core someone else loaded
-        watch_core = id;
-        silent_since = 0;
-        return false;
-    }
-    if (get_core_id() != FLASH_CORE_ID) // confirm before reprogramming anything
-        return false;
-
-    // the flash bitstream answered: MODE reloaded the FPGA underneath us.
-    // Split taps from holds halfway between their expected silent times,
-    // which tolerates a mode_reload_ms that's off by over a second.
     uint64_t now = bflb_mtimer_get_time_ms();
-    uint32_t silent_ms = silent_since ? (uint32_t)(now - silent_since) : 0;
-    uint32_t threshold = settings.mode_reload_ms + settings.mode_hold_ms / 2;
-    pending_action = silent_ms >= threshold ? ACTION_MODE_MENU : ACTION_MODE_RELOAD;
-    dprint("FPGA reconfigured: core %d -> %d after %lu ms silent, action %d",
-           watch_core, id, (unsigned long)silent_ms, pending_action);
+    if (silent_since && now - silent_since >= MODE_SILENT_MS) {
+        dprint("FPGA was silent for %lu ms: MODE pressed, restarting",
+               (unsigned long)(now - silent_since));
+        overlay(1);
+        overlay_status("Restarting...");
+        delay(50);
+        GLB_SW_System_Reset();
+    }
+    seen_answer = true;
     silent_since = 0;
-    return true;
 }
 
-bool game_watch_poll(uint16_t pad1, uint16_t pad2) {
+bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
     if (pending_action != ACTION_NONE)
         return true;
-    if (check_combos(pad1, pad2))
+    if (check_combos(pad1, pad2, in_game, game_loaded))
         return true;
-    if (watch_mode && check_mode_button())
-        return true;
+    check_mode_button(in_game);
     return false;
 }
 
@@ -143,11 +132,10 @@ static uint16_t capture_combo(const char *what) {
     overlay_cursor(0, 16);
     overlay_printf("  Wait 10s to cancel.");
 
-    // let go of the button that opened this screen
-    wait_combo_release(0xfff);
+    suppress_held_buttons();        // ignore the button that opened this screen
 
     uint64_t start = bflb_mtimer_get_time_ms();
-    uint64_t steady_since = 0;
+    uint64_t steady_since = start;
     uint16_t last = 0;
     while (1) {
         uint64_t now = bflb_mtimer_get_time_ms();
@@ -165,7 +153,10 @@ static uint16_t capture_combo(const char *what) {
         if (cur)
             start = now;            // any input restarts the cancel timeout
         if (combo_count(cur) == COMBO_BUTTONS && now - steady_since >= 1000) {
-            wait_combo_release(0xfff);
+            overlay_cursor(0, 18);
+            overlay_printf("  %-28s", (combo_to_string(cur, true) + " - got it").c_str());
+            suppress_held_buttons();    // releasing them mustn't act on the menu
+            delay(500);                 // long enough to read
             return cur;
         }
         if (now - start >= 10000)
@@ -176,21 +167,22 @@ static uint16_t capture_combo(const char *what) {
 
 // Reboot the BL616 into its ROM bootloader, as if BOOT were held at power-up,
 // so the firmware can be flashed without opening the case. The ROM reads the
-// boot selection from HBN_RSV2, which survives a software reset.
+// boot selection from HBN_RSV2, which survives a software reset but not a
+// power cut.
 static void reboot_to_flash_mode(void) {
     overlay_clear();
     overlay_cursor(0, 9);
     //              01234567890123456789012345678901
     overlay_printf("  --- Flash mode ---");
     overlay_cursor(0, 11);
-    overlay_printf("  The MCU is now waiting to be");
-    overlay_cursor(0, 12);
-    overlay_printf("  flashed. Connect the BL616");
+    overlay_printf("  Ready to be flashed.");
     overlay_cursor(0, 13);
-    overlay_printf("  USB-C port to a PC and use");
+    overlay_printf("  Keep the power connected,");
     overlay_cursor(0, 14);
-    overlay_printf("  Flash Cube.");
-    overlay_cursor(0, 16);
+    overlay_printf("  and connect the BL616 USB-C");
+    overlay_cursor(0, 15);
+    overlay_printf("  port to the PC.");
+    overlay_cursor(0, 17);
     overlay_printf("  Power-cycle to cancel.");
     delay(100);                     // let the UART drain
     HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
@@ -208,7 +200,9 @@ struct FlashModeMenu: Menu {
         overlay_cursor(0, 12);
         overlay_printf("  flashed from a PC, without");
         overlay_cursor(0, 13);
-        overlay_printf("  the BOOT button.");
+        overlay_printf("  the BOOT button. Keep the");
+        overlay_cursor(0, 14);
+        overlay_printf("  power connected.");
         overlay_cursor(2, 16);
         overlay_printf("Restart in flash mode");
         overlay_cursor(2, 17);
@@ -238,33 +232,31 @@ struct OptionsMenu: Menu {
         //              01234567890123456789012345678901
         overlay_printf("         --- Options ---");
         overlay_cursor(2, 10);
-        overlay_printf("Menu:  %s", combo_to_string(edit.menu_combo, true).c_str());
+        overlay_printf("Menu: %s", combo_to_string(edit.menu_combo, true).c_str());
         overlay_cursor(2, 11);
-        overlay_printf("Reset: %s", combo_to_string(edit.reset_combo, true).c_str());
+        overlay_printf("Quit: %s", combo_to_string(edit.quit_combo, true).c_str());
         overlay_cursor(2, 12);
-        overlay_printf("MODE hold: %lu.%lu s", (unsigned long)(edit.mode_hold_ms / 1000),
-                       (unsigned long)(edit.mode_hold_ms % 1000 / 100));
-        overlay_cursor(2, 13);
         overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
-        overlay_cursor(2, 14);
+        overlay_cursor(2, 13);
         overlay_printf("Flash mode...");
-        overlay_cursor(2, 16);
+        overlay_cursor(2, 15);
         overlay_printf("Save");
-        overlay_cursor(2, 17);
+        overlay_cursor(2, 16);
         overlay_printf("<< Back");
         overlay_cursor(2, 19);
-        //                01234567890123456789012345678901
-        overlay_printf("Hold a combo in game to use it");
+        overlay_printf("In game:");
         overlay_cursor(2, 20);
-        overlay_printf("MODE: tap=reset, hold=menu");
+        overlay_printf(" Menu combo: game menu");
+        overlay_cursor(2, 21);
+        overlay_printf(" Hold quit combo 3s: quit");
         if (!message.empty()) {
-            overlay_cursor(2, 22);
+            overlay_cursor(2, 23);
             overlay_printf("%s", message.c_str());
         }
     }
 
     std::vector<int> get_options() override {
-        return {10, 11, 12, 13, 14, 16, 17};
+        return {10, 11, 12, 13, 15, 16};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -287,30 +279,24 @@ struct OptionsMenu: Menu {
     bool on_choose(int idx) override {
         switch (idx) {
         case 0:
-            return set_combo(&edit.menu_combo, edit.reset_combo, "menu combo");
+            return set_combo(&edit.menu_combo, edit.quit_combo, "menu combo");
         case 1:
-            return set_combo(&edit.reset_combo, edit.menu_combo, "reset combo");
-        case 2:     // cycle 2s .. 5s
-            edit.mode_hold_ms = edit.mode_hold_ms >= 5000 ? 2000 : (edit.mode_hold_ms / 1000 + 1) * 1000;
-            message = "";
-            do_redraw();
-            wait_combo_release(BTN_A | BTN_B);
-            return false;
-        case 3:
+            return set_combo(&edit.quit_combo, edit.menu_combo, "quit combo");
+        case 2:
             edit.diag = !edit.diag;
             message = "";
             do_redraw();
-            wait_combo_release(BTN_A | BTN_B);
+            suppress_held_buttons();
             return false;
-        case 4:
-            wait_combo_release(BTN_A | BTN_B);
+        case 3:
+            suppress_held_buttons();
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 5:
+        case 4:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             do_redraw();
-            wait_combo_release(BTN_A | BTN_B);
+            suppress_held_buttons();
             return false;
         default:
             return true;    // back
@@ -322,7 +308,7 @@ void menu_options(void) {
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new OptionsMenu()));
     menu_current()->do_redraw();
-    wait_combo_release(0xfff);  // let go of the button that opened Options
+    suppress_held_buttons();    // the button that opened Options
     menu_input_loop();
     menu_clear();
 }
