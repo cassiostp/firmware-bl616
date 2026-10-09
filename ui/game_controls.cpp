@@ -3,6 +3,7 @@
 
 extern "C" {
 #include "bl616_glb.h"
+#include "bl616_hbn.h"
 }
 
 #include "game_controls.h"
@@ -213,6 +214,61 @@ static uint16_t capture_combo(const char *what) {
     }
 }
 
+// Reboot the BL616 into its ROM bootloader, as if BOOT were held at power-up,
+// so the firmware can be flashed without opening the case. The ROM reads the
+// boot selection from HBN_RSV2, which survives a software reset but not a
+// power cut.
+static void reboot_to_flash_mode(void) {
+    overlay_clear();
+    overlay_cursor(0, 9);
+    //              01234567890123456789012345678901
+    overlay_printf("  --- Flash mode ---");
+    overlay_cursor(0, 11);
+    overlay_printf("  Ready to be flashed.");
+    overlay_cursor(0, 13);
+    overlay_printf("  Keep the power connected,");
+    overlay_cursor(0, 14);
+    overlay_printf("  and connect the BL616 USB-C");
+    overlay_cursor(0, 15);
+    overlay_printf("  port to the PC.");
+    overlay_cursor(0, 17);
+    overlay_printf("  Power-cycle to cancel.");
+    delay(100);                     // let the UART drain
+    HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
+    GLB_SW_System_Reset();
+}
+
+struct FlashModeMenu: Menu {
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 9);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- Flash mode ---");
+        overlay_cursor(0, 11);
+        overlay_printf("  Restarts the MCU ready to be");
+        overlay_cursor(0, 12);
+        overlay_printf("  flashed from a PC, without");
+        overlay_cursor(0, 13);
+        overlay_printf("  the BOOT button. Keep the");
+        overlay_cursor(0, 14);
+        overlay_printf("  power connected.");
+        overlay_cursor(2, 16);
+        overlay_printf("Restart in flash mode");
+        overlay_cursor(2, 17);
+        overlay_printf("<< Cancel");
+    }
+
+    std::vector<int> get_options() override {
+        return {16, 17};
+    }
+
+    bool on_choose(int idx) override {
+        if (idx == 0)
+            reboot_to_flash_mode();     // doesn't return
+        return true;
+    }
+};
+
 struct OptionsMenu: Menu {
     Settings edit;
     std::string message;
@@ -234,6 +290,8 @@ struct OptionsMenu: Menu {
         overlay_printf("Hold to close: %lu s", (unsigned long)(edit.close_hold_ms / 1000));
         overlay_cursor(2, 13);
         overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
+        overlay_cursor(2, 14);
+        overlay_printf("Flash mode...");
         overlay_cursor(2, 16);
         overlay_printf("Save");
         overlay_cursor(2, 17);
@@ -254,7 +312,7 @@ struct OptionsMenu: Menu {
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 16, 17};
+        return {9, 10, 11, 12, 13, 14, 16, 17};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -291,6 +349,9 @@ struct OptionsMenu: Menu {
             edit.diag = !edit.diag;
             break;
         case 5:
+            push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
+            return false;
+        case 6:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             break;
