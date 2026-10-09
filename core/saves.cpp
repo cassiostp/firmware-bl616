@@ -48,6 +48,7 @@ extern "C" {
 
 #include "utils.h"
 #include "overlay.h"
+#include "settings.h"
 
 // Per-core save geometry. Blocks are 512 bytes, like the wire protocol.
 struct save_geom {
@@ -55,13 +56,14 @@ struct save_geom {
     uint16_t blocks;
     const char *dir;        // folder under <drive>saves/
     uint8_t blank;          // byte an empty save RAM comes up as
+    bool pause_dump;        // the game shares the save RAM's port: pause it while dumping
 };
 static const save_geom save_geoms[] = {
     // SMS: the core's 32 KB nvram. MiSTer's SMS core (SMS_MiSTer) keeps the
     // same layout, raw and interchangeable: its backup RAM is a dpram
     // widthad_a=15 (SMS.sv), saved 64 x 512 bytes straight to <rom>.sav, and
     // its empty-RAM init file (rtl/nvram_ff.mif) is all 0xFF, not 0x00.
-    {5, 64, "sms", 0xFF},
+    {5, 64, "sms", 0xFF, false},     // dual-port on-chip RAM: no pause
     // SNES: the block count is per game, from the ROM header's SRAM size byte
     // (saves_set_blocks; 0 = the game has no battery RAM). Two of MiSTer's
     // SNES core (SNES_MiSTer) details carry over: the backup RAM is dumped
@@ -70,7 +72,9 @@ static const save_geom save_geoms[] = {
     // it with 8'hFF on every ROM load (data_a = clearing_ram ? 8'hFF, SNES.sv)
     // -- and battery saves are gated on the header's RAM-size byte being
     // non-zero (bk_ena <= |ram_mask).
-    {2, 0, "snes", 0xFF},
+    // The save channel shares the SDRAM BSRAM port with the game, so the game
+    // is paused while a dump runs (~2.6 ms per block, twice).
+    {2, 0, "snes", 0xFF, true},
 };
 #define N_GEOMS (sizeof(save_geoms) / sizeof(save_geoms[0]))
 
@@ -141,8 +145,21 @@ static bool sv_fetch_block(uint16_t blk) {                          // 0x12 -> s
 }
 
 // ---- flush: dump the core's RAM to sv_path. Called with sv_mutex held ----
+static void sv_dump_and_write(void);
+
 static void sv_flush_locked(void) {
     if (!sv_geom || !sv_path[0]) return;
+    // Pause a game that shares the save RAM's port, so the dump can't delay or
+    // disturb its accesses. Afterwards recompute the bits rather than restore
+    // them: a menu may have opened (and paused the game) meanwhile.
+    if (sv_geom->pause_dump)
+        set_core_config(get_core_config() | CORE_CFG_MENU_PAUSE);
+    sv_dump_and_write();
+    if (sv_geom->pause_dump)
+        apply_core_config();
+}
+
+static void sv_dump_and_write(void) {
     // Clear BEFORE the dump: the FPGA clears its flag when block 0 is requested,
     // and a write that lands during the dump sends a fresh 0x0B that sets this
     // again, so a save can lag but cannot be silently lost.
