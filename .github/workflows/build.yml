@@ -25,6 +25,12 @@ env:
   SDK_SHA: 7f44f9ea6b4ccf96db8c5236c8024b68e2a76df7
   TOOLCHAIN_REPO: https://github.com/bouffalolab/toolchain_gcc_t-head_linux.git
   TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0
+  # Sipeed's closed-source BL616 partner image (flashed at 0x0, boots the
+  # firmware at 0x40000). Not buildable; taken from the TangCore v0.9 release
+  # and checked against these hashes.
+  PARTNER_ZIP_URL: https://github.com/nand2mario/tangcore/releases/download/v0.9/tangcore-0.9.zip
+  PARTNER_ZIP_SHA256: 0d20bbc6950065d3cce1cadf09a72804742684274bf39314b0c263b7014d939a
+  PARTNER_BIN_SHA256: a0cfd9c95a4ae3615dda78ed52bbe48a08fe61095b8e61a774fcb64d7c50a8cc
 
 jobs:
   build:
@@ -97,13 +103,17 @@ jobs:
           sed -e "s/bl616_fpga_partner\.bin/bl616_fpga_partner_${BOARD}.bin/" \
               -e "s/tangcore\.bin/tangcore_${BOARD}.bin/" \
               flash.ini > "out/flash_${BOARD}.ini"
+          # Sipeed partner image, so the artifact is a complete flash set
+          curl -fsSL -o partner.zip "$PARTNER_ZIP_URL"
+          echo "$PARTNER_ZIP_SHA256  partner.zip" | sha256sum -c -
+          unzip -p partner.zip "tangcore-0.9/firmware-bl616/bl616_fpga_partner_${BOARD}.bin" \
+            > "out/bl616_fpga_partner_${BOARD}.bin"
+          echo "$PARTNER_BIN_SHA256  out/bl616_fpga_partner_${BOARD}.bin" | sha256sum -c -
           ls -l out
           {
             echo "### ${BOARD}"
             echo
-            echo "Flash \`flash_${BOARD}.ini\` with Bouffalo Flash Cube. It also needs"
-            echo "\`bl616_fpga_partner_${BOARD}.bin\` in the same folder, which is not built here:"
-            echo "take it from the TangCore release zip or Sipeed's download page."
+            echo "Unzip the artifact and flash \`flash_${BOARD}.ini\` with Bouffalo Flash Cube."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifact
@@ -113,4 +123,5 @@ jobs:
           path: |
             out/tangcore_${{ matrix.board }}.bin
             out/flash_${{ matrix.board }}.ini
+            out/bl616_fpga_partner_${{ matrix.board }}.bin
           if-no-files-found: error
