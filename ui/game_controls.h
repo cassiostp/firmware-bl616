@@ -36,3 +36,7 @@ bool game_loaded(void);
 
 // Main menu "Options" screen
 void menu_options(void);
+
+// Game menu "Scanlines..." screen
+struct Menu;
+Menu *create_scanline_menu(void);

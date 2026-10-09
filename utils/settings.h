@@ -27,7 +27,9 @@ struct Settings {
     bool reset_enabled;         // the reset combo can be turned off
     uint32_t close_hold_ms;     // hold the reset combo this long to close the game
     bool diag;                  // show the diagnostic line at the top of menus
-    bool scanlines;             // darken one output line per source line in the cores (core_config bit 16)
+    bool scanlines;             // darken the gaps between picture lines in the cores (core_config bit 16)
+    uint8_t scanline_dark;      // 0..3: 25, 50, 75, 100 % darker (core_config bits 19:18)
+    bool scanline_thick;        // thick lines instead of thin ones (core_config bit 20)
     bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
 };
 
@@ -41,6 +43,12 @@ bool settings_save();
 // shown over a running game (if pause_in_menu). Keeps the low 16 bits.
 // overlay() calls it on every change.
 void apply_core_config();
+
+// Keep a running game paused with the menu hidden (the scanline preview).
+void core_config_hold_pause(bool hold);
+
+// "75%" for scanline_dark
+int scanline_dark_percent(uint8_t dark);
 
 int combo_count(uint16_t combo);
 bool combo_valid(uint16_t combo, const char **why);

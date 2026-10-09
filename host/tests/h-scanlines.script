@@ -1,0 +1,61 @@
+# Game menu > Scanlines: each change reaches the core at once (bit 16 on,
+# bits 19:18 darkness, bit 20 thick); Preview hides the menu with the game
+# paused and steps darkness with LEFT/RIGHT; the choice survives a power cycle.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-config-bit 16 0
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Scanlines ---"
+press a
+expect-screen "Scanlines: ON"
+expect-config-bit 16 1
+expect-config-bit 19 1
+expect-config-bit 18 0
+press down
+press a
+expect-screen "Darkness: 100%"
+expect-config-bit 18 1
+press down
+press a
+expect-screen "Lines: Thick"
+expect-config-bit 20 1
+press down
+press a
+expect-overlay off
+expect-config-bit 17 1
+press left
+expect-config-bit 18 0
+expect-config-bit 19 1
+press b
+expect-screen "Darkness: 75%"
+expect-config-bit 17 1
+press down
+press a
+expect-screen "Resume"
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-config-bit 16 1
+expect-config-bit 19 1
+expect-config-bit 18 0
+expect-config-bit 20 1

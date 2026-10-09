@@ -103,6 +103,7 @@ run_test d-sms-save sms:game.sms
 run_test e-options-persist
 run_test f-md-save md:game.md
 run_test g-mode-early sms:cgame.sms
+run_test h-scanlines sms:cgame.sms
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

@@ -159,8 +159,11 @@ extern void forget_core_config(void);     // a new bitstream: our copy is 0 agai
 
 // core_config option bits shared by all game cores. Bit 16 enables the
 // optional scanline effect, bit 17 pauses the game while the game menu is
-// open. Every core defaults them to 0 (off).
+// open, bits 19:18 set how dark the scanlines are (25/50/75/100 %) and bit 20
+// makes them thick. Every core defaults them to 0.
 #define CORE_CFG_SCANLINES (1u << 16)
 #define CORE_CFG_MENU_PAUSE (1u << 17)
+#define CORE_CFG_SCANLINE_DARK_SHIFT 18
+#define CORE_CFG_SCANLINE_THICK (1u << 20)
 
 extern const char *cstr_find_ignore_case(const char *str, const char *substr);

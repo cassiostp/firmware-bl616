@@ -361,14 +361,12 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 13);
         overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
         overlay_cursor(2, 14);
-        overlay_printf("Scanlines: %s", edit.scanlines ? "ON" : "OFF");
-        overlay_cursor(2, 15);
         overlay_printf("Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF");
-        overlay_cursor(2, 16);
+        overlay_cursor(2, 15);
         overlay_printf("Flash mode...");
-        overlay_cursor(2, 17);
+        overlay_cursor(2, 16);
         overlay_printf("Save");
-        overlay_cursor(2, 18);
+        overlay_cursor(2, 17);
         overlay_printf("<< Back");
         overlay_cursor(2, 20);
         //                01234567890123456789012345678901
@@ -379,14 +377,16 @@ struct OptionsMenu: Menu {
         overlay_printf(" Reset combo: reset the game,");
         overlay_cursor(2, 23);
         overlay_printf(" keep holding: close the game");
+        overlay_cursor(2, 24);
+        overlay_printf("Scanlines: in the game menu");
         if (!message.empty()) {
-            overlay_cursor(2, 25);
+            overlay_cursor(2, 26);
             overlay_printf("%s", message.c_str());
         }
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -423,15 +423,12 @@ struct OptionsMenu: Menu {
             edit.diag = !edit.diag;
             break;
         case 5:
-            edit.scanlines = !edit.scanlines;
-            break;
-        case 6:
             edit.pause_in_menu = !edit.pause_in_menu;
             break;
-        case 7:
+        case 6:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 8:
+        case 7:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away
@@ -443,6 +440,134 @@ struct OptionsMenu: Menu {
         return false;
     }
 };
+
+/////////////////////////////////////////////////////////////////////////////////
+// Scanlines, in the game menu: changes reach the running core at once, and
+// are saved to tangcore.cfg on the way out
+
+// Show the paused game without the menu, and change the scanlines on it.
+// Returns true if anything changed.
+static bool scanline_preview(void) {
+    bool changed = false;
+    suppress_held_buttons();            // the A that chose Preview
+    core_config_hold_pause(true);       // the game stays paused without the menu
+    overlay(0);
+    for (;;) {
+        uint16_t joy1, joy2, hid1, hid2;
+        get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        uint16_t p = joy1 | hid1 | joy2 | hid2;
+        if (controls_poll(joy1 | hid1, joy2 | hid2, false, game_loaded()))
+            break;                      // the menu combo: back to the game
+        bool step = true;
+        if ((p & BTN_LEFT) && settings.scanline_dark > 0)
+            settings.scanline_dark--;
+        else if ((p & BTN_RIGHT) && settings.scanline_dark < 3)
+            settings.scanline_dark++;
+        else if (p & (BTN_UP | BTN_DOWN))
+            settings.scanline_thick = !settings.scanline_thick;
+        else if (p & BTN_SELECT)
+            settings.scanlines = !settings.scanlines;
+        else if (p & (BTN_A | BTN_B))
+            break;
+        else
+            step = false;
+        if (step) {
+            settings.scanlines |= !(p & BTN_SELECT);    // adjusting lines turns them on
+            apply_core_config();
+            changed = true;
+            suppress_held_buttons();    // one press, one step
+        }
+        delay(20);
+    }
+    suppress_held_buttons();            // the button that ended it isn't a menu choice
+    overlay(1);
+    core_config_hold_pause(false);
+    return changed;
+}
+
+struct ScanlineMenu: Menu {
+    bool changed = false;
+    std::string message;
+
+    ~ScanlineMenu() {                   // left some other way than Back (the menu combo)
+        if (changed)
+            settings_save();
+    }
+
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- Scanlines ---");
+        overlay_cursor(2, 9);
+        overlay_printf("Scanlines: %s", settings.scanlines ? "ON" : "OFF");
+        overlay_cursor(2, 10);
+        overlay_printf("Darkness: %d%%", scanline_dark_percent(settings.scanline_dark));
+        overlay_cursor(2, 11);
+        overlay_printf("Lines: %s", settings.scanline_thick ? "Thick" : "Thin");
+        overlay_cursor(2, 12);
+        overlay_printf("Preview");
+        overlay_cursor(2, 14);
+        overlay_printf("<< Back");
+        overlay_cursor(2, 17);
+        //                01234567890123456789012345678901
+        overlay_printf("Preview hides this menu:");
+        overlay_cursor(2, 18);
+        overlay_printf(" LEFT/RIGHT  darkness");
+        overlay_cursor(2, 19);
+        overlay_printf(" UP/DOWN     thin/thick");
+        overlay_cursor(2, 20);
+        overlay_printf(" SELECT      on/off");
+        overlay_cursor(2, 21);
+        overlay_printf(" A or B      back here");
+        if (!message.empty()) {
+            overlay_cursor(2, 23);
+            overlay_printf("%s", message.c_str());
+        }
+    }
+
+    std::vector<int> get_options() override {
+        return {9, 10, 11, 12, 14};
+    }
+
+    bool on_choose(int idx) override {
+        message = "";
+        switch (idx) {
+        case 0:
+            settings.scanlines = !settings.scanlines;
+            break;
+        case 1:
+            settings.scanline_dark = (settings.scanline_dark + 1) & 3;
+            settings.scanlines = true;
+            break;
+        case 2:
+            settings.scanline_thick = !settings.scanline_thick;
+            settings.scanlines = true;
+            break;
+        case 3:
+            changed |= scanline_preview();
+            do_redraw();
+            return false;
+        default:                        // << Back: keep what was chosen
+            if (changed && !settings_save()) {
+                changed = false;        // Back again leaves without saving
+                message = "Save failed. Read-only drive?";
+                do_redraw();
+                return false;
+            }
+            changed = false;
+            return true;
+        }
+        changed = true;
+        apply_core_config();
+        do_redraw();
+        return false;
+    }
+};
+
+Menu *create_scanline_menu(void) {
+    return new ScanlineMenu();
+}
 
 void menu_options(void) {
     menu_clear();
