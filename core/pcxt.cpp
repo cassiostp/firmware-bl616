@@ -9,6 +9,7 @@
 
 bool floppy[2];
 std::string floppy_fname[2];
+std::string floppy_path[2];             // full path, to remount after a reload
 USB_NOCACHE_RAM_SECTION FIL f_floppy[2];
 
 static void IOWR(uint16_t addr, uint16_t data) {
@@ -26,6 +27,7 @@ bool mount_floppy(int drive, const char *fname) {
     // close any open image
     if (floppy[drive]) {
         f_close(&f_floppy[drive]);
+        floppy[drive] = false;
     }
 
     FILINFO fno;
@@ -71,7 +73,8 @@ bool mount_floppy(int drive, const char *fname) {
         heads = 2;
     } else {
         overlay_message( "Unsupported image size", 1);
-        return -1;
+        f_close(&f_floppy[drive]);
+        return false;
     }
     DEBUG("set floppy parameters\n");
     uint16_t off = drive ? 0xf0 : 0x00;
@@ -83,12 +86,24 @@ bool mount_floppy(int drive, const char *fname) {
     IOWR(0xf205 + off, heads);   
 
     floppy[drive] = true;
+    floppy_path[drive] = fname;
     std::string s = fname;
     if (s.find_last_of('/') != std::string::npos)
         floppy_fname[drive] = s.substr(s.find_last_of('/') + 1);
     else
         floppy_fname[drive] = s;
     return true;
+}
+
+// Forget mounted images, when the PC/XT bitstream is replaced
+void forget_floppies() {
+    for (int d = 0; d < 2; d++) {
+        if (floppy[d])
+            f_close(&f_floppy[d]);
+        floppy[d] = false;
+        floppy_fname[d].clear();
+        floppy_path[d].clear();
+    }
 }
 
 int loadpc(const char *fname) {
@@ -160,7 +175,7 @@ void PcxtMenu::render() {
     overlay_cursor(0, 15);
     overlay_printf("  Reset Core\n");
     overlay_cursor(0, 17);
-    overlay_printf("  << Main Menu\n");
+    overlay_printf("  << Back\n");
 }
 
 std::vector<int> PcxtMenu::get_options() {
@@ -170,7 +185,7 @@ std::vector<int> PcxtMenu::get_options() {
 bool PcxtMenu::on_choose(int idx) {
     if (idx == 0 || idx == 1) {
         delay(200);
-        overlay_printf("Dir: %s\n", imgdir);
+        overlay_printf("Dir: %s\n", imgdir.c_str());
         FileChooser c;
         c.rootdir = imgdir;
         c.curdir = imgdir;
@@ -196,7 +211,6 @@ bool PcxtMenu::on_choose(int idx) {
         overlay(0);
         return true;            // close menu
     } else if (idx == 3) {
-        overlay_printf("<< Main Menu\n");
         return true;
     }
     return false;

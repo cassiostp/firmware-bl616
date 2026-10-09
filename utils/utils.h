@@ -80,7 +80,10 @@ extern "C" char *strcasestr(const char *haystack, const char *needle);
 bool get_core_status(void);
 // read joypad states, joy1/2 comes from FPGA, hid1/2 comes from USB
 void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2);
-extern int joy_choice(int start_line, int len, int *active, int overlay_key_code);
+extern int joy_choice(int start_line, int len, int *active);
+// Ignore the buttons held right now until each is released, so a button that
+// triggered something doesn't also act on whatever comes next.
+extern void suppress_held_buttons(void);
 extern void send_blank_packet(void);
 
 static inline void delay(uint32_t ms)
@@ -93,11 +96,6 @@ static inline void delay(uint32_t ms)
 #endif
 }
 
-#define OPTION_OSD_KEY_SELECT_START 1
-#define OPTION_OSD_KEY_SELECT_RIGHT 2
-
-extern int option_osd_key;
-#define OSD_KEY_CODE (option_osd_key == OPTION_OSD_KEY_SELECT_START ? 0xC : 0x84)
 
 extern void set_loading_state(int state);
 extern void send_fbuf_data(uint16_t len);

@@ -14,6 +14,7 @@ extern "C" {
 
 
 int _overlay_on = 1;
+volatile uint32_t overlay_hide_count = 0;   // overlay on->off transitions (diagnostics)
 int overlay_on() {
     return _overlay_on;
 }
@@ -155,6 +156,8 @@ void overlay_message(const char *msg, int center) {
 // turn overlay on/off
 void overlay(int state) {
     taskENTER_CRITICAL();
+    if (_overlay_on && !state)
+        overlay_hide_count++;
     _overlay_on = state;
     fpga_tx_header(0x08, 2);
     fpga_tx_byte(state);        

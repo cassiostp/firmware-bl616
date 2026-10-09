@@ -86,14 +86,32 @@ volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
 
-// read joypad states
+static uint16_t suppress_mask[4];   // per pad: buttons ignored until released
+
+// read joypad states, without suppressed buttons
 void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2)
 {
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        uint16_t *pads[4] = {joy1, joy2, hid1, hid2};
         *joy1 = joy1_state;
         *joy2 = joy2_state;
         *hid1 = hid1_state;
         *hid2 = hid2_state;
+        for (int i = 0; i < 4; i++) {
+            suppress_mask[i] &= *pads[i];       // released: stop ignoring
+            *pads[i] &= ~suppress_mask[i];
+        }
+        xSemaphoreGive(state_mutex);
+    }
+}
+
+void suppress_held_buttons(void)
+{
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        suppress_mask[0] |= joy1_state;
+        suppress_mask[1] |= joy2_state;
+        suppress_mask[2] |= hid1_state;
+        suppress_mask[3] |= hid2_state;
         xSemaphoreGive(state_mutex);
     }
 }
@@ -107,7 +125,9 @@ int16_t get_core_id(void) {
     }
 
     // send command 1
+    taskENTER_CRITICAL();
     fpga_tx_header(0x01, 1);
+    taskEXIT_CRITICAL();
 
     // TODO: use a queue for better performance
     uint64_t start = bflb_mtimer_get_time_ms();

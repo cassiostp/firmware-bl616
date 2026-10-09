@@ -6,6 +6,7 @@ extern "C" {
 }
 
 #include "file_chooser.h"
+#include "game_controls.h"
 #include "overlay.h"
 #include "utils.h"
 
@@ -68,7 +69,9 @@ bool FileChooser::choose_file(string &res) {
             }
             delay(300);
             while (1) {
-                int r = joy_choice(TOPLINE, files.size(), &active, OSD_KEY_CODE);
+                int r = joy_choice(TOPLINE, files.size(), &active);
+                if (pending_action != ACTION_NONE)              // combo or MODE in game
+                    return false;
                 if (r == 1 || r == 4) {
                     if (curdir == rootdir && page == 0 && active == 0) {// return to main menu
                         return false;
