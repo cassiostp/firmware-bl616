@@ -39,10 +39,14 @@ Run `make clean` before building for a different board.
 
 ## Flash (Windows, Bouffalo Flash Cube)
 
-1. Put `tangcore_<board>.bin`, `bl616_fpga_partner_<board>.bin` and `flash_<board>.ini` in one folder.
-2. Press and hold the "BOOT" button on the board (bottom left corner, close to one of the USB-C ports), then plug the BL616 USB-C port into the PC. This enters programming mode.
+1. Unzip the CI artifact (or put `tangcore_<board>.bin`, `bl616_fpga_partner_<board>.bin` and `flash_<board>.ini` in one folder).
+2. Put the BL616 into programming mode, either way:
+   - **From the menu** (this firmware or later): **Options → Flash mode... → Restart in flash mode**, then plug the BL616 USB-C port into the PC. No need to open the case.
+   - **With the BOOT button:** press and hold "BOOT" on the board (bottom left corner, close to one of the USB-C ports), then plug the BL616 USB-C port into the PC.
 3. Open Bouffalo Flash Cube, choose chip BL616 and select the serial port.
 4. Load `flash_<board>.ini` as the config, then press Download.
-5. Unplug, release BOOT and power the board again.
+5. Unplug (release BOOT if held) and power the board again.
+
+The BOOT button always works, so it's the way back if a flash goes wrong.
 
 `make flash COMX=com5` (see the README) does the same from the command line, using `flash_prog_cfg.ini`.
