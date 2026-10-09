@@ -26,11 +26,10 @@ env:
   TOOLCHAIN_REPO: https://github.com/bouffalolab/toolchain_gcc_t-head_linux.git
   TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0
   # Sipeed's closed-source BL616 partner image (flashed at 0x0, boots the
-  # firmware at 0x40000). Not buildable; taken from the TangCore v0.9 release
-  # and checked against these hashes.
-  PARTNER_ZIP_URL: https://github.com/nand2mario/tangcore/releases/download/v0.9/tangcore-0.9.zip
-  PARTNER_ZIP_SHA256: 0d20bbc6950065d3cce1cadf09a72804742684274bf39314b0c263b7014d939a
-  PARTNER_BIN_SHA256: a0cfd9c95a4ae3615dda78ed52bbe48a08fe61095b8e61a774fcb64d7c50a8cc
+  # firmware at 0x40000). Not buildable; kept as an asset of our
+  # sipeed-partner-2025030317 release and checked against this hash.
+  PARTNER_URL: https://github.com/cassiostp/firmware-bl616/releases/download/sipeed-partner-2025030317/bl616_fpga_partner.bin
+  PARTNER_SHA256: a0cfd9c95a4ae3615dda78ed52bbe48a08fe61095b8e61a774fcb64d7c50a8cc
 
 jobs:
   build:
@@ -104,11 +103,8 @@ jobs:
               -e "s/tangcore\.bin/tangcore_${BOARD}.bin/" \
               flash.ini > "out/flash_${BOARD}.ini"
           # Sipeed partner image, so the artifact is a complete flash set
-          curl -fsSL -o partner.zip "$PARTNER_ZIP_URL"
-          echo "$PARTNER_ZIP_SHA256  partner.zip" | sha256sum -c -
-          unzip -p partner.zip "tangcore-0.9/firmware-bl616/bl616_fpga_partner_${BOARD}.bin" \
-            > "out/bl616_fpga_partner_${BOARD}.bin"
-          echo "$PARTNER_BIN_SHA256  out/bl616_fpga_partner_${BOARD}.bin" | sha256sum -c -
+          curl -fsSL -o "out/bl616_fpga_partner_${BOARD}.bin" "$PARTNER_URL"
+          echo "$PARTNER_SHA256  out/bl616_fpga_partner_${BOARD}.bin" | sha256sum -c -
           ls -l out
           {
             echo "### ${BOARD}"
