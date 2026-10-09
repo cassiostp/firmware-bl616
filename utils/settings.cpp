@@ -43,6 +43,7 @@ void settings_defaults(Settings &s) {
     s.close_hold_ms = 3000;
     s.diag = false;
     s.scanlines = false;
+    s.pause_in_menu = true;
 }
 
 int combo_count(uint16_t combo) {
@@ -127,6 +128,8 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         s.diag = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "scanlines") == 0) {
         s.scanlines = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "pause_in_menu") == 0) {
+        s.pause_in_menu = strtol(val, NULL, 10) != 0;
     }
 }
 
@@ -185,11 +188,13 @@ bool settings_save() {
         "close_hold_ms=%lu\n"
         "# 1 shows a diagnostic line at the bottom of menus.\n"
         "diag=%d\n"
-        "# 1 dims odd display lines in the cores (takes effect on the next game load).\n"
-        "scanlines=%d\n",
+        "# 1 darkens the scanlines in the cores (applies right away).\n"
+        "scanlines=%d\n"
+        "# 0 stops the game from pausing while the game menu is open.\n"
+        "pause_in_menu=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
-        settings.scanlines ? 1 : 0);
+        settings.scanlines ? 1 : 0, settings.pause_in_menu ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 
@@ -199,4 +204,13 @@ bool settings_save() {
     FRESULT r = f_write(&fcfg, cfgbuf, len, &bw);
     FRESULT rc = f_close(&fcfg);           // flushes the data
     return r == FR_OK && rc == FR_OK && bw == (UINT)len;
+}
+
+// Drive the core_config option bits from the settings. The low 16 bits are
+// core specific (e.g. GBA's prefetch delay), so keep whatever the firmware
+// last sent there.
+void apply_core_config(bool game_menu_open) {
+    set_core_config((get_core_config() & 0xffff) |
+                    (settings.scanlines ? CORE_CFG_SCANLINES : 0) |
+                    (game_menu_open && settings.pause_in_menu ? CORE_CFG_MENU_PAUSE : 0));
 }
