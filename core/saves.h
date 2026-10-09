@@ -8,6 +8,9 @@ void saves_init(void);              // create the save task; call once at boot
 // core id (no geometry: the engine goes passive). The previous game's pending
 // save is flushed first, while the FPGA still holds it.
 void saves_set_game(const char *fname, uint16_t core_id);
+// The ROM loader: the game's own save RAM size, in 512-byte blocks (the SNES
+// header's SRAM size byte). 0 = no battery RAM. For per-game cores only.
+void saves_set_blocks(uint16_t blocks);
 void saves_restore(void);           // send the save into the FPGA; the core must not run yet
 // Settle any pending dump, then stop async dumps until re-armed: call when a
 // menu opens over the running game, and before the FPGA stops running it.
