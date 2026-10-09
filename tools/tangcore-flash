@@ -6,6 +6,7 @@
 #   tangcore-flash --run RUN_ID    a specific CI run
 #   tangcore-flash --file FW.bin   a local file
 #   options: --board console138k|console60k (default console138k)
+#            --wait SECONDS  how long to wait for the board (default 600)
 #
 # Waits for the BL616's ROM flashing mode ("Bouffalo CDC", 349b:6160), then
 # writes only the TangCore image at 0x40000; Sipeed's image at 0x0 is never
@@ -14,14 +15,15 @@ set -euo pipefail
 
 REPO=cassiostp/firmware-bl616
 BOARD=console138k
-REF= RUN= FILE=
+REF= RUN= FILE= WAIT=600
 while [ $# -gt 0 ]; do
   case "$1" in
     --board) BOARD=$2; shift 2 ;;
     --ref) REF=$2; shift 2 ;;
     --run) RUN=$2; shift 2 ;;
     --file) FILE=$(realpath -- "$2"); shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --wait) WAIT=$2; shift 2 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -63,10 +65,10 @@ if [ -z "$PORT" ]; then
   echo "  - with TangCore running and this PC plugged into the BL616 USB-C port:"
   echo "    Options -> Flash mode... -> Restart in flash mode, or"
   echo "  - hold BOOT while plugging this PC into the BL616 USB-C port."
-  for _ in $(seq 300); do
+  for _ in $(seq "$WAIT"); do
     PORT=$(find_port); [ -n "$PORT" ] && break; sleep 1
   done
-  [ -n "$PORT" ] || { echo "board not found after 5 minutes" >&2; exit 1; }
+  [ -n "$PORT" ] || { echo "board not found after $WAIT s" >&2; exit 1; }
   sleep 1
 fi
 echo "Board found on $PORT, flashing..."
