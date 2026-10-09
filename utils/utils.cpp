@@ -30,6 +30,9 @@ void send_fbuf_data(uint16_t len) {
 
 // set loading state
 void set_loading_state(int state) {
+    // a ROM load (or reset) mustn't run with the core paused
+    if (state && (get_core_config() & CORE_CFG_MENU_PAUSE))
+        set_core_config(get_core_config() & ~CORE_CFG_MENU_PAUSE);
     taskENTER_CRITICAL();
     fpga_tx_header(0x06, 2);
     fpga_tx_byte(state);        

@@ -406,9 +406,7 @@ struct OptionsMenu: Menu {
         case 8:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
-            // the new options reach the running core right away. No game menu
-            // is open while Options shows.
-            apply_core_config(false);
+            apply_core_config();    // the running core gets them right away
             break;
         default:
             return true;    // back

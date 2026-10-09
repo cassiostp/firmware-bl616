@@ -4,6 +4,7 @@
 #include <strings.h>
 
 #include "settings.h"
+#include "overlay.h"
 #include "utils.h"
 #include "overlay.h"
 
@@ -190,7 +191,7 @@ bool settings_save() {
         "diag=%d\n"
         "# 1 darkens the scanlines in the cores (applies right away).\n"
         "scanlines=%d\n"
-        "# 0 stops the game from pausing while the game menu is open.\n"
+        "# 0 keeps the game running while a menu is shown over it.\n"
         "pause_in_menu=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
@@ -206,11 +207,12 @@ bool settings_save() {
     return r == FR_OK && rc == FR_OK && bw == (UINT)len;
 }
 
-// Drive the core_config option bits from the settings. The low 16 bits are
-// core specific (e.g. GBA's prefetch delay), so keep whatever the firmware
-// last sent there.
-void apply_core_config(bool game_menu_open) {
+// Drive the core_config option bits from the settings. The game pauses while
+// any menu is shown over it. The low 16 bits are core specific (e.g. GBA's
+// prefetch delay), so keep whatever the firmware last sent there.
+void apply_core_config() {
+    bool pause = settings.pause_in_menu && _overlay_on && core_running;
     set_core_config((get_core_config() & 0xffff) |
                     (settings.scanlines ? CORE_CFG_SCANLINES : 0) |
-                    (game_menu_open && settings.pause_in_menu ? CORE_CFG_MENU_PAUSE : 0));
+                    (pause ? CORE_CFG_MENU_PAUSE : 0));
 }

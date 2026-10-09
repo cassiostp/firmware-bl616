@@ -191,7 +191,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         // Drive the video options now that the core runs. A fresh core
         // defaults every core_config bit to 0, and the low 16 bits stay as
         // they are (core specific).
-        apply_core_config(false);
+        apply_core_config();
         last_core = core;
         last_rom = loading;
         return 1;
@@ -235,7 +235,7 @@ static int menu_loadrom(const char *dir) {
             if (active_core >= 0)
                 break;
         }
-        apply_core_config(false);
+        apply_core_config();
         return 0;       // return to main menu
     } 
 
@@ -501,7 +501,7 @@ static void reset_game(void) {
             forget_game();
             last_core_file = fname;
             active_core = get_core_id();
-            apply_core_config(false);       // the new bitstream starts with 0
+            apply_core_config();       // the new bitstream starts with 0
         }
         return;
     }
@@ -588,7 +588,6 @@ struct GameMenu: Menu {
 };
 
 static void show_game_menu(void) {
-    apply_core_config(true);            // the game pauses (if set) while this menu is up
     overlay(1);
     suppress_held_buttons();            // the button that opened it isn't a choice
     menu_clear();
@@ -596,7 +595,6 @@ static void show_game_menu(void) {
     menu_current()->do_redraw();
     menu_input_loop();
     menu_clear();
-    apply_core_config(false);           // closed by any route: let the game run again
 }
 
 // Act on what the controller or a menu asked for. Returns true if anything

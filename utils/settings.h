@@ -27,8 +27,8 @@ struct Settings {
     bool reset_enabled;         // the reset combo can be turned off
     uint32_t close_hold_ms;     // hold the reset combo this long to close the game
     bool diag;                  // show the diagnostic line at the bottom of menus
-    bool scanlines;             // darken every 3rd output line in the cores (core_config bit 16)
-    bool pause_in_menu;         // pause the game while the game menu is open (core_config bit 17)
+    bool scanlines;             // darken one output line per source line in the cores (core_config bit 16)
+    bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
 };
 
 extern Settings settings;
@@ -37,9 +37,10 @@ void settings_defaults(Settings &s);
 void settings_load();           // call after the drive is mounted. missing file = defaults
 bool settings_save();
 
-// Send the video options to the running core. Pass true while the game menu is
-// open, so the core pauses too if pause_in_menu is on. Keeps the low 16 bits.
-void apply_core_config(bool game_menu_open);
+// Send the options to the running core: scanlines, and pause while a menu is
+// shown over a running game (if pause_in_menu). Keeps the low 16 bits.
+// overlay() calls it on every change.
+void apply_core_config();
 
 int combo_count(uint16_t combo);
 bool combo_valid(uint16_t combo, const char **why);
