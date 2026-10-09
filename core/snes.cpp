@@ -3,6 +3,7 @@
 
 #include "utils.h"
 #include "cores.h"
+#include "saves.h"
 #include "overlay.h"
 // return 0 if snes header is successfully parsed at off
 // typ 0: LoROM, 1: HiROM, 2: ExHiROM
@@ -54,7 +55,6 @@ int parse_snes_header(FIL *fp, int pos, int file_size, int typ, unsigned char *h
     return 1;
 }
 
-// TODO: implement bsram backup
 // return 0 if successful
 int loadsnes(const char *fname) {
     int r = 1;
@@ -124,6 +124,14 @@ int loadsnes(const char *fname) {
     } while (br == 1024);
 
     overlay_status("Success");
+    // The game's save RAM goes in now, while the core is still held in the
+    // loading state. The size comes from the header's SRAM size byte (2^n KB,
+    // 0 = this game has no battery RAM): like MiSTer's SNES core, which gates
+    // its backup on the same byte (bk_ena <= |ram_mask). restore() sends the
+    // .sav, a recovered .sav.tmp, or the blank image, so the previous game's
+    // BSRAM cannot leak into this one.
+    saves_set_blocks(ram_size ? 2 << ram_size : 0);
+    saves_restore();
     core_running = true;
 
     overlay(0);		// turn off OSD

@@ -29,6 +29,12 @@
 // saves_settle()/saves_set_game(), which waits for an in-flight dump and stops
 // new ones. So the save task and main_task are never inside FatFs at once.
 // (The floppy writes in uart1_rx_task are a pre-existing exception, unchanged.)
+//
+// SIZE: most cores have one fixed save geometry; the SNES' is per game, from
+// the ROM header's SRAM size byte (see core/snes.cpp), handed in with
+// saves_set_blocks() before the restore. A 128 KB game (256 blocks) takes
+// ~2 ms of UART per block on a ~0.5 s pass; sv_fetch_block() bumps the
+// heartbeat per block, so the watchdog never fires mid-dump.
 #include "saves.h"
 
 extern "C" {
@@ -42,6 +48,7 @@ extern "C" {
 
 #include "utils.h"
 #include "overlay.h"
+#include "settings.h"
 
 // Per-core save geometry. Blocks are 512 bytes, like the wire protocol.
 struct save_geom {
@@ -49,13 +56,25 @@ struct save_geom {
     uint16_t blocks;
     const char *dir;        // folder under <drive>saves/
     uint8_t blank;          // byte an empty save RAM comes up as
+    bool pause_dump;        // the game shares the save RAM's port: pause it while dumping
 };
 static const save_geom save_geoms[] = {
     // SMS: the core's 32 KB nvram. MiSTer's SMS core (SMS_MiSTer) keeps the
     // same layout, raw and interchangeable: its backup RAM is a dpram
     // widthad_a=15 (SMS.sv), saved 64 x 512 bytes straight to <rom>.sav, and
     // its empty-RAM init file (rtl/nvram_ff.mif) is all 0xFF, not 0x00.
-    {5, 64, "sms", 0xFF},
+    {5, 64, "sms", 0xFF, false},     // dual-port on-chip RAM: no pause
+    // SNES: the block count is per game, from the ROM header's SRAM size byte
+    // (saves_set_blocks; 0 = the game has no battery RAM). Two of MiSTer's
+    // SNES core (SNES_MiSTer) details carry over: the backup RAM is dumped
+    // raw as 512-byte sectors ({sd_lba, sd_buff_addr} address its dpram
+    // directly, SNES.sv), a fresh/blank BSRAM is 0xFF -- the core "thrashes"
+    // it with 8'hFF on every ROM load (data_a = clearing_ram ? 8'hFF, SNES.sv)
+    // -- and battery saves are gated on the header's RAM-size byte being
+    // non-zero (bk_ena <= |ram_mask).
+    // The save channel shares the SDRAM BSRAM port with the game, so the game
+    // is paused while a dump runs (~2.6 ms per block, twice).
+    {2, 0, "snes", 0xFF, true},
     // NES: the 8 KB WRAM window every battery mapper routes through linear
     // 0x3C0000 (see nestang's sdram_nes save channel). MiSTer's NES core
     // (NES_MiSTer) also keeps save RAM as a raw <rom>.sav, in saves/NES/
@@ -65,7 +84,7 @@ static const save_geom save_geoms[] = {
     // uninitialized RAM to chance and games that ship with a battery must
     // tolerate it, so there is no "right" blank byte: we pick 0xFF, matching
     // the SMS entry and the mostly-high power-up state of SRAM chips.
-    {1, 16, "nes", 0xFF},
+    {1, 16, "nes", 0xFF, false},  // own SDRAM slot, idle-only: no pause
 };
 #define N_GEOMS (sizeof(save_geoms) / sizeof(save_geoms[0]))
 
@@ -80,6 +99,7 @@ static char sv_path[256];                   // "" = no game with battery saves
 static char sv_dir[256];                    // "<drive>saves/<core dir>"
 static char sv_root[256];                   // "<drive>saves"
 static const save_geom *sv_geom;            // geometry for sv_path
+static uint16_t sv_blocks;                  // its block count; per-game for SNES
 static SemaphoreHandle_t sv_mutex, sv_blk_sem;
 static TaskHandle_t sv_task;
 static volatile uint16_t sv_rx_blk = 0xFFFF;
@@ -141,12 +161,25 @@ static bool sv_fetch_block(uint16_t blk) {                          // 0x12 -> s
 }
 
 // ---- flush: dump the core's RAM to sv_path. Called with sv_mutex held ----
+static void sv_dump_and_write(void);
+
 static void sv_flush_locked(void) {
     if (!sv_geom || !sv_path[0]) return;
     if (!sv_battery) {                      // volatile scratch: never make a file
         sv_dirty = false;
         return;
     }
+    // Pause a game that shares the save RAM's port, so the dump can't delay or
+    // disturb its accesses. Afterwards recompute the bits rather than restore
+    // them: a menu may have opened (and paused the game) meanwhile.
+    if (sv_geom->pause_dump)
+        set_core_config(get_core_config() | CORE_CFG_MENU_PAUSE);
+    sv_dump_and_write();
+    if (sv_geom->pause_dump)
+        apply_core_config();
+}
+
+static void sv_dump_and_write(void) {
     // Clear BEFORE the dump: the FPGA clears its flag when block 0 is requested,
     // and a write that lands during the dump sends a fresh 0x0B that sets this
     // again, so a save can lag but cannot be silently lost.
@@ -157,7 +190,7 @@ static void sv_flush_locked(void) {
     bool opened = (f_open(&fsave, sv_path, FA_READ) == FR_OK);
     bool changed = !opened;                 // nothing to compare against: dump again
     bool ok = true;
-    for (uint16_t blk = 0; blk < sv_geom->blocks && ok; blk++) {
+    for (uint16_t blk = 0; blk < sv_blocks && ok; blk++) {
         if (!sv_fetch_block(blk)) { ok = false; break; }
         if (opened) {
             if (f_read(&fsave, sv_io, SV_BLK, &br) != FR_OK || br != SV_BLK) {
@@ -184,7 +217,7 @@ static void sv_flush_locked(void) {
         sv_dirty = true;
         return;
     }
-    for (uint16_t blk = 0; blk < sv_geom->blocks && ok; blk++) {
+    for (uint16_t blk = 0; blk < sv_blocks && ok; blk++) {
         if (!sv_fetch_block(blk)) { ok = false; break; }
         if (f_write(&fsave, sv_rx, SV_BLK, &bw) != FR_OK || bw != SV_BLK) ok = false;
     }
@@ -212,6 +245,7 @@ void saves_set_game(const char *fname, uint16_t core_id) {
     for (unsigned i = 0; i < N_GEOMS; i++) {
         if (save_geoms[i].core_id == core_id) { sv_geom = &save_geoms[i]; break; }
     }
+    sv_blocks = sv_geom ? sv_geom->blocks : 0;  // SNES: the loader refines this
     if (sv_geom) {
         // Drive prefix from the path itself ("sd:" / "usb:"), else the mounted drive.
         const char *colon = strchr(fname, ':');
@@ -238,6 +272,17 @@ void saves_set_game(const char *fname, uint16_t core_id) {
     xSemaphoreGive(sv_mutex);
 }
 
+// The per-game geometry the ROM loader read out of the ROM itself (the SNES
+// header's SRAM size byte: 2^n KB, 0 = none). Call after saves_set_game,
+// before saves_restore; until then the geometry's own block count (0 for such
+// per-game cores) keeps the engine passive.
+void saves_set_blocks(uint16_t blocks) {
+    if (!sv_mutex) return;
+    if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
+    if (sv_geom) sv_blocks = blocks;        // no game (or a fixed-geometry core): ignored
+    xSemaphoreGive(sv_mutex);
+}
+
 void saves_restore(void) {
     if (!sv_mutex) return;
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
@@ -251,7 +296,7 @@ void saves_restore(void) {
     }
     // Always send SOMETHING, every block: the save RAM may still hold the
     // previous game's data if the bitstream was not reprogrammed between games.
-    for (uint16_t blk = 0; blk < sv_geom->blocks; blk++) {
+    for (uint16_t blk = 0; blk < sv_blocks; blk++) {
         UINT br = 0;
         if (!opened || f_read(&fsave, sv_io, SV_BLK, &br) != FR_OK || br != SV_BLK)
             memset(sv_io, sv_geom->blank, SV_BLK);
