@@ -11,7 +11,7 @@
 // then the big-endian SRAM start/end addresses at $1B4/$1B8 (MiSTer's
 // MegaDrive core loads <rom>.sav for every game, so it reads none of this;
 // we use it to size the save and to skip games that have no battery).
-// The address range is only a size here: mdtang decodes cart SRAM at the
+// The address range only sizes the image here: mdtang decodes cart SRAM at the
 // $200000-$37FFFF window and uses only A[16:1] (system.sv), so every window
 // and mirror aliases onto image bytes 0.., and .bin/.md/.gen are plain
 // binary -- the header sits at file offset $1B0 with no SMD interleave.
@@ -31,10 +31,13 @@ static int md_sram_size(FIL *fp, unsigned int file_size) {
     unsigned int end = ((unsigned int)hdr[8] << 24) | (hdr[9] << 16) | (hdr[10] << 8) | hdr[11];
     if (end < start)
         return 0;                       // malformed range: nothing to save
-    unsigned int size = end - start + 1;
-    if (size > 0x10000)
-        size = 0x10000;                 // the core's save region is 64 KB
-    return size;
+    // The image is laid out from $200000 (image byte N = cart byte $200000+N),
+    // so it must reach `end`, not just span end-start: SRAM on odd bytes only
+    // starts at $200001, e.g. Phantasy Star II's $200001-$203FFF is 16 KB of
+    // image. Ranges outside the window alias in the core; keep the whole 64 KB.
+    if (start < 0x200000 || end >= 0x210000)
+        return 0x10000;
+    return end - 0x200000 + 1;
 }
 
 int loadmd(const char *fname) {
