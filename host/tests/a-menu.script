@@ -1,0 +1,23 @@
+# Main menu cursor after boot and after returning from a game.
+expect-screen "TangCore"
+expect-cursor-row 9
+# NES is the first entry; B selects in the main menu.
+press b
+expect-screen "test.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+# Menu combo opens the game menu over the running game...
+hold select+start+l 400ms
+expect-screen "Close game"
+# ...Close game (Resume/Reset/.../Close game/<< Main menu) returns to boot state.
+press down
+press down
+press down
+press down
+press a
+expect-screen "TangCore"
+expect-cursor-row 9
+# The watchdog feeder is alive in the menu loop.
+expect-alive 5s
