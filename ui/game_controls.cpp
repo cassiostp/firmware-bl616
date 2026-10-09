@@ -216,11 +216,11 @@ static uint16_t capture_combo(const char *what) {
 }
 
 // BL616 USB registers (drivers/lhal/src/bflb_usb_v2.c in the SDK)
-#define USB_BASE                0x20072000
-#define USB_OTG_CSR             (USB_BASE + 0x80)
+#define TC_USB_BASE                0x20072000
+#define USB_OTG_CSR             (TC_USB_BASE + 0x80)
 #define USB_A_BUS_REQ_HOV       (1 << 4)
 #define USB_A_BUS_DROP_HOV      (1 << 5)
-#define USB_PHY_TST             (USB_BASE + 0x114)
+#define USB_PHY_TST             (TC_USB_BASE + 0x114)
 #define USB_UNPLUG              (1 << 0)
 #define PDS_USB_CTL             0x2000e500
 #define PDS_USB_SW_RST_N        (1 << 0)
