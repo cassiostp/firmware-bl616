@@ -8,6 +8,9 @@ void saves_init(void);              // create the save task; call once at boot
 // core id (no geometry: the engine goes passive). The previous game's pending
 // save is flushed first, while the FPGA still holds it.
 void saves_set_game(const char *fname, uint16_t core_id);
+// Per-ROM battery flag, for cores whose ROM header says (NES: iNES byte 6 bit
+// 1). A geometry's default is "battery present"; call before saves_restore.
+void saves_set_battery(bool battery);
 // The ROM loader: the game's own save RAM size, in 512-byte blocks (the SNES
 // header's SRAM size byte). 0 = no battery RAM. For per-game cores only.
 void saves_set_blocks(uint16_t blocks);
