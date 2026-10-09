@@ -405,11 +405,39 @@ static void reload_game(void) {
     }
 }
 
-// Reset the running game. Falls back to a full reload.
+// Reset the running game, keeping the ROM already in the core's memory.
+// Toggling the loading state with no data holds the core in reset and then
+// releases it; the ROM, mapper and size settings are kept (see each core's
+// handling of rom_loading). Genesis can't do this: its loader zeroes the ROM
+// size on a load with no data (mdtang_top.sv:171-178), so it reloads the ROM.
 static void reset_game(void) {
-    if (!last_core && last_core_file.empty())
-        return;                             // nothing running
-    reload_game();
+    if (!last_core) {
+        if (!last_core_file.empty())        // a core loaded from Cores, no ROM
+            reload_game();
+        return;
+    }
+    if (get_core_id() != last_core->id && get_core_id() != last_core->id) {
+        reload_game();                      // the game's core is gone
+        return;
+    }
+
+    switch (last_core->id) {
+    case 4:                                 // Genesis: reload the ROM
+        load_game(last_core, last_rom, false);
+        break;
+    case 3:                                 // GBA: stage 3 (config) resets without
+        set_loading_state(3);               // touching the save type
+        delay(20);
+        set_loading_state(0);
+        overlay(0);
+        break;
+    default:                                // NES, SNES, SMS, PC/XT
+        set_loading_state(1);
+        delay(20);
+        set_loading_state(0);
+        overlay(0);
+        break;
+    }
 }
 
 // Act on a combo or MODE press seen while a game was running.
