@@ -551,17 +551,18 @@ int run_script() {
                 script_fail(lineno, "usage: poke-save <off> <byte>");
             printf("[%d] poke-save 0x%lx 0x%lx\n", lineno, off, val);
             fpga::poke_save((uint16_t)off, (uint8_t)val);
-        } else if (cmd == "mode") {
+        } else if (cmd == "mode" || cmd == "mode-now") {
             long ms = 4000;
             if (t.size() > 2 || (t.size() == 2 && !parse_num(t[1], ms)))
-                script_fail(lineno, "usage: mode [silence-ms]");
-            printf("[%d] mode (MODE button: FPGA reloads from flash)\n", lineno);
-            // MODE is only recognized once the FPGA has answered a core-ID
-            // poll after its last programming: the firmware's first poll is
-            // ~2 s after boot / reprogramming, and earlier silence is never
-            // noticed. Wait out both stretches, like a real button press.
-            while (sim_uptime_ms() < 3000 || fpga::ms_since_program() < 2500)
-                msleep(50);
+                script_fail(lineno, "usage: mode|mode-now [silence-ms]");
+            printf("[%d] %s (MODE button: FPGA reloads from flash)\n", lineno, cmd.c_str());
+            // `mode` presses once the firmware has polled the core since its
+            // last programming (its first poll is ~2 s after boot or
+            // reprogramming). `mode-now` presses right away, inside that
+            // window, where only the core-0 answer gives MODE away.
+            if (cmd == "mode")
+                while (sim_uptime_ms() < 3000 || fpga::ms_since_program() < 2500)
+                    msleep(50);
             fpga::trigger_mode((int)ms);
             // The firmware restarts itself; the supervisor re-execs us past
             // this line. If nothing happens, the expectation fails here.

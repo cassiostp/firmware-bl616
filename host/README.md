@@ -16,8 +16,9 @@ cmake --build host/build -j
 
 This builds a Console 138K layout (`BOARD_NAME=console138k`). The build
 compiles the firmware with `-DTANGCORE_HOST=1`, which guards the only two
-host-only hooks in firmware sources (`utils/utils.h`, `ui/overlay.cpp`;
-both behave identically on device).
+host-only spots in firmware sources: the `strcasestr` declaration in
+`utils/utils.h`, and the USB register writes in `ui/game_controls.cpp`
+(skipped on the host, which has no SoC registers).
 
 ## Run interactively
 
@@ -83,6 +84,8 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
 - `mode [silence-ms]` — press the MODE button: the FPGA goes silent, then
   answers as core 0, and the firmware reboots. The script resumes after this
   line in the fresh process.
+- `mode-now [silence-ms]` — the same, pressed at once instead of after the
+  firmware's first poll of a freshly programmed core.
 - `power-cycle` — reboot the sim with the same SD; the script resumes after
   this line.
 - `host-rm <relpath>` — delete a file from the virtual SD mid-run.
@@ -115,6 +118,8 @@ bitstreams), and runs `host/tests/*.script`:
 - `e-options-persist` — scanlines toggle saved to `tangcore.cfg`, bit 16 set
   after a power cycle.
 - `f-md-save` — MegaDrive battery round trip (16384 bytes from an `RA` header).
+- `g-mode-early` — MODE pressed right after a game loads, before the
+  firmware has polled the new core, still restarts.
 
 ## Current state and limits
 
@@ -128,7 +133,7 @@ bitstreams), and runs `host/tests/*.script`:
   real FAT returns directory order.
 - Simulated wall-clock time (no time scaling): debounce and watchdog
   constants behave as on hardware.
-- The Flash-mode menu path is not usable in the sim (it pokes real USB
-  registers); the register writes would fault, so scripts must not select it.
+- The Flash-mode menu path is not usable in the sim: there is no ROM
+  loader to reboot into, so scripts must not select it.
 - `GLB_SW_System_Reset` (MODE, flash mode) and `power-cycle` re-exec the sim
   process; SD contents persist, RAM state does not.

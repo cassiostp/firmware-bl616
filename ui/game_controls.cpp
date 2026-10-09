@@ -21,6 +21,8 @@ static void stop_watchdog(void) {
         bflb_wdg_stop(wdg_dev);
 }
 
+static void restart_mcu(bool flash_mode);
+
 volatile GameAction pending_action = ACTION_NONE;
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -121,7 +123,10 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
 // dropped (while the FPGA sends a joypad or disk frame), so it takes several
 // misses in a row, over a real stretch of time. MODE then restarts
 // everything, like a power cycle.
-static void check_mode_button(bool in_game) {
+// A game core that hasn't answered yet (it was just programmed) can't show
+// that silence, but it never answers as the flash bitstream: core 0 there
+// means MODE was pressed before the core's first answer.
+static void check_mode_button(bool in_game, bool game_loaded) {
     uint32_t interval = !seen_answer ? POLL_MS_SILENT_CORE : in_game ? POLL_MS_GAME : POLL_MS_MENU;
     uint64_t poll_start = bflb_mtimer_get_time_ms();
     uint64_t gap = poll_start - last_poll;
@@ -148,14 +153,14 @@ static void check_mode_button(bool in_game) {
     // NES core resets its serial link on Select+Down)
     if (reloaded && last_id > 0 && id == last_id)
         reloaded = false;
+    if (!seen_answer && id == 0 && game_loaded)
+        reloaded = true;
     if (reloaded) {
-        dprint("FPGA silent for %lu ms, back as core %d: MODE pressed, restarting",
-               (unsigned long)(now - silent_since), id);
+        dprint("FPGA back as core %d: MODE pressed, restarting", id);
         overlay(1);
         overlay_status("Restarting...");
         delay(50);
-        stop_watchdog();
-        GLB_SW_System_Reset();
+        restart_mcu(false);
     }
     seen_answer = true;
     last_id = id;
@@ -168,7 +173,7 @@ bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded)
         return true;
     if (check_combos(pad1, pad2, in_game, game_loaded))
         return true;
-    check_mode_button(in_game);
+    check_mode_button(in_game, game_loaded);
     return false;
 }
 
@@ -241,8 +246,10 @@ static uint16_t capture_combo(const char *what) {
 #define USB_IRQ                 37
 
 static inline void reg_set(uint32_t addr, uint32_t bits, bool on) {
+#ifndef TANGCORE_HOST               // the host sim has no SoC registers
     volatile uint32_t *r = (volatile uint32_t *)addr;
     *r = on ? (*r | bits) : (*r & ~bits);
+#endif
 }
 
 // Put the USB block back the way power-on leaves it. The firmware runs it as a
@@ -280,10 +287,21 @@ static void reboot_to_flash_mode(void) {
     overlay_cursor(0, 15);
     overlay_printf("  Power-cycle to cancel.");
     delay(100);                     // let the UART drain
+    restart_mcu(true);
+}
+
+// Restart the MCU like a power cycle, or (flash_mode) into the ROM's USB
+// loader. Both need the USB block back in its power-on state first: after a
+// software reset Sipeed's bootloader finds the port still set up as a host,
+// takes it for a PC and stays in its debug mode, so TangCore never starts
+// (the screen keeps whatever the FPGA last showed). The ROM's loader likewise
+// never shows up on the PC.
+static void restart_mcu(bool flash_mode) {
     taskENTER_CRITICAL();
     usb_back_to_power_on_state();
-    arch_delay_ms(100);             // long enough for the PC to see a detach
-    HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
+    arch_delay_ms(100);             // long enough for the other end to see a detach
+    if (flash_mode)
+        HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
     stop_watchdog();
     GLB_SW_System_Reset();
 }
