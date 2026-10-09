@@ -43,4 +43,7 @@ Menu *create_pcxt_menu(const char *imgdir);
 
 extern bool floppy[2];
 extern std::string floppy_fname[2];
+extern std::string floppy_path[2];
+extern bool mount_floppy(int drive, const char *fname);
+extern void forget_floppies();
 extern USB_NOCACHE_RAM_SECTION FIL f_floppy[2];

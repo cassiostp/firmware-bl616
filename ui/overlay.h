@@ -1,6 +1,7 @@
 #pragma once
 
 extern int _overlay_on;
+extern volatile uint32_t overlay_hide_count;
 extern int overlay_on();
 extern void overlay_cursor(int x, int y);
 extern void dprint(const char *fmt, ...);

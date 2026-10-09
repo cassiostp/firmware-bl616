@@ -107,7 +107,9 @@ int16_t get_core_id(void) {
     }
 
     // send command 1
+    taskENTER_CRITICAL();
     fpga_tx_header(0x01, 1);
+    taskEXIT_CRITICAL();
 
     // TODO: use a queue for better performance
     uint64_t start = bflb_mtimer_get_time_ms();

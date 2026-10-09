@@ -9,6 +9,7 @@
 
 bool floppy[2];
 std::string floppy_fname[2];
+std::string floppy_path[2];             // full path, to remount after a reload
 USB_NOCACHE_RAM_SECTION FIL f_floppy[2];
 
 static void IOWR(uint16_t addr, uint16_t data) {
@@ -26,6 +27,7 @@ bool mount_floppy(int drive, const char *fname) {
     // close any open image
     if (floppy[drive]) {
         f_close(&f_floppy[drive]);
+        floppy[drive] = false;
     }
 
     FILINFO fno;
@@ -71,7 +73,8 @@ bool mount_floppy(int drive, const char *fname) {
         heads = 2;
     } else {
         overlay_message( "Unsupported image size", 1);
-        return -1;
+        f_close(&f_floppy[drive]);
+        return false;
     }
     DEBUG("set floppy parameters\n");
     uint16_t off = drive ? 0xf0 : 0x00;
@@ -83,12 +86,24 @@ bool mount_floppy(int drive, const char *fname) {
     IOWR(0xf205 + off, heads);   
 
     floppy[drive] = true;
+    floppy_path[drive] = fname;
     std::string s = fname;
     if (s.find_last_of('/') != std::string::npos)
         floppy_fname[drive] = s.substr(s.find_last_of('/') + 1);
     else
         floppy_fname[drive] = s;
     return true;
+}
+
+// Forget mounted images, when the PC/XT bitstream is replaced
+void forget_floppies() {
+    for (int d = 0; d < 2; d++) {
+        if (floppy[d])
+            f_close(&f_floppy[d]);
+        floppy[d] = false;
+        floppy_fname[d].clear();
+        floppy_path[d].clear();
+    }
 }
 
 int loadpc(const char *fname) {

@@ -113,6 +113,35 @@ static string last_core_file;           // bitstream of the running core
 /////////////////////////////////////////////////////////////////////////////////
 // Menu display and user interaction
 
+// The FPGA no longer runs the recorded game (a new bitstream was programmed)
+static void forget_game(void) {
+    last_core = NULL;
+    last_rom.clear();
+    last_core_file.clear();
+    core_running = false;
+    forget_floppies();
+}
+
+// Pads read by the FPGA only report changes, so a button held while the FPGA
+// is reprogrammed would stay "held". Clear them.
+static void clear_pad_states(void) {
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        joy1_state = 0;
+        joy2_state = 0;
+        xSemaphoreGive(state_mutex);
+    }
+}
+
+static void send_hid_state(uint16_t hid1, uint16_t hid2) {
+    taskENTER_CRITICAL();
+    fpga_tx_header(0x09, 5);
+    fpga_tx_byte(hid1 >> 8);
+    fpga_tx_byte(hid1 & 0xff);
+    fpga_tx_byte(hid2 >> 8);
+    fpga_tx_byte(hid2 & 0xff);
+    taskEXIT_CRITICAL();
+}
+
 // Load `rom` on `core`, programming the core's bitstream first if it isn't
 // running (or always, with force_program). Returns 1 if the ROM was loaded,
 // -1 on error.
@@ -123,8 +152,8 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         string fname_core;
         if (find_core_for_board(fname_core, core->core_file)) {
             fpga_program(fname_core.c_str());
+            forget_game();                  // new bitstream, nothing loaded yet
             last_core_file = fname_core;
-            core_running = false;           // new bitstream, nothing loaded yet
             _overlay_on = 1;
 
             // allow 2 seconds for core to start
@@ -140,9 +169,11 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
 
     if (active_core == core->id) {
         overlay_status("Loading ROM: %s\n", rom.c_str());
+        string loading = rom;               // rom may be last_rom itself
+        if (core->load_rom(loading.c_str()) != 0)
+            return -1;                      // the loader showed the error
         last_core = core;
-        last_rom = rom;
-        core->load_rom(rom.c_str());
+        last_rom = loading;
         return 1;
     } else {
         overlay_status("Core failed to load\n");
@@ -173,10 +204,8 @@ static int menu_loadrom(const char *dir) {
     if (fname.find(string(drv) + "cores") == 0) {
         overlay_status("Core: %s", fname.c_str());
         fpga_program(fname.c_str());
-        last_core = NULL;
-        last_rom.clear();
+        forget_game();
         last_core_file = fname;
-        core_running = false;
         _overlay_on = 1;                // turn on overlay after core is loaded
         return 0;       // return to main menu
     } 
@@ -205,16 +234,12 @@ static void send_hid_to_core(void) {
     uint16_t hid1_old = 0, hid2_old = 0;
     bool first = true;
     dprint("Start sending HID to core...");
-    game_watch_start(active_core);
+    game_watch_start(last_core != NULL || !last_core_file.empty());
     while (1) {
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
         if (first || hid1 != hid1_old || hid2 != hid2_old) {    // send HID if changed
-            fpga_tx_header(0x09, 5);
-            fpga_tx_byte(hid1 >> 8);
-            fpga_tx_byte(hid1 & 0xff);
-            fpga_tx_byte(hid2 >> 8);
-            fpga_tx_byte(hid2 & 0xff);
+            send_hid_state(hid1, hid2);
             hid1_old = hid1;
             hid2_old = hid2;
             first = false;
@@ -231,6 +256,22 @@ static void send_hid_to_core(void) {
     dprint("Stopped sending HID to core.");
 }
 
+// Diagnostic line on row 26 (status messages use row 27). Shows raw pad
+// states (FPGA pads J, USB pads H), the core ID, how many times the overlay
+// was hidden, and a counter that stops if this loop stops running.
+static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
+    static uint64_t last_draw;
+    static uint32_t beat;
+    uint64_t now = bflb_mtimer_get_time_ms();
+    if (!settings.diag || now - last_draw < 250)
+        return;
+    last_draw = now;
+    overlay_cursor(0, 26);
+    // fixed width, exactly 32 columns: J00000000 H00000000 c0  t00 #000
+    overlay_printf("J%04x%04x H%04x%04x c%-2d t%02lu #%03lu", joy1, joy2, hid1, hid2, active_core,
+                   (unsigned long)(overlay_hide_count % 100), (unsigned long)(beat++ % 1000));
+}
+
 // // (R L X A RT LT DN UP START SELECT Y B)
 // Return: 1 button B pressed, 4: button A pressed, 2: next page, 3: previous page
 // active is the entry chosen
@@ -241,6 +282,8 @@ int joy_choice(int start_line, int len, int *active, int overlay_key_code) {
     int last = *active;
 
     get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+    if (overlay_on())
+        draw_diag_line(joy1, joy2, hid1, hid2);
     joy1 |= hid1;
     joy2 |= hid2;
 
@@ -292,13 +335,21 @@ int joy_choice(int start_line, int len, int *active, int overlay_key_code) {
 static void uart1_rx_task(void *pvParameters)
 {
     uint8_t buffer[5];
-    uint8_t pos = 0;
+    uint16_t pos = 0;
     uint8_t type = 0;
     uint16_t len = 0;
+    uint64_t last_byte = 0;
     
     while (1) {
         if (bflb_uart_rxavailable(uart1_dev)) {
             uint8_t ch = bflb_uart_getchar(uart1_dev);
+            uint64_t now = bflb_mtimer_get_time_ms();
+            // a frame's bytes arrive back to back at 2 Mbaud. A long gap means
+            // the rest was lost (e.g. the FPGA was reconfigured): resync. The
+            // margin covers this task being starved while ROM data is sent.
+            if (pos != 0 && now - last_byte > 50)
+                pos = 0;
+            last_byte = now;
             
             if (pos == 0) {          // expecting 0xAA
                 if (ch == 0xAA) 
@@ -370,10 +421,12 @@ static void uart1_rx_task(void *pvParameters)
                         UINT br;
                         f_lseek(&f_floppy[drive], sector * 512);
                         if (f_read(&f_floppy[drive], fbuf, 512, &br) == FR_OK) {
+                            taskENTER_CRITICAL();   // don't interleave with main_task's frames
                             fpga_tx_header(0x0a, br+1);
                             for (UINT i = 0; i < br; i++) {
                                 fpga_tx_byte(fbuf[i]);
                             }
+                            taskEXIT_CRITICAL();
                         } else {
                             overlay_status("Failed to read floppy");
                         }
@@ -395,11 +448,22 @@ static void uart1_rx_task(void *pvParameters)
 // reloaded the FPGA from flash, which drops the game.
 static void reload_game(void) {
     overlay(1);
+    clear_pad_states();
     if (last_core) {
-        load_game(last_core, last_rom, true);
+        core_info *core = last_core;
+        string rom = last_rom, drive_b;
+        if (core->id == 6) {                // PC/XT: remount the floppies in use
+            if (!floppy_path[0].empty())
+                rom = floppy_path[0];
+            drive_b = floppy_path[1];
+        }
+        if (load_game(core, rom, true) == 1 && !drive_b.empty())
+            mount_floppy(1, drive_b.c_str());
     } else if (!last_core_file.empty()) {   // a core loaded from Cores, no ROM
-        fpga_program(last_core_file.c_str());
-        core_running = false;
+        string fname = last_core_file;
+        fpga_program(fname.c_str());
+        forget_game();
+        last_core_file = fname;
         _overlay_on = 1;
         active_core = get_core_id();
     }
@@ -446,27 +510,28 @@ static bool handle_game_action(void) {
     GameAction action = pending_action;
     pending_action = ACTION_NONE;
     switch (action) {
-    case ACTION_MENU:
+    case ACTION_MENU:                       // the game stays loaded behind the menu
         menu_clear();
-        // ask twice, so one dropped reply doesn't reprogram the FPGA
-        if (get_core_id() != active_core && get_core_id() != active_core) {
-            // MODE reloaded the FPGA from flash: put the real menu core back
-            string fname;
-            if (find_core_for_board(fname, "monitor.bin"))
-                fpga_program(fname.c_str());
-            last_core = NULL;
-            last_rom.clear();
-            last_core_file.clear();
-            core_running = false;
-            active_core = get_core_id();
-        }
         overlay(1);
         return true;
+    case ACTION_MODE_MENU: {                // the game is gone: load the real menu core
+        menu_clear();
+        string fname;
+        if (find_core_for_board(fname, "monitor.bin"))
+            fpga_program(fname.c_str());
+        forget_game();
+        clear_pad_states();
+        active_core = get_core_id();
+        overlay(1);
+        return true;
+    }
     case ACTION_RESET:
         overlay_status("Resetting game");
+        send_hid_state(0, 0);               // release the combo's buttons in the core
+        clear_pad_states();
         reset_game();
         return true;
-    case ACTION_RELOAD:
+    case ACTION_MODE_RELOAD:
         overlay_status("FPGA reloaded, restarting game");
         reload_game();
         return true;

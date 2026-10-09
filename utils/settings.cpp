@@ -41,19 +41,25 @@ void settings_defaults(Settings &s) {
     s.reset_combo = BTN_SELECT | BTN_START | BTN_R;
     s.mode_hold_ms = 3000;
     s.mode_reload_ms = 1000;
+    s.diag = false;
 }
 
 int combo_count(uint16_t combo) {
     return __builtin_popcount(combo & 0xfff);
 }
 
-// A combo must be exactly COMBO_BUTTONS buttons, and must not contain the
-// OSD key (Select+Right), or pressing it would pass through the OSD key.
+// A combo must be exactly COMBO_BUTTONS buttons and include Select or Start,
+// so it doesn't fire during normal play. It must not contain the OSD key
+// (Select+Right), or pressing it would pass through the OSD key.
 bool combo_valid(uint16_t combo, const char **why) {
     const char *dummy;
     if (!why) why = &dummy;
     if (combo_count(combo) != COMBO_BUTTONS) {
         *why = "Need exactly 3 buttons";
+        return false;
+    }
+    if (!(combo & (BTN_SELECT | BTN_START))) {
+        *why = "Must include SEL or START";
         return false;
     }
     if ((combo & OSD_KEY_CODE) == OSD_KEY_CODE) {
@@ -85,9 +91,9 @@ std::string combo_to_string(uint16_t combo, bool short_names) {
 uint16_t combo_from_string(const char *s) {
     uint16_t combo = 0;
     while (*s) {
-        while (*s == ' ' || *s == '+') s++;
+        while (*s == ' ' || *s == '\t' || *s == '+') s++;
         const char *end = s;
-        while (*end && *end != '+' && *end != ' ') end++;
+        while (*end && *end != '+' && *end != ' ' && *end != '\t') end++;
         int len = end - s;
         if (len == 0) break;
         uint16_t bit = 0;
@@ -122,6 +128,8 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
     } else if (strcasecmp(key, "mode_reload_ms") == 0) {
         long v = strtol(val, NULL, 10);
         if (v >= 0 && v <= 10000) s.mode_reload_ms = v;
+    } else if (strcasecmp(key, "diag") == 0) {
+        s.diag = strtol(val, NULL, 10) != 0;
     }
 }
 
@@ -134,9 +142,15 @@ void settings_load() {
         f_read(&fcfg, cfgbuf, SETTINGS_BUF_SIZE - 1, &br);
         f_close(&fcfg);
         cfgbuf[br] = '\0';
+        if (br == SETTINGS_BUF_SIZE - 1) {      // too long: drop the cut-off last line
+            char *nl = strrchr(cfgbuf, '\n');
+            if (nl) *nl = '\0';
+        }
 
         // parse key=value lines, '#' starts a comment
         char *line = cfgbuf;
+        if ((uint8_t)line[0] == 0xEF && (uint8_t)line[1] == 0xBB && (uint8_t)line[2] == 0xBF)
+            line += 3;                          // UTF-8 BOM from Windows editors
         while (line && *line) {
             char *next = strpbrk(line, "\r\n");
             if (next) *next++ = '\0';
@@ -172,9 +186,12 @@ bool settings_save() {
         "# Holding MODE at least this long returns to the main menu. A shorter press resets the game.\n"
         "mode_hold_ms=%lu\n"
         "# Time the FPGA needs to reload from flash after MODE. Measured per board.\n"
-        "mode_reload_ms=%lu\n",
+        "mode_reload_ms=%lu\n"
+        "# 1 shows a diagnostic line at the bottom of menus.\n"
+        "diag=%d\n",
         menu.c_str(), reset.c_str(),
-        (unsigned long)settings.mode_hold_ms, (unsigned long)settings.mode_reload_ms);
+        (unsigned long)settings.mode_hold_ms, (unsigned long)settings.mode_reload_ms,
+        settings.diag ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 
@@ -182,6 +199,6 @@ bool settings_save() {
         return false;
     UINT bw = 0;
     FRESULT r = f_write(&fcfg, cfgbuf, len, &bw);
-    f_close(&fcfg);
-    return r == FR_OK && bw == (UINT)len;
+    FRESULT rc = f_close(&fcfg);           // flushes the data
+    return r == FR_OK && rc == FR_OK && bw == (UINT)len;
 }
