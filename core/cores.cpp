@@ -42,7 +42,7 @@ void init_core_list() {
         {2, "SNES", "snes", "snestang.bin", ".smc;.sfc", loadsnes, create_default_menu},
         {3, "Game Boy Advance", "gba", "gbatang.bin", ".gba", loadgba, create_default_menu},
         {4, "MegaDrive / Genesis", "genesis", "mdtang.bin", ".bin;.md;.gen", loadmd, create_default_menu},
-        {5, "Sega Master System", "sms", "smstang.bin", ".sms;.gg;.sg", loadsms, create_default_menu},
+        {5, "Sega Master System", "sms", "smstang.bin", ".sms;.sg", loadsms, create_default_menu},
         {6, "IBM PC/XT", "pc", "pctang.bin", ".img", loadpc, create_pcxt_menu}
     };
 
