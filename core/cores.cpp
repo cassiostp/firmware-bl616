@@ -56,7 +56,7 @@ void init_core_list() {
 
 
 extern const char *BOARD_NAME;
-extern char *drv;
+extern const char *drv;
 
 // Find a core file in the search order:
 // usb:cores/${BOARD_NAME}/${core_name}
