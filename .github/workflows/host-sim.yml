@@ -1,13 +1,12 @@
 name: host-sim
 
-# Builds the Linux host simulator and runs its scripted tests. Runs on pushes
-# to master and on demand; pushes to feature/host-sim run it only when the
-# sim or this workflow changed (so the workflow self-registers for dispatch).
+# Builds the Linux host simulator and runs its scripted tests: on every push
+# to master, and on demand for any branch
+# (gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>).
 # No pull_request trigger: nobody else's code runs here.
 on:
   push:
-    branches: [master, feature/host-sim]
-    paths: [host/**, .github/workflows/host-sim.yml]
+    branches: [master]
   workflow_dispatch:
 
 concurrency:
