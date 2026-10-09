@@ -7,9 +7,7 @@ Pushes to `master` are built by GitHub Actions (`.github/workflows/build.yml`). 
 * `tangcore-console60k`
 * `tangcore-console138k`
 
-Each artifact contains `tangcore_<board>.bin` and `flash_<board>.ini`.
-
-The artifacts do **not** contain `bl616_fpga_partner_<board>.bin`, which the `.ini` file expects next to the firmware. Take it from the TangCore release zip, or from Sipeed's [download page](https://dl.sipeed.com/shareURL/TANG/Console/09_MCU_FW) (`bl616_fpga_partner_60kConsole.bin`), and rename it to `bl616_fpga_partner_<board>.bin`, like `buildall.bat` does.
+Each artifact is a complete flash set: `tangcore_<board>.bin`, `flash_<board>.ini`, and Sipeed's `bl616_fpga_partner_<board>.bin`. The partner image is closed source, so CI takes it from the TangCore v0.9 release and verifies its SHA-256.
 
 ## Build locally (Linux x86_64)
 
