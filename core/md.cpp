@@ -9,9 +9,9 @@ int loadmd(const char *fname) {
     DEBUG("loadmd start\n");
     FRESULT r = FR_NO_FILE;
 
-    // check extension .bin
-    if (strcasestr(fname, ".bin") == NULL && strcasestr(fname, ".md") == NULL) {
-        overlay_message("Only .bin or .md supported", 1);
+    // check extension .bin/.md/.gen/.smd
+    if (!has_any_ext(fname, ".bin;.md;.gen;.smd")) {
+        overlay_message("Only .bin/.md/.gen/.smd supported", 1);
         return r;
     }
 

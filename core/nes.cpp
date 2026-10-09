@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <string.h>
 
 #include "utils.h"
 #include "cores.h"
@@ -14,8 +14,7 @@ int loadnes(const char *fname) {
     DEBUG("loadnes start\n");
 
     // check extension .nes
-    char *p = strcasestr(fname, ".nes");
-    if (p == NULL) {
+    if (!has_any_ext(fname, ".nes")) {
         overlay_message("Only .nes supported", 1);
         goto loadnes_end;
     }

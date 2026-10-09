@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <string.h>
 
 #include "utils.h"
 #include "cores.h"
@@ -49,9 +49,8 @@ int loadgba(const char *fname) {
     DEBUG("loadgba start\n");
     FRESULT r = FR_NO_FILE;
 
-    // check extension .gba
-    char *p = strcasestr(fname, ".gba");
-    if (p == NULL) {
+    // check extension .gba (suffix match: gba_bios.bin is not a ROM)
+    if (!has_any_ext(fname, ".gba")) {
         overlay_message("Only .gba supported", 1);
         return r;
     }

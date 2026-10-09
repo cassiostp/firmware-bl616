@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <string.h>
 
 #include "menu_manager.h"
 #include "utils.h"
@@ -111,8 +111,7 @@ int loadpc(const char *fname) {
 
     DEBUG("loadpc start: %s\n", fname);
     // check extension .img
-    const char *p = strcasestr(fname, ".img");
-    if (p == NULL) {
+    if (!has_any_ext(fname, ".img")) {
         overlay_message("PC only supports .img", 1);
         return -1;
     }
@@ -190,12 +189,13 @@ bool PcxtMenu::on_choose(int idx) {
         c.rootdir = imgdir;
         c.curdir = imgdir;
         c.msg_return = "<< Cancel";
+        c.filter_exts = ".img";
         std::string fname;
         bool r = c.choose_file(fname);
         delay(200);
         do_redraw();
         if (r) {
-            if (strcasestr(fname.c_str(), ".img") != NULL) {
+            if (has_any_ext(fname.c_str(), ".img")) {
                 mount_floppy(idx, fname.c_str());
                 return false;       // don't close pop-up menu
             } else {

@@ -18,6 +18,8 @@ struct FileChooser {
     string curfile;
     string msg_return = "<< Return to main menu";
     // FATFS *fs;
+    string filter_exts;             // ';'-separated extensions to show, e.g. ".gba". Empty = show all.
+                                    // Directories (and the return entry) are always shown.
 
     // void set_fs(FATFS *fs);
     bool choose_file(string &res);      // return true if a file was chosen

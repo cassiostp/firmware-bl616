@@ -8,6 +8,7 @@ extern "C" {
 }
 #include "utils.h"
 #include "overlay.h"
+#include "game_controls.h"
 
 /////////////////////////////////////////////////////////////////////////////////
 // Overlay and other core control over UART
@@ -141,14 +142,21 @@ void overlay_message(const char *msg, int center) {
         }
         s++;
     }
-    // wait for a keypress
+    // wait for a keypress. Keep polling the controller combos and the MODE
+    // button while waiting: MODE reloads the FPGA from flash (detected inside
+    // controls_poll), and must restart the firmware instead of hanging here
+    // with no button able to dismiss the box. A pending action also ends the
+    // dialog; the caller must redraw and let the main loop handle the action.
     delay(300);
     for (;;) {
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
         joy1 |= hid1; joy2 |= hid2;
+        if (controls_poll(joy1, joy2, false, game_loaded()))
+            break;                  // combo or MODE: the caller handles pending_action
         if ((joy1 & 0x1) || (joy1 & 0x100) || (joy2 & 0x1) || (joy2 & 0x100))
             break;
+        delay(10);
     }
     delay(300);
 }

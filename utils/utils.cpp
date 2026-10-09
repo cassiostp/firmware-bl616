@@ -59,6 +59,34 @@ const char *cstr_find_ignore_case(const char *str, const char *substr) {
     return str + (it - s.begin());
 }
 
+bool has_ext(const char *fname, const char *ext) {
+    if (!fname || !ext || !*ext) return false;
+    size_t fl = strlen(fname), el = strlen(ext);
+    if (fl < el) return false;
+    return strcasecmp(fname + fl - el, ext) == 0;
+}
+
+bool has_any_ext(const char *fname, const char *exts) {
+    if (!fname) return false;
+    if (!exts || !*exts) return true;   // no filter: accept everything
+    // `exts` is a ';'-separated list like ".bin;.md;.gen;.smd"
+    char one[16];
+    const char *p = exts;
+    while (*p) {
+        while (*p == ';') p++;
+        if (!*p) break;
+        size_t i = 0;
+        while (*p && *p != ';') {
+            if (i + 1 < sizeof(one)) one[i++] = *p;
+            p++;
+        }
+        one[i] = '\0';
+        if (i > 0 && has_ext(fname, one))
+            return true;
+    }
+    return false;
+}
+
 static uint32_t core_config;
 
 uint32_t get_core_config(void) {

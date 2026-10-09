@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <string.h>
 
 #include "utils.h"
 #include "cores.h"
@@ -61,10 +61,7 @@ int loadsnes(const char *fname) {
     DEBUG("loadsnes start");
 
     // check extension .sfc or .smc
-    char *p = strcasestr(fname, ".sfc");
-    if (p == NULL)
-        p = strcasestr(fname, ".smc");
-    if (p == NULL) {
+    if (!has_any_ext(fname, ".smc;.sfc")) {
         overlay_message("Only .smc or .sfc supported", 1);
         return r;
     }

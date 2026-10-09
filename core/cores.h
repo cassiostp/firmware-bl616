@@ -11,11 +11,15 @@ struct core_info {
     const char *display_name;
     const char *rom_dir;            // nes, snes, etc.
     const char *core_file;          // core file in cores/
+    const char *rom_exts;           // ';'-separated ROM extensions, e.g. ".bin;.md;.gen;.smd"
     int (*load_rom)(const char *fname);
     Menu *(*create_menu)(const char *imgdir);
 };
 
 extern struct core_info *find_core_by_id(uint16_t id);
+
+// True if `fname` has one of the core's ROM extensions (suffix match).
+bool core_supports_file(const struct core_info *core, const char *fname);
 
 extern std::vector<core_info> core_info_list;
 extern std::vector<int16_t> main_menu_config;

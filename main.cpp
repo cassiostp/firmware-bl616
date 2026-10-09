@@ -162,6 +162,16 @@ static void send_hid_state(uint16_t hid1, uint16_t hid2) {
 // running (or always, with force_program). Returns 1 if the ROM was loaded,
 // -1 on error.
 static int load_game(core_info *core, const string &rom, bool force_program) {
+    // Check the extension before touching the FPGA. Programming the core
+    // first and then rejecting the file leaves the new core running with
+    // nothing loaded and an undismissable error box.
+    if (!core_supports_file(core, rom.c_str())) {
+        string msg = string("Unsupported file for\n") + core->display_name +
+                     "\nExpected " + core->rom_exts;
+        overlay_message(msg.c_str(), 1);
+        return -1;
+    }
+
     active_core = get_core_id();
 
     if (force_program || active_core != core->id) {
@@ -207,6 +217,22 @@ static int menu_loadrom(const char *dir) {
     file_chooser.rootdir = dir;
     file_chooser.curdir = dir;
     file_chooser.msg_return = "<< Return to main menu";
+    // Hide files no loader accepts. Match the entry dir against the cores'
+    // ROM dirs ("snes" contains "nes", so match the full last component).
+    file_chooser.filter_exts.clear();
+    {
+        string d = dir;
+        for (auto &c : core_info_list) {
+            string a = string(":") + c.rom_dir, b = string("/") + c.rom_dir;
+            if ((d.size() >= a.size() && d.compare(d.size() - a.size(), a.size(), a) == 0) ||
+                (d.size() >= b.size() && d.compare(d.size() - b.size(), b.size(), b) == 0)) {
+                file_chooser.filter_exts = c.rom_exts;
+                break;
+            }
+        }
+        if (file_chooser.filter_exts.empty() && d.find("cores") != string::npos)
+            file_chooser.filter_exts = ".bin";
+    }
     bool r = file_chooser.choose_file(fname);
     if (!r) {
         overlay_status("No file chosen");
@@ -274,9 +300,10 @@ static void send_hid_to_core(void) {
     dprint("Stopped sending HID to core.");
 }
 
-// Diagnostic line on row 26 (status messages use row 27). Shows raw pad
-// states (FPGA pads J, USB pads H), the core ID, how many times the overlay
-// was hidden, and a counter that stops if this loop stops running.
+// Diagnostic line on row 0 (row 26 sits under some cores' logos, hiding it).
+// Shows raw pad states (FPGA pads J, USB pads H), the core ID, the pending
+// action (a) and combo state (m), plus a counter that stops if this loop
+// stops running.
 static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
     static uint64_t last_draw;
     static uint32_t beat;
@@ -284,10 +311,11 @@ static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
     if (!settings.diag || now - last_draw < 250)
         return;
     last_draw = now;
-    overlay_cursor(0, 26);
-    // fixed width, exactly 32 columns: J00000000 H00000000 c0  t00 #000
-    overlay_printf("J%04x%04x H%04x%04x c%-2d t%02lu #%03lu", joy1, joy2, hid1, hid2, active_core,
-                   (unsigned long)(overlay_hide_count % 100), (unsigned long)(beat++ % 1000));
+    overlay_cursor(0, 0);
+    // fixed width, exactly 32 columns: J00000000 H00000000 c0 a0m0 #000
+    overlay_printf("J%04x%04x H%04x%04x c%-2da%dm%d #%03lu", joy1, joy2, hid1, hid2, active_core,
+                   (int)pending_action, combo_in_progress(joy1 | hid1, joy2 | hid2) ? 1 : 0,
+                   (unsigned long)(beat++ % 1000));
 }
 
 // // (R L X A RT LT DN UP START SELECT Y B)
@@ -304,6 +332,14 @@ int joy_choice(int start_line, int len, int *active) {
         draw_diag_line(joy1, joy2, hid1, hid2);
     joy1 |= hid1;
     joy2 |= hid2;
+
+    // Draw the cursor before any early return: a pending action or a combo
+    // in progress used to leave the menu on screen with no cursor and dead
+    // navigation.
+    if (overlay_on()) {
+        overlay_cursor(0, start_line + (*active));
+        overlay_printf(">");
+    }
 
     if (overlay_on() && controls_poll(joy1, joy2, false, game_loaded()))
         return 0;                  // menu combo: the caller handles pending_action
@@ -330,14 +366,13 @@ int joy_choice(int start_line, int len, int *active) {
     if ((joy1 & 0x1) || (joy2 & 0x1))
         return 1;      // button B pressed
 
-    overlay_cursor(0, start_line + (*active));
-    overlay_printf(">");
-
     // overlay_cursor(0, 27);
     // overlay_printf(" j1=%04x j2=%04x h1=%04x h2=%04x", joy1, joy2, hid1, hid2);
     if (last != *active) {
         overlay_cursor(0, start_line + last);
         overlay_printf(" ");
+        overlay_cursor(0, start_line + (*active));
+        overlay_printf(">");
         delay(100);     // button debounce
     }    
     return 0;
@@ -670,8 +705,17 @@ static void main_task(void *pvParameters)
                 overlay_status("core_id=%d", active_core);
                 if (active_core >= 0) redraw = true;    // redraw immediately if core is detected
             }
-            if (now - last_redraw_time > 5000) 
-                redraw = true;
+            // Poll the core ID without blanking the menu: the old code set
+            // redraw = true every 5 s, and the redraw's overlay_clear()
+            // blinked the menu off briefly.
+            if (now - last_redraw_time > 5000) {
+                last_redraw_time = now;
+                int16_t id = get_core_id();
+                if (id >= 0 && id != active_core) {
+                    active_core = id;
+                    redraw = true;
+                }
+            }
             if (redraw) {
                 active_core = get_core_id();            // allow jtag to change core underneath us
                 overlay(overlay_on());                  // set correct overlay state
