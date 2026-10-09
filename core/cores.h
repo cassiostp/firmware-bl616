@@ -11,7 +11,7 @@ struct core_info {
     const char *display_name;
     const char *rom_dir;            // nes, snes, etc.
     const char *core_file;          // core file in cores/
-    const char *rom_exts;           // ';'-separated ROM extensions, e.g. ".bin;.md;.gen;.smd"
+    const char *rom_exts;           // ';'-separated ROM extensions, e.g. ".bin;.md;.gen"
     int (*load_rom)(const char *fname);
     Menu *(*create_menu)(const char *imgdir);
 };

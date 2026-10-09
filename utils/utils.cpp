@@ -120,7 +120,8 @@ volatile uint32_t heartbeat;                // last activity tick (watchdog)
 // critical sections, where the watchdog task can't.
 void heartbeat_bump(void) {
     heartbeat++;
-    bflb_wdg_reset_countervalue(wdg_dev);
+    if (wdg_dev)                    // NULL until main() sets the watchdog up
+        bflb_wdg_reset_countervalue(wdg_dev);
 }
 
 static uint16_t suppress_mask[4];   // per pad: buttons ignored until released

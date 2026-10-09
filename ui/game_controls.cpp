@@ -5,6 +5,7 @@ extern "C" {
 #include "bl616_glb.h"
 #include "bl616_hbn.h"
 #include "bflb_irq.h"
+#include "bflb_wdg.h"
 }
 
 #include "game_controls.h"
@@ -12,6 +13,13 @@ extern "C" {
 #include "menu_manager.h"
 #include "overlay.h"
 #include "utils.h"
+
+// Before a deliberate restart: the watchdog mustn't fire in whatever runs
+// next (the ROM flashing loader in flash mode).
+static void stop_watchdog(void) {
+    if (wdg_dev)
+        bflb_wdg_stop(wdg_dev);
+}
 
 volatile GameAction pending_action = ACTION_NONE;
 
@@ -146,6 +154,7 @@ static void check_mode_button(bool in_game) {
         overlay(1);
         overlay_status("Restarting...");
         delay(50);
+        stop_watchdog();
         GLB_SW_System_Reset();
     }
     seen_answer = true;
@@ -275,6 +284,7 @@ static void reboot_to_flash_mode(void) {
     usb_back_to_power_on_state();
     arch_delay_ms(100);             // long enough for the PC to see a detach
     HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
+    stop_watchdog();
     GLB_SW_System_Reset();
 }
 

@@ -59,6 +59,7 @@ struct console_s {
                 overlay_printf("_ ");    // print caret
                 caret = false;
             }
+            heartbeat_bump();            // waiting for typing is alive (watchdog)
             uint8_t key = key_input();
             if (key > 0) {
                 if (key == '\b') {
