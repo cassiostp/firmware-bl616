@@ -9,6 +9,7 @@
 // Core specific state
 bool gba_bios_loaded;
 bool gba_missing_bios_warned;
+static uint8_t gba_backup_type;         // config code sent for the loaded game, 0 = none
 
 // Cart backup chips announce themselves in the ROM with an ID string. These
 // are the ones GBA games ship; the byte is the core's config code (gba_memory
@@ -138,6 +139,7 @@ int loadgba(const char *fname) {
     // RAM cannot leak into a game that expects to find it uninitialized.
     for (unsigned i = 0; btype == 0 && i < sizeof gba_backup_ids / sizeof gba_backup_ids[0]; i++)
         if (bhits & (1u << i)) { btype = gba_backup_ids[i].type; bblocks = btype == 2 ? 256 : btype == 1 ? 128 : btype == 4 ? 16 : 64; }
+    gba_backup_type = btype;
     if (btype) {
         fbuf[0] = btype;
         set_loading_state(3);
@@ -157,4 +159,14 @@ loadgba_close:
     set_loading_state(0);   // turn off game loading, this starts the core
     f_close(&fcore);
     return r;
+}
+
+// gba_memory clears the backup type whenever loading goes to 1, which a game
+// reset does too. Call between set_loading_state(1) and set_loading_state(0)
+// of a reset so the restarted game still finds its save chip.
+void gba_resend_backup_type(void) {
+    if (!gba_backup_type) return;
+    fbuf[0] = gba_backup_type;
+    set_loading_state(3);
+    send_fbuf_data(1);
 }
