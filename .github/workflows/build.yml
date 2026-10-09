@@ -1,0 +1,112 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned dependency revisions, so builds are reproducible. To bump, run
+  #   git ls-remote https://github.com/nand2mario/bouffalo_sdk.git HEAD
+  #   git ls-remote https://github.com/bouffalolab/toolchain_gcc_t-head_linux.git HEAD
+  # and update the SHAs below (the cache keys follow automatically).
+  # Both were the upstream HEAD on 2026-10-08.
+  SDK_REPO: https://github.com/nand2mario/bouffalo_sdk.git
+  SDK_SHA: 7f44f9ea6b4ccf96db8c5236c8024b68e2a76df7
+  TOOLCHAIN_REPO: https://github.com/bouffalolab/toolchain_gcc_t-head_linux.git
+  TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0
+
+jobs:
+  build:
+    name: build (${{ matrix.board }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same list as buildall.bat. CMakeLists.txt also knows mega60k, mega138k,
+        # primer25k and nano20k, but buildall.bat has them commented out, so
+        # they are not built here.
+        board: [console60k, console138k]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain
+          key: toolchain-${{ runner.os }}-${{ env.TOOLCHAIN_SHA }}
+
+      - name: Fetch toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/toolchain && cd ~/toolchain
+          git init -q
+          git fetch -q --depth 1 "$TOOLCHAIN_REPO" "$TOOLCHAIN_SHA"
+          git checkout -q FETCH_HEAD
+          rm -rf .git
+
+      - name: Cache Bouffalo SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/bouffalo_sdk
+          key: sdk-${{ runner.os }}-${{ env.SDK_SHA }}
+
+      - name: Fetch Bouffalo SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/bouffalo_sdk && cd ~/bouffalo_sdk
+          git init -q
+          git fetch -q --depth 1 "$SDK_REPO" "$SDK_SHA"
+          git checkout -q FETCH_HEAD
+          # The only submodule (examples/cherryusb) is not used by this firmware;
+          # CherryUSB is vendored under components/usb/cherryusb.
+          rm -rf .git
+
+      - name: Build
+        env:
+          TANG_BOARD: ${{ matrix.board }}
+        run: |
+          export BL_SDK_BASE="$HOME/bouffalo_sdk"
+          export PATH="$HOME/toolchain/bin:$PATH"
+          riscv64-unknown-elf-gcc --version | head -n 1
+          make TANG_BOARD="$TANG_BOARD"
+
+      - name: Collect outputs
+        env:
+          BOARD: ${{ matrix.board }}
+        run: |
+          mkdir -p out
+          # project(tangcore) + CHIP=bl616 -> build/build_out/tangcore_bl616.bin
+          cp build/build_out/tangcore_bl616.bin "out/tangcore_${BOARD}.bin"
+          # Same transformation as buildall.bat applies to flash.ini
+          sed -e "s/bl616_fpga_partner\.bin/bl616_fpga_partner_${BOARD}.bin/" \
+              -e "s/tangcore\.bin/tangcore_${BOARD}.bin/" \
+              flash.ini > "out/flash_${BOARD}.ini"
+          ls -l out
+          {
+            echo "### ${BOARD}"
+            echo
+            echo "Flash \`flash_${BOARD}.ini\` with Bouffalo Flash Cube. It also needs"
+            echo "\`bl616_fpga_partner_${BOARD}.bin\` in the same folder, which is not built here:"
+            echo "take it from the TangCore release zip or Sipeed's download page."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tangcore-${{ matrix.board }}
+          path: |
+            out/tangcore_${{ matrix.board }}.bin
+            out/flash_${{ matrix.board }}.ini
+          if-no-files-found: error
