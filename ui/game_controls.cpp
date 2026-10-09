@@ -255,13 +255,13 @@ static void usb_back_to_power_on_state(void) {
 // Reboot the BL616 into its ROM bootloader, as if BOOT were held at power-up,
 // so the firmware can be flashed without opening the case. The ROM reads the
 // boot selection from HBN_RSV2, which survives a software reset but not a
-// power cut. por: a power-on reset instead of a system reset (resets more of
-// the chip; not yet known whether HBN_RSV2 survives it).
-static void reboot_to_flash_mode(bool por) {
+// power cut. Verified on a Console 138K: the ROM shows up as "Bouffalo CDC"
+// on the PC plugged into the BL616 port.
+static void reboot_to_flash_mode(void) {
     overlay_clear();
     overlay_cursor(0, 9);
     //              01234567890123456789012345678901
-    overlay_printf("  --- Flash mode %s---", por ? "(B) " : "");
+    overlay_printf("  --- Flash mode ---");
     overlay_cursor(0, 11);
     overlay_printf("  Ready to be flashed from the");
     overlay_cursor(0, 12);
@@ -275,10 +275,7 @@ static void reboot_to_flash_mode(bool por) {
     usb_back_to_power_on_state();
     arch_delay_ms(100);             // long enough for the PC to see a detach
     HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
-    if (por)
-        GLB_SW_POR_Reset();
-    else
-        GLB_SW_System_Reset();
+    GLB_SW_System_Reset();
 }
 
 struct FlashModeMenu: Menu {
@@ -300,18 +297,16 @@ struct FlashModeMenu: Menu {
         overlay_cursor(2, 17);
         overlay_printf("Restart in flash mode");
         overlay_cursor(2, 18);
-        overlay_printf("Restart in flash mode (B)");
-        overlay_cursor(2, 19);
         overlay_printf("<< Cancel");
     }
 
     std::vector<int> get_options() override {
-        return {17, 18, 19};
+        return {17, 18};
     }
 
     bool on_choose(int idx) override {
-        if (idx == 0 || idx == 1)
-            reboot_to_flash_mode(idx == 1);     // doesn't return
+        if (idx == 0)
+            reboot_to_flash_mode();     // doesn't return
         return true;
     }
 };
