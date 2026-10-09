@@ -4,6 +4,7 @@
 extern "C" {
 #include "bl616_glb.h"
 #include "bl616_hbn.h"
+#include "bflb_irq.h"
 }
 
 #include "game_controls.h"
@@ -214,28 +215,70 @@ static uint16_t capture_combo(const char *what) {
     }
 }
 
+// BL616 USB registers (drivers/lhal/src/bflb_usb_v2.c in the SDK)
+#define USB_BASE                0x20072000
+#define USB_OTG_CSR             (USB_BASE + 0x80)
+#define USB_A_BUS_REQ_HOV       (1 << 4)
+#define USB_A_BUS_DROP_HOV      (1 << 5)
+#define USB_PHY_TST             (USB_BASE + 0x114)
+#define USB_UNPLUG              (1 << 0)
+#define PDS_USB_CTL             0x2000e500
+#define PDS_USB_SW_RST_N        (1 << 0)
+#define PDS_USB_EXT_SUSP_N      (1 << 1)
+#define PDS_USB_IDDIG           (1 << 5)
+#define PDS_USB_PHY_CTRL        0x2000e504
+#define PDS_USB_PHY_PONRST      (1 << 0)
+#define PDS_USB_PU_USB20_PSW    (1 << 6)
+#define USB_IRQ                 37
+
+static inline void reg_set(uint32_t addr, uint32_t bits, bool on) {
+    volatile uint32_t *r = (volatile uint32_t *)addr;
+    *r = on ? (*r | bits) : (*r & ~bits);
+}
+
+// Put the USB block back the way power-on leaves it. The firmware runs it as a
+// host (device-A, bus powered, PHY on), and these registers sit in the PDS
+// power domain, which a software reset doesn't clear. The ROM's USB loader
+// expects power-on state, so without this it never shows up on the PC.
+static void usb_back_to_power_on_state(void) {
+    bflb_irq_disable(USB_IRQ);
+    reg_set(USB_OTG_CSR, USB_A_BUS_REQ_HOV, false);     // stop driving the bus
+    reg_set(USB_OTG_CSR, USB_A_BUS_DROP_HOV, true);
+    reg_set(USB_PHY_TST, USB_UNPLUG, true);             // detach (as usb_dc_deinit)
+    reg_set(PDS_USB_CTL, PDS_USB_IDDIG, true);          // B-device, not host
+    reg_set(PDS_USB_CTL, PDS_USB_SW_RST_N, false);      // hold the controller in reset
+    reg_set(PDS_USB_CTL, PDS_USB_EXT_SUSP_N, false);
+    reg_set(PDS_USB_PHY_CTRL, PDS_USB_PHY_PONRST, false);   // PHY off
+    reg_set(PDS_USB_PHY_CTRL, PDS_USB_PU_USB20_PSW, false);
+}
+
 // Reboot the BL616 into its ROM bootloader, as if BOOT were held at power-up,
 // so the firmware can be flashed without opening the case. The ROM reads the
 // boot selection from HBN_RSV2, which survives a software reset but not a
-// power cut.
-static void reboot_to_flash_mode(void) {
+// power cut. por: a power-on reset instead of a system reset (resets more of
+// the chip; not yet known whether HBN_RSV2 survives it).
+static void reboot_to_flash_mode(bool por) {
     overlay_clear();
     overlay_cursor(0, 9);
     //              01234567890123456789012345678901
-    overlay_printf("  --- Flash mode ---");
+    overlay_printf("  --- Flash mode %s---", por ? "(B) " : "");
     overlay_cursor(0, 11);
-    overlay_printf("  Ready to be flashed.");
-    overlay_cursor(0, 13);
-    overlay_printf("  Keep the power connected,");
+    overlay_printf("  Ready to be flashed from the");
+    overlay_cursor(0, 12);
+    overlay_printf("  PC on the BL616 USB-C port.");
     overlay_cursor(0, 14);
-    overlay_printf("  and connect the BL616 USB-C");
+    overlay_printf("  Keep the power connected.");
     overlay_cursor(0, 15);
-    overlay_printf("  port to the PC.");
-    overlay_cursor(0, 17);
     overlay_printf("  Power-cycle to cancel.");
     delay(100);                     // let the UART drain
+    taskENTER_CRITICAL();
+    usb_back_to_power_on_state();
+    arch_delay_ms(100);             // long enough for the PC to see a detach
     HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
-    GLB_SW_System_Reset();
+    if (por)
+        GLB_SW_POR_Reset();
+    else
+        GLB_SW_System_Reset();
 }
 
 struct FlashModeMenu: Menu {
@@ -247,24 +290,28 @@ struct FlashModeMenu: Menu {
         overlay_cursor(0, 11);
         overlay_printf("  Restarts the MCU ready to be");
         overlay_cursor(0, 12);
-        overlay_printf("  flashed from a PC, without");
+        overlay_printf("  flashed, without the BOOT");
         overlay_cursor(0, 13);
-        overlay_printf("  the BOOT button. Keep the");
+        overlay_printf("  button. Plug the PC into the");
         overlay_cursor(0, 14);
-        overlay_printf("  power connected.");
-        overlay_cursor(2, 16);
-        overlay_printf("Restart in flash mode");
+        overlay_printf("  BL616 USB-C port first, and");
+        overlay_cursor(0, 15);
+        overlay_printf("  keep the power connected.");
         overlay_cursor(2, 17);
+        overlay_printf("Restart in flash mode");
+        overlay_cursor(2, 18);
+        overlay_printf("Restart in flash mode (B)");
+        overlay_cursor(2, 19);
         overlay_printf("<< Cancel");
     }
 
     std::vector<int> get_options() override {
-        return {16, 17};
+        return {17, 18, 19};
     }
 
     bool on_choose(int idx) override {
-        if (idx == 0)
-            reboot_to_flash_mode();     // doesn't return
+        if (idx == 0 || idx == 1)
+            reboot_to_flash_mode(idx == 1);     // doesn't return
         return true;
     }
 };

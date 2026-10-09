@@ -41,7 +41,7 @@ Run `make clean` before building for a different board.
 
 1. Unzip the CI artifact (or put `tangcore_<board>.bin`, `bl616_fpga_partner_<board>.bin` and `flash_<board>.ini` in one folder).
 2. Put the BL616 into programming mode, either way:
-   - **From the menu** (this firmware or later): **Options → Flash mode... → Restart in flash mode**, then plug the BL616 USB-C port into the PC. No need to open the case.
+   - **From the menu** (this firmware or later): with TangCore running and the power connected, plug the PC into the BL616 USB-C port, then choose **Options → Flash mode... → Restart in flash mode**. No need to open the case.
    - **With the BOOT button:** press and hold "BOOT" on the board (bottom left corner, close to one of the USB-C ports), then plug the BL616 USB-C port into the PC.
 3. Open Bouffalo Flash Cube, choose chip BL616 and select the serial port.
 4. Load `flash_<board>.ini` as the config, then press Download.
