@@ -579,8 +579,11 @@ static core_info *loaded_core(void) {
 
 // Reset the running game. Holding the core in loading state with no data, then
 // releasing it, restarts it with the ROM still in memory: the same path as
-// loading a second ROM, minus the data. Genesis can't: an empty load sets its
-// ROM size to 0 (mdtang_top.sv), so it reloads the ROM.
+// loading a second ROM, minus the data. Genesis used to reload the ROM here:
+// an empty load used to zero its ROM size, and mdtang now keeps it (mdtang_top
+// holds ROMSZ when a load sends no data). The save RAM rides in SDRAM through
+// the whole toggle -- untouched, and no restore runs, so a reset can neither
+// lose nor overwrite it; saves_settle()/saves_rearm() bracket the path.
 static void reset_game(void) {
     saves_settle();                     // flush any pending save before the core restarts
     if (!last_core) {                       // a core from Cores: restart it
@@ -595,10 +598,6 @@ static void reset_game(void) {
         return;
     }
     overlay_status("Resetting %s", last_core->display_name);
-    if (last_core->id == 4) {
-        load_game(last_core, last_rom, false);  // turns the overlay off when done
-        return;
-    }
     set_loading_state(1);
     delay(20);
     set_loading_state(0);

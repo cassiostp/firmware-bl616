@@ -85,6 +85,20 @@ static const save_geom save_geoms[] = {
     // tolerate it, so there is no "right" blank byte: we pick 0xFF, matching
     // the SMS entry and the mostly-high power-up state of SRAM chips.
     {1, 16, "nes", 0xFF, false},  // own SDRAM slot, idle-only: no pause
+    // MegaDrive / Genesis: the cart SRAM the core decodes at $200000-$37FFFF,
+    // streamed byte-wise from its own SDRAM slot (sdram.v port 3, lowest
+    // priority: never delays the game, so no pause). MiSTer's MegaDrive core
+    // (MegaDrive_MiSTer) keeps the same raw linear image: its save stream is
+    // save_addr={sd_lba[6:0],sd_buff_addr} over the SRAM indexed by
+    // cart_addr[16:1] (cartridge.sv, MegaDrive.sv), i.e. <rom>.sav = cart
+    // bytes $200000.. , 32K words = 128 x 512-byte blocks = 64 KB; and its
+    // fresh SRAM is 0xFF (the load-time fill sram2_di = 16'hFFFF, cartridge.sv).
+    // The block count is per game (saves_set_blocks): the ROM header's "RA"
+    // at $1B0 flags backup RAM, with its start/end addresses at $1B4/$1B8.
+    // MiSTer has no saves folder for the MegaDrive (the .sav lives beside the
+    // ROM); this is our folder token for core 4, same word as cores.cpp's
+    // rom_dir.
+    {4, 0, "genesis", 0xFF, false},
 };
 #define N_GEOMS (sizeof(save_geoms) / sizeof(save_geoms[0]))
 
