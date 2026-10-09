@@ -26,6 +26,7 @@ void send_fbuf_data(uint16_t len) {
         fpga_tx_byte(fbuf[i]);
     }
     taskEXIT_CRITICAL();
+    heartbeat_bump();               // ROM transfers call this in a tight loop
 }
 
 // set loading state
@@ -113,6 +114,14 @@ volatile uint16_t hid2_state = 0;
 volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
+volatile uint32_t heartbeat;                // last activity tick (watchdog)
+
+// Count a beat, and feed the watchdog here too: some bump sites run inside
+// critical sections, where the watchdog task can't.
+void heartbeat_bump(void) {
+    heartbeat++;
+    bflb_wdg_reset_countervalue(wdg_dev);
+}
 
 static uint16_t suppress_mask[4];   // per pad: buttons ignored until released
 
@@ -131,6 +140,7 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
         }
         xSemaphoreGive(state_mutex);
     }
+    heartbeat_bump();       // every menu/input loop calls this: alive
 }
 
 void suppress_held_buttons(void)

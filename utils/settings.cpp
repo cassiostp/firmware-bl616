@@ -180,7 +180,7 @@ bool settings_save() {
         "reset_combo=%s\n"
         "reset_enabled=%d\n"
         "close_hold_ms=%lu\n"
-        "# 1 shows a diagnostic line at the bottom of menus.\n"
+        "# 1 shows a diagnostic line at the top of menus.\n"
         "diag=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0);

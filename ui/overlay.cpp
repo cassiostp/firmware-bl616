@@ -154,9 +154,9 @@ void overlay_message(const char *msg, int center) {
         joy1 |= hid1; joy2 |= hid2;
         if (controls_poll(joy1, joy2, false, game_loaded()))
             break;                  // combo or MODE: the caller handles pending_action
-        if ((joy1 & 0x1) || (joy1 & 0x100) || (joy2 & 0x1) || (joy2 & 0x100))
-            break;
-        delay(10);
+        if ((joy1 & 0x109) || (joy2 & 0x109))
+            break;                  // A, B or START dismisses the box
+        delay(20);
     }
     delay(300);
 }

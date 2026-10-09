@@ -6,6 +6,7 @@
 extern "C" {
 #include "bflb_gpio.h"
 #include "bflb_uart.h"
+#include "bflb_wdg.h"
 
 #include <FreeRTOS.h>
 #include "task.h"
@@ -118,6 +119,14 @@ extern USB_NOCACHE_RAM_SECTION BYTE __attribute__((aligned(64))) fbuf[BLOCK_SIZE
 extern bool mounted_a;
 
 extern struct bflb_device_s *uart1_dev;
+extern struct bflb_device_s *wdg_dev;
+
+// Watchdog heartbeat: bumped by the input, file listing and data transfer
+// paths, so any of them counts as "the firmware is doing something". The
+// watchdog task (main.cpp) feeds the hardware watchdog only while this keeps
+// moving; when a crash or deadlock stops the bumps, the chip resets.
+extern volatile uint32_t heartbeat;
+extern void heartbeat_bump(void);
 
 // len: length of payload including the command (>=1)
 extern void fpga_tx_header(int cmd, int len);

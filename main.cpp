@@ -51,6 +51,7 @@ struct core_info *core;
 struct bflb_device_s *gpio_dev;
 struct bflb_device_s *uart0_dev;
 struct bflb_device_s *uart1_dev;
+struct bflb_device_s *wdg_dev;
 
 // USB and fatfs
 struct usbh_msc *msc;
@@ -166,9 +167,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
     // first and then rejecting the file leaves the new core running with
     // nothing loaded and an undismissable error box.
     if (!core_supports_file(core, rom.c_str())) {
-        string msg = string("Unsupported file for\n") + core->display_name +
-                     "\nExpected " + core->rom_exts;
-        overlay_message(msg.c_str(), 1);
+        overlay_message("Unsupported file type", 1);
         return -1;
     }
 
@@ -186,6 +185,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
             uint64_t start = bflb_mtimer_get_time_ms();
             while (bflb_mtimer_get_time_ms() - start < 2000) {
                 send_blank_packet();
+                heartbeat_bump();
                 active_core = get_core_id();
                 if (active_core == core->id)
                     break;
@@ -219,6 +219,7 @@ static int menu_loadrom(const char *dir) {
     file_chooser.msg_return = "<< Return to main menu";
     // Hide files no loader accepts. Match the entry dir against the cores'
     // ROM dirs ("snes" contains "nes", so match the full last component).
+    // The Cores browser matches none of them and lists everything, as before.
     file_chooser.filter_exts.clear();
     {
         string d = dir;
@@ -230,8 +231,6 @@ static int menu_loadrom(const char *dir) {
                 break;
             }
         }
-        if (file_chooser.filter_exts.empty() && d.find("cores") != string::npos)
-            file_chooser.filter_exts = ".bin";
     }
     bool r = file_chooser.choose_file(fname);
     if (!r) {
@@ -301,9 +300,9 @@ static void send_hid_to_core(void) {
 }
 
 // Diagnostic line on row 0 (row 26 sits under some cores' logos, hiding it).
-// Shows raw pad states (FPGA pads J, USB pads H), the core ID, the pending
-// action (a) and combo state (m), plus a counter that stops if this loop
-// stops running.
+// Shows raw pad states (FPGA pads J, USB pads H), the pending action and
+// whether a combo is held (a), the core ID (c), and a counter that stops if
+// this loop stops running.
 static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
     static uint64_t last_draw;
     static uint32_t beat;
@@ -312,10 +311,10 @@ static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
         return;
     last_draw = now;
     overlay_cursor(0, 0);
-    // fixed width, exactly 32 columns: J00000000 H00000000 c0 a0m0 #000
-    overlay_printf("J%04x%04x H%04x%04x c%-2da%dm%d #%03lu", joy1, joy2, hid1, hid2, active_core,
+    // fixed width, exactly 32 columns: J00000000 H00000000 a00 c0  #000
+    overlay_printf("J%04x%04x H%04x%04x a%d%d c%-2d #%03lu", joy1, joy2, hid1, hid2,
                    (int)pending_action, combo_in_progress(joy1 | hid1, joy2 | hid2) ? 1 : 0,
-                   (unsigned long)(beat++ % 1000));
+                   active_core, (unsigned long)(beat++ % 1000));
 }
 
 // // (R L X A RT LT DN UP START SELECT Y B)
@@ -382,6 +381,28 @@ int joy_choice(int start_line, int len, int *active) {
 #define MAIN_TASK_PRIORITY    3
 #define UART1_RX_TASK_STACK_SIZE  512
 #define UART1_RX_TASK_PRIORITY    3
+#define WATCHDOG_TASK_STACK_SIZE  256
+#define WATCHDOG_TASK_PRIORITY    4       // above main_task: feeds it mustn't miss
+#define HEARTBEAT_STALL_MS        15000   // stop feeding after this long without a beat
+#define WATCHDOG_FEED_MS          2000    // hardware timeout after feeding stops
+
+// Feed the hardware watchdog while the heartbeat keeps moving (something is
+// reading pads, listing files or sending data). If it stops - a crash, a spin
+// loop, a mutex deadlock - stop feeding and the watchdog resets the chip.
+static void watchdog_task(void *pvParameters)
+{
+    uint32_t last_beat = heartbeat;
+    uint64_t last_beat_time = bflb_mtimer_get_time_ms();
+    while (1) {
+        if (heartbeat != last_beat) {
+            last_beat = heartbeat;
+            last_beat_time = bflb_mtimer_get_time_ms();
+        }
+        if (bflb_mtimer_get_time_ms() - last_beat_time < HEARTBEAT_STALL_MS)
+            bflb_wdg_reset_countervalue(wdg_dev);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
 
 // Receive joypad updates and other UART responses from the FPGA
 static void uart1_rx_task(void *pvParameters)
@@ -662,8 +683,10 @@ static void main_task(void *pvParameters)
     uint64_t start = bflb_mtimer_get_time_ms();
     FRESULT res;
     overlay_status("Mounting sd card...", drv);
-    while ((res = f_mount(&fs, "sd:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 500)
+    while ((res = f_mount(&fs, "sd:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 500) {
+        heartbeat_bump();
         delay(100);
+    }
 
     if (res == FR_OK) {
         overlay_status("SD card mounted in %d ms", bflb_mtimer_get_time_ms() - start);
@@ -671,8 +694,10 @@ static void main_task(void *pvParameters)
         overlay_status("SD not found. Mounting USB...");
         drv = "usb:";
         start = bflb_mtimer_get_time_ms();
-        while ((res = f_mount(&fs, "usb:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 2000)
+        while ((res = f_mount(&fs, "usb:", 1)) != FR_OK && bflb_mtimer_get_time_ms() - start < 2000) {
+            heartbeat_bump();
             delay(100);
+        }
         if (res != FR_OK) {
             overlay_status("Failed to mount USB drive");
         } else {
@@ -843,10 +868,23 @@ int main(void)
     fatfs_usbh_driver_register();
     usb_gamepad_init();
 
+    // Hardware watchdog: ~2 s without a feed resets the chip. Feeding it is
+    // the watchdog task's job, and that stops when the heartbeat does.
+    wdg_dev = bflb_device_get_by_name("watchdog");
+    struct bflb_wdg_config_s wdg_cfg = {
+        .clock_source = WDG_CLKSRC_32K,
+        .clock_div = 31,            // 32 kHz / 32 = 1 kHz: one count per ms
+        .comp_val = WATCHDOG_FEED_MS,
+        .mode = WDG_MODE_RESET,
+    };
+    bflb_wdg_init(wdg_dev, &wdg_cfg);
+    bflb_wdg_start(wdg_dev);
+
     overlay_status("Creating tasks...");
     // Create the tasks
     xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle);
     xTaskCreate(uart1_rx_task, "uart1_rx_task", UART1_RX_TASK_STACK_SIZE, NULL, UART1_RX_TASK_PRIORITY, &uart1_rx_task_handle);
+    xTaskCreate(watchdog_task, "watchdog", WATCHDOG_TASK_STACK_SIZE, NULL, WATCHDOG_TASK_PRIORITY, NULL);
     
     vTaskStartScheduler();
 
