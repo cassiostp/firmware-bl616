@@ -4,6 +4,7 @@
 #include "utils.h"
 #include "cores.h"
 #include "overlay.h"
+#include "saves.h"
 
 // Load a NES ROM
 // return 0 if successful
@@ -25,6 +26,18 @@ int loadnes(const char *fname) {
         goto loadnes_end;
     }
     size = get_file_size(fname);
+
+    // iNES header byte 6 bit 1: battery-backed WRAM. nestang reports every CPU
+    // write to the $6000-$7FFF window as a save-RAM write (the core cannot
+    // parse the header), so the firmware decides from the header itself:
+    // without the bit the WRAM is volatile scratch and no .sav file is made.
+    // The streaming below re-seeks to 0, so peeking here is free.
+    {
+        uint8_t b6 = 0;
+        UINT br6 = 0;
+        if (f_lseek(&fcore, 6) == FR_OK && f_read(&fcore, &b6, 1, &br6) == FR_OK && br6 == 1)
+            saves_set_battery(b6 & 2);
+    }
 
     // load actual ROM
     set_loading_state(1);
@@ -52,6 +65,10 @@ int loadnes(const char *fname) {
 
     DEBUG("loadnes: %d bytes\n", total);
     overlay_status("Success");
+    // The game's save RAM goes in now, while the core is still held in the
+    // loading state: restore() sends the .sav, a recovered .sav.tmp, or the
+    // blank image, so the previous game's RAM cannot leak into this one.
+    saves_restore();
     core_running = true;
 
     overlay(0);		// turn off OSD

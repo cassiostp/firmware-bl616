@@ -56,6 +56,16 @@ static const save_geom save_geoms[] = {
     // widthad_a=15 (SMS.sv), saved 64 x 512 bytes straight to <rom>.sav, and
     // its empty-RAM init file (rtl/nvram_ff.mif) is all 0xFF, not 0x00.
     {5, 64, "sms", 0xFF},
+    // NES: the 8 KB WRAM window every battery mapper routes through linear
+    // 0x3C0000 (see nestang's sdram_nes save channel). MiSTer's NES core
+    // (NES_MiSTer) also keeps save RAM as a raw <rom>.sav, in saves/NES/
+    // (README, "Saving and Loading"); its cart RAM rides the SDRAM CARTRAM
+    // area ({7'b0001111, save_addr[17:0]} in NES.sv), which has no defined
+    // power-up value — like our own SDRAM-backed WRAM. A real NES leaves
+    // uninitialized RAM to chance and games that ship with a battery must
+    // tolerate it, so there is no "right" blank byte: we pick 0xFF, matching
+    // the SMS entry and the mostly-high power-up state of SRAM chips.
+    {1, 16, "nes", 0xFF},
 };
 #define N_GEOMS (sizeof(save_geoms) / sizeof(save_geoms[0]))
 
@@ -76,6 +86,12 @@ static volatile uint16_t sv_rx_blk = 0xFFFF;
 // Set only by the FPGA's 0x0B notice. Gates every dump, so a core without the
 // save channel (or an old bitstream) is never asked for blocks it cannot send.
 static volatile bool sv_dirty = false;
+// The ROM loaded by the core's loader: iNES has no way to tell us at set_game
+// time, so loadnes() calls saves_set_battery() once it has read the header.
+// False: the WRAM under $6000-$7FFF is volatile scratch — restore still wipes
+// it with the blank image (no previous game's save may leak in), but no dump
+// ever creates a file.
+static volatile bool sv_battery = true;
 // Dumps are armed only while the game runs on screen (overlay off). Menus and
 // loads settle it first. See the FatFs note above.
 static volatile bool sv_live = false;
@@ -127,6 +143,10 @@ static bool sv_fetch_block(uint16_t blk) {                          // 0x12 -> s
 // ---- flush: dump the core's RAM to sv_path. Called with sv_mutex held ----
 static void sv_flush_locked(void) {
     if (!sv_geom || !sv_path[0]) return;
+    if (!sv_battery) {                      // volatile scratch: never make a file
+        sv_dirty = false;
+        return;
+    }
     // Clear BEFORE the dump: the FPGA clears its flag when block 0 is requested,
     // and a write that lands during the dump sends a fresh 0x0B that sets this
     // again, so a save can lag but cannot be silently lost.
@@ -187,6 +207,7 @@ void saves_set_game(const char *fname, uint16_t core_id) {
     saves_settle();                         // flush the outgoing game under its own name
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
     sv_geom = NULL;
+    sv_battery = true;                      // loaders without a battery flag (SMS) default to saving
     sv_path[0] = '\0';
     for (unsigned i = 0; i < N_GEOMS; i++) {
         if (save_geoms[i].core_id == core_id) { sv_geom = &save_geoms[i]; break; }
@@ -223,8 +244,8 @@ void saves_restore(void) {
     if (!sv_geom || !sv_path[0]) { xSemaphoreGive(sv_mutex); return; }
     char tmp[270]; snprintf(tmp, sizeof tmp, "%s.tmp", sv_path);
     const char *src = "blank";
-    bool opened = (f_open(&fsave, sv_path, FA_READ) == FR_OK);
-    if (!opened && f_open(&fsave, tmp, FA_READ) == FR_OK) {         // power cut mid-write
+    bool opened = sv_battery && f_open(&fsave, sv_path, FA_READ) == FR_OK;
+    if (!opened && sv_battery && f_open(&fsave, tmp, FA_READ) == FR_OK) {   // power cut mid-write
         opened = true;
         src = "recovered .tmp";
     }
@@ -241,6 +262,17 @@ void saves_restore(void) {
     sv_live = false;
     xSemaphoreGive(sv_mutex);
     dprint("saves: restored from %s", src);
+}
+
+// Core loaders: does THIS ROM have battery-backed save RAM? NES calls it from
+// its loader after reading the iNES header; the geometry's core default is
+// true. False drops any pending dump and skips the file on restore (the blank
+// wipe still runs, see saves_restore). Call before saves_restore().
+void saves_set_battery(bool battery) {
+    sv_battery = battery;
+    if (!battery)
+        sv_dirty = false;
+    dprint("saves: battery %s", battery ? "present" : "absent");
 }
 
 void saves_settle(void) {
