@@ -2,12 +2,12 @@
 
 ## Download from CI
 
-Every push and pull request is built by GitHub Actions (`.github/workflows/build.yml`). Open the run under the repo's **Actions** tab and download the artifact for your board from the bottom of the page:
+Pushes to `master` are built by GitHub Actions (`.github/workflows/build.yml`). Other branches are built on demand: "Run workflow" on the Actions tab, or `gh workflow run build --ref <branch>`. Open the run under the repo's **Actions** tab and download the artifact for your board from the bottom of the page:
 
 * `tangcore-console60k`
 * `tangcore-console138k`
 
-Each artifact contains `tangcore_<board>.bin` and `flash_<board>.ini`. You can also start a build by hand with "Run workflow" (workflow_dispatch).
+Each artifact contains `tangcore_<board>.bin` and `flash_<board>.ini`.
 
 The artifacts do **not** contain `bl616_fpga_partner_<board>.bin`, which the `.ini` file expects next to the firmware. Take it from the TangCore release zip, or from Sipeed's [download page](https://dl.sipeed.com/shareURL/TANG/Console/09_MCU_FW) (`bl616_fpga_partner_60kConsole.bin`), and rename it to `bl616_fpga_partner_<board>.bin`, like `buildall.bat` does.
 
