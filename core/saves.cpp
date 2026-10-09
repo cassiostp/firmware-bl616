@@ -285,5 +285,8 @@ static void saves_task(void *pvParameters) {
 void saves_init(void) {
     sv_mutex = xSemaphoreCreateMutex();
     sv_blk_sem = xSemaphoreCreateBinary();
-    xTaskCreate(saves_task, "saves", 1024, NULL, 1, &sv_task);
+    if (xTaskCreate(saves_task, "saves", 1024, NULL, 1, &sv_task) != pdPASS) {
+        sv_task = NULL;                 // no async dumps; menu/load flushes still work
+        dprint("saves: task not created (heap?), async saving OFF");
+    }
 }
