@@ -15,7 +15,6 @@
 extern "C" {
 #include "board.h"
 #include "bl616_glb.h"
-#include "bl616_hbn.h"
 #include "bflb_gpio.h"
 #include "bflb_uart.h"
 #include "bflb_clock.h"
@@ -776,9 +775,6 @@ int main(void)
 {
     /* Board init */
     board_init();
-    // a "Flash mode" request has done its job once this firmware runs again
-    if (HBN_Get_User_Boot_Config() == 1)
-        HBN_Set_User_Boot_Config(0);
     init_core_list();
 
     // Initialize GPIO and UART
