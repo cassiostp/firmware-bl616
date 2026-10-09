@@ -188,6 +188,9 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         string loading = rom;               // rom may be last_rom itself
         if (core->load_rom(loading.c_str()) != 0)
             return -1;                      // the loader showed the error
+        // Drive the video options now that the core runs. The cores default
+        // every core_config bit to 0, so sending 0 keeps current behavior.
+        set_core_config(settings.scanlines ? CORE_CFG_SCANLINES : 0);
         last_core = core;
         last_rom = loading;
         return 1;

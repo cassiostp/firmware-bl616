@@ -138,4 +138,8 @@ extern int16_t get_core_id(void);
 extern uint32_t get_core_config(void);
 extern void set_core_config(uint32_t config);
 
+// core_config option bits shared by all game cores. Bit 16 enables the
+// optional scanline effect; every core defaults to 0 (off).
+#define CORE_CFG_SCANLINES (1u << 16)
+
 extern const char *cstr_find_ignore_case(const char *str, const char *substr);

@@ -42,6 +42,7 @@ void settings_defaults(Settings &s) {
     s.reset_enabled = true;
     s.close_hold_ms = 3000;
     s.diag = false;
+    s.scanlines = false;
 }
 
 int combo_count(uint16_t combo) {
@@ -124,6 +125,8 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         if (v >= 1000 && v <= 10000) s.close_hold_ms = v;
     } else if (strcasecmp(key, "diag") == 0) {
         s.diag = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "scanlines") == 0) {
+        s.scanlines = strtol(val, NULL, 10) != 0;
     }
 }
 
@@ -181,9 +184,12 @@ bool settings_save() {
         "reset_enabled=%d\n"
         "close_hold_ms=%lu\n"
         "# 1 shows a diagnostic line at the bottom of menus.\n"
-        "diag=%d\n",
+        "diag=%d\n"
+        "# 1 dims odd display lines in the cores (takes effect on the next game load).\n"
+        "scanlines=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
-        (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0);
+        (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
+        settings.scanlines ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 

@@ -333,6 +333,8 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 13);
         overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
         overlay_cursor(2, 14);
+        overlay_printf("Scanlines: %s", edit.scanlines ? "ON" : "OFF");
+        overlay_cursor(2, 15);
         overlay_printf("Flash mode...");
         overlay_cursor(2, 16);
         overlay_printf("Save");
@@ -354,7 +356,7 @@ struct OptionsMenu: Menu {
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 16, 17};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -391,9 +393,13 @@ struct OptionsMenu: Menu {
             edit.diag = !edit.diag;
             break;
         case 5:
+            edit.scanlines = !edit.scanlines;
+            message = "Applies when a game loads";
+            break;
+        case 6:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 6:
+        case 7:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             break;
