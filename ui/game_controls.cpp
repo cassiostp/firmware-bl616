@@ -343,28 +343,32 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 13);
         overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
         overlay_cursor(2, 14);
-        overlay_printf("Flash mode...");
+        overlay_printf("Scanlines: %s", edit.scanlines ? "ON" : "OFF");
+        overlay_cursor(2, 15);
+        overlay_printf("Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF");
         overlay_cursor(2, 16);
-        overlay_printf("Save");
+        overlay_printf("Flash mode...");
         overlay_cursor(2, 17);
+        overlay_printf("Save");
+        overlay_cursor(2, 18);
         overlay_printf("<< Back");
-        overlay_cursor(2, 19);
+        overlay_cursor(2, 20);
         //                01234567890123456789012345678901
         overlay_printf("In game:");
-        overlay_cursor(2, 20);
-        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 21);
-        overlay_printf(" Reset combo: reset the game,");
+        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 22);
+        overlay_printf(" Reset combo: reset the game,");
+        overlay_cursor(2, 23);
         overlay_printf(" keep holding: close the game");
         if (!message.empty()) {
-            overlay_cursor(2, 24);
+            overlay_cursor(2, 25);
             overlay_printf("%s", message.c_str());
         }
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 16, 17};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -401,11 +405,18 @@ struct OptionsMenu: Menu {
             edit.diag = !edit.diag;
             break;
         case 5:
+            edit.scanlines = !edit.scanlines;
+            break;
+        case 6:
+            edit.pause_in_menu = !edit.pause_in_menu;
+            break;
+        case 7:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 6:
+        case 8:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
+            apply_core_config();    // the running core gets them right away
             break;
         default:
             return true;    // back

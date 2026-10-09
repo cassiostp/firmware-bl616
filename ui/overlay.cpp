@@ -9,6 +9,7 @@ extern "C" {
 #include "utils.h"
 #include "overlay.h"
 #include "game_controls.h"
+#include "settings.h"
 
 /////////////////////////////////////////////////////////////////////////////////
 // Overlay and other core control over UART
@@ -170,5 +171,6 @@ void overlay(int state) {
     fpga_tx_header(0x08, 2);
     fpga_tx_byte(state);        
     taskEXIT_CRITICAL();
+    apply_core_config();        // a running game pauses while a menu is up
 }
 

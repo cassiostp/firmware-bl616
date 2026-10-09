@@ -198,6 +198,10 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         string loading = rom;               // rom may be last_rom itself
         if (core->load_rom(loading.c_str()) != 0)
             return -1;                      // the loader showed the error
+        // Drive the video options now that the core runs. A fresh core
+        // defaults every core_config bit to 0, and the low 16 bits stay as
+        // they are (core specific).
+        apply_core_config();
         last_core = core;
         last_rom = loading;
         return 1;
@@ -248,6 +252,15 @@ static int menu_loadrom(const char *dir) {
         forget_game();
         last_core_file = fname;
         _overlay_on = 1;                // turn on overlay after core is loaded
+        // drive the video options once the new core answers with its ID
+        uint64_t start = bflb_mtimer_get_time_ms();
+        while (bflb_mtimer_get_time_ms() - start < 2000) {
+            send_blank_packet();
+            active_core = get_core_id();
+            if (active_core >= 0)
+                break;
+        }
+        apply_core_config();
         return 0;       // return to main menu
     } 
 
@@ -544,6 +557,7 @@ static void reset_game(void) {
             forget_game();
             last_core_file = fname;
             active_core = get_core_id();
+            apply_core_config();       // the new bitstream starts with 0
         }
         return;
     }
