@@ -427,7 +427,10 @@ static void uart1_rx_task(void *pvParameters)
     uint64_t last_byte = 0;
     
     while (1) {
-        if (bflb_uart_rxavailable(uart1_dev)) {
+        // drain everything waiting before sleeping: one byte per 1 ms tick
+        // capped replies at ~1 KB/s and overflowed the UART FIFO on 515-byte
+        // floppy frames
+        while (bflb_uart_rxavailable(uart1_dev)) {
             uint8_t ch = bflb_uart_getchar(uart1_dev);
             uint64_t now = bflb_mtimer_get_time_ms();
             // a frame's bytes arrive back to back at 2 Mbaud. A long gap means
