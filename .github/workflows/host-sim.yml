@@ -1,0 +1,31 @@
+name: host-sim
+
+# Builds the Linux host simulator and runs its scripted tests. Runs on pushes
+# to master and on demand; pushes to feature/host-sim run it only when the
+# sim or this workflow changed (so the workflow self-registers for dispatch).
+# No pull_request trigger: nobody else's code runs here.
+on:
+  push:
+    branches: [master, feature/host-sim]
+    paths: [host/**, .github/workflows/host-sim.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: host-sim-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host-sim:
+    name: host-sim
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and test
+        run: bash host/run-tests.sh
