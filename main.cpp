@@ -31,6 +31,7 @@ extern "C" {
 #include "usb_gamepad.h"
 #include "utils.h"
 #include "cores.h"
+#include "saves.h"
 #include "overlay.h"
 #include "init.h"
 #include "menu_manager.h"
@@ -173,6 +174,11 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         return -1;
     }
 
+    // Move the save engine to the new game now: the game being replaced still
+    // has its save RAM in the FPGA, so its unsaved save must be flushed before
+    // programming a bitstream or streaming a new ROM.
+    saves_set_game(rom.c_str(), core->id);
+
     active_core = get_core_id();
 
     if (force_program || active_core != core->id) {
@@ -206,6 +212,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         apply_core_config();
         last_core = core;
         last_rom = loading;
+        saves_rearm();                  // the game starts: dirty notices matter again
         return 1;
     } else {
         overlay_status("Core failed to load\n");
@@ -250,6 +257,7 @@ static int menu_loadrom(const char *dir) {
     // load core if in cores/ dir
     if (fname.find(string(drv) + "cores") == 0) {
         overlay_status("Core: %s", fname.c_str());
+        saves_off();                    // the game in progress is dropped: flush its save
         program_fpga(fname.c_str());
         forget_game();
         last_core_file = fname;
@@ -426,6 +434,7 @@ static void uart1_rx_task(void *pvParameters)
     uint16_t pos = 0;
     uint8_t type = 0;
     uint16_t len = 0;
+    uint16_t sv_blk = 0;                // block number of a save-RAM response
     uint64_t last_byte = 0;
     
     while (1) {
@@ -526,6 +535,23 @@ static void uart1_rx_task(void *pvParameters)
                 } else
                     pos++;
 
+            } else if (type == 0x0A) {           // save-RAM block: blk[15:0] + 512 bytes
+                uint16_t k = pos - 4;            // no SD I/O here: buffer and signal
+                if (k == 0)
+                    sv_blk = (uint16_t)ch << 8;
+                else if (k == 1)
+                    sv_blk |= ch;
+                else
+                    saves_rx_byte(sv_blk, k - 2, ch);
+                if (k == 2 + 511) {
+                    saves_rx_block_done(sv_blk);
+                    pos = 0;   // reset for next packet
+                } else
+                    pos++;
+            } else if (type == 0x0B) {           // the game wrote save RAM (1 pad byte)
+                saves_rx_dirty();
+                pos = 0;
+
             } else {
                 pos = 0; // Reset if we get out of sync
             }
@@ -538,6 +564,7 @@ static void uart1_rx_task(void *pvParameters)
 // Close the game: load the menu core again, as at boot.
 static void close_game(void) {
     overlay(1);
+    saves_off();            // the save RAM goes away with the monitor core: flush first
     overlay_status("Closing game...");
     string fname;
     if (find_core_for_board(fname, "monitor.bin"))
@@ -555,6 +582,7 @@ static core_info *loaded_core(void) {
 // loading a second ROM, minus the data. Genesis can't: an empty load sets its
 // ROM size to 0 (mdtang_top.sv), so it reloads the ROM.
 static void reset_game(void) {
+    saves_settle();                     // flush any pending save before the core restarts
     if (!last_core) {                       // a core from Cores: restart it
         if (!last_core_file.empty()) {
             string fname = last_core_file;
@@ -575,6 +603,7 @@ static void reset_game(void) {
     delay(20);
     set_loading_state(0);
     overlay(0);
+    saves_rearm();                      // the same game runs again
 }
 
 // Menu over the running game: the menu combo opens it in game, and the main
@@ -651,6 +680,7 @@ struct GameMenu: Menu {
 static void show_game_menu(void) {
     overlay(1);
     suppress_held_buttons();            // the button that opened it isn't a choice
+    saves_settle();                     // flush the running game's save before the menu
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new GameMenu()));
     menu_current()->do_redraw();
@@ -671,8 +701,10 @@ static bool handle_game_action(void) {
             break;
         case ACTION_RESUME:
             menu_clear();
-            if (game_loaded())
+            if (game_loaded()) {
                 overlay(0);             // the main loop goes back to the game
+                saves_rearm();          // dirty notices matter again
+            }
             break;
         case ACTION_RESET:
             menu_clear();
@@ -899,6 +931,7 @@ int main(void)
     bflb_wdg_init(wdg_dev, &wdg_cfg);
     bflb_wdg_start(wdg_dev);
 
+    saves_init();           // battery saves: core/saves.cpp
     overlay_status("Creating tasks...");
     // Create the tasks
     xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle);
