@@ -185,7 +185,7 @@ std::vector<int> PcxtMenu::get_options() {
 bool PcxtMenu::on_choose(int idx) {
     if (idx == 0 || idx == 1) {
         delay(200);
-        overlay_printf("Dir: %s\n", imgdir);
+        overlay_printf("Dir: %s\n", imgdir.c_str());
         FileChooser c;
         c.rootdir = imgdir;
         c.curdir = imgdir;

@@ -24,6 +24,7 @@ extern void init_core_list();
 extern int loadnes(const char *fname);
 extern int loadsnes(const char *fname);
 extern int loadgba(const char *fname);
+extern bool gba_bios_loaded;            // the BIOS is in the GBA bitstream's memory
 extern int loadmd(const char *fname);
 extern int loadsms(const char *fname);
 extern int loadpc(const char *fname);
@@ -31,7 +32,7 @@ extern int loadpc(const char *fname);
 extern bool find_core_for_board(std::string &fname, const char *core_name);
 
 struct PcxtMenu: Menu {
-    const char *imgdir;
+    std::string imgdir;
     PcxtMenu(const char *imgdir);
     virtual void render() override;
     virtual std::vector<int> get_options() override;

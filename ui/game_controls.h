@@ -8,7 +8,8 @@ enum GameAction {
     ACTION_NONE = 0,
     ACTION_GAME_MENU,   // open the game menu over the running game
     ACTION_RESUME,      // close the menus and go back to the game
-    ACTION_QUIT,        // close the game and show the main menu
+    ACTION_RESET,       // reset the running game
+    ACTION_CLOSE,       // close the game and show the main menu
 };
 
 extern volatile GameAction pending_action;
@@ -21,6 +22,10 @@ extern volatile GameAction pending_action;
 // MODE reloads the FPGA from flash; when that's detected, this restarts the
 // MCU (and so everything) and doesn't return.
 bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded);
+
+// True while at least 2 buttons of a combo are held, so menus can ignore
+// navigation that's really the start of a combo.
+bool combo_in_progress(uint16_t pad1, uint16_t pad2);
 
 // Forget combo and MODE state, e.g. after the FPGA was reprogrammed (a new
 // core is silent while it starts, which must not look like MODE).

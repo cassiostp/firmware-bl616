@@ -134,6 +134,7 @@ static void forget_game(void) {
     last_rom.clear();
     last_core_file.clear();
     core_running = false;
+    gba_bios_loaded = false;            // the new bitstream doesn't have it
     forget_floppies();
 }
 
@@ -263,8 +264,11 @@ static void send_hid_to_core(void) {
                 pending_action = ACTION_GAME_MENU;
             break;
         }
-        if (controls_poll(joy1 | hid1, joy2 | hid2, true, game_loaded()))
+        if (controls_poll(joy1 | hid1, joy2 | hid2, true, game_loaded())) {
+            if (pending_action != ACTION_RESET)
+                send_hid_state(0, 0);   // the core mustn't keep the combo held
             break;
+        }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     dprint("Stopped sending HID to core.");
@@ -303,6 +307,8 @@ int joy_choice(int start_line, int len, int *active) {
 
     if (overlay_on() && controls_poll(joy1, joy2, false, game_loaded()))
         return 0;                  // menu combo: the caller handles pending_action
+    if (overlay_on() && combo_in_progress(joy1, joy2))
+        return 0;                  // its buttons aren't navigation
 
     if (!overlay_on()) {           // keep sending HID state to core when OSD is off
         send_hid_to_core();
@@ -456,7 +462,7 @@ static void uart1_rx_task(void *pvParameters)
 }
 
 // Close the game: load the menu core again, as at boot.
-static void quit_game(void) {
+static void close_game(void) {
     overlay(1);
     overlay_status("Closing game...");
     string fname;
@@ -470,6 +476,32 @@ static core_info *loaded_core(void) {
     return last_core ? last_core : find_core_by_id(active_core);
 }
 
+// Reset the running game. Holding the core in loading state with no data, then
+// releasing it, restarts it with the ROM still in memory: the same path as
+// loading a second ROM, minus the data. Genesis can't: an empty load sets its
+// ROM size to 0 (mdtang_top.sv), so it reloads the ROM.
+static void reset_game(void) {
+    if (!last_core) {                       // a core from Cores: restart it
+        if (!last_core_file.empty()) {
+            string fname = last_core_file;
+            program_fpga(fname.c_str());
+            forget_game();
+            last_core_file = fname;
+            active_core = get_core_id();
+        }
+        return;
+    }
+    overlay_status("Resetting %s", last_core->display_name);
+    if (last_core->id == 4) {
+        load_game(last_core, last_rom, false);  // turns the overlay off when done
+        return;
+    }
+    set_loading_state(1);
+    delay(20);
+    set_loading_state(0);
+    overlay(0);
+}
+
 // Menu over the running game: the menu combo opens it in game, and the main
 // menu links to it while a game is loaded.
 struct GameMenu: Menu {
@@ -480,8 +512,8 @@ struct GameMenu: Menu {
     GameMenu() {
         core_info *core = loaded_core();
         pcxt = core && core->id == 6;
-        rows = pcxt ? std::vector<int>{10, 11, 12, 13, 15, 17}
-                    : std::vector<int>{10, 11, 12, 15, 17};
+        rows = pcxt ? std::vector<int>{9, 10, 11, 12, 13, 15, 17}
+                    : std::vector<int>{9, 10, 11, 12, 15, 17};
     }
 
     void render() override {
@@ -490,8 +522,10 @@ struct GameMenu: Menu {
         overlay_cursor(0, 7);
         //              01234567890123456789012345678901
         overlay_printf("  --- %s ---", core ? core->display_name : "Game");
-        overlay_cursor(2, 10);
+        overlay_cursor(2, 9);
         overlay_printf("Resume");
+        overlay_cursor(2, 10);
+        overlay_printf("Reset");
         overlay_cursor(2, 11);
         overlay_printf("Game options (soon)");
         overlay_cursor(2, 12);
@@ -501,7 +535,7 @@ struct GameMenu: Menu {
             overlay_printf("Floppy drives...");
         }
         overlay_cursor(2, 15);
-        overlay_printf("Quit game");
+        overlay_printf("Close game");
         overlay_cursor(2, 17);
         overlay_printf("<< Main menu");
         if (!message.empty()) {
@@ -516,8 +550,11 @@ struct GameMenu: Menu {
 
     bool on_choose(int idx) override {
         int row = rows[idx];
-        if (row == 10) {
+        if (row == 9) {
             pending_action = ACTION_RESUME;
+            return true;
+        } else if (row == 10) {
+            pending_action = ACTION_RESET;
             return true;
         } else if (row == 11 || row == 12) {
             message = "Not available yet";
@@ -525,11 +562,11 @@ struct GameMenu: Menu {
             return false;
         } else if (row == 13) {
             core_info *core = loaded_core();
-            push_menu(std::unique_ptr<Menu>(create_pcxt_menu(
-                std::string(drv).append(core->rom_dir).c_str())));
+            string dir = string(drv).append(core->rom_dir);
+            push_menu(std::unique_ptr<Menu>(create_pcxt_menu(dir.c_str())));
             return false;
         } else if (row == 15) {
-            pending_action = ACTION_QUIT;
+            pending_action = ACTION_CLOSE;
             return true;
         }
         return true;                    // << Main menu: the game stays loaded
@@ -538,6 +575,7 @@ struct GameMenu: Menu {
 
 static void show_game_menu(void) {
     overlay(1);
+    suppress_held_buttons();            // the button that opened it isn't a choice
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new GameMenu()));
     menu_current()->do_redraw();
@@ -561,9 +599,13 @@ static bool handle_game_action(void) {
             if (game_loaded())
                 overlay(0);             // the main loop goes back to the game
             break;
-        case ACTION_QUIT:
+        case ACTION_RESET:
             menu_clear();
-            quit_game();
+            reset_game();
+            break;
+        case ACTION_CLOSE:
+            menu_clear();
+            close_game();
             break;
         default:
             return acted;

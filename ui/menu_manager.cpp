@@ -50,6 +50,10 @@ void menu_input_loop() {
 
         if (controls_poll(joy1, joy2, false, game_loaded()))   // menu combo: back to the game
             break;
+        if (combo_in_progress(joy1, joy2)) {    // its buttons aren't navigation
+            delay(10);
+            continue;
+        }
 
         if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up
             if (active > 0) active--;
@@ -80,10 +84,9 @@ void menu_input_loop() {
                 }
                 menu_current()->do_redraw();
             }
-            if (menu_stack.size() != depth) {   // menu changed
+            if (menu_stack.size() != depth) {   // menu changed: start at its top
                 options = menu_current()->get_options();
-                if (active >= options.size())
-                    active = options.size()-1;
+                active = last = 0;
                 menu_current()->do_redraw();
             }
         }

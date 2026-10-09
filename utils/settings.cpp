@@ -38,7 +38,9 @@ static const struct {
 
 void settings_defaults(Settings &s) {
     s.menu_combo = BTN_SELECT | BTN_START | BTN_L;
-    s.quit_combo = BTN_SELECT | BTN_START | BTN_R;
+    s.reset_combo = BTN_SELECT | BTN_START | BTN_R;
+    s.reset_enabled = true;
+    s.close_hold_ms = 3000;
     s.diag = false;
 }
 
@@ -112,9 +114,14 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
     if (strcasecmp(key, "menu_combo") == 0) {
         uint16_t c = combo_from_string(val);
         if (combo_valid(c, NULL)) s.menu_combo = c;
-    } else if (strcasecmp(key, "quit_combo") == 0 || strcasecmp(key, "reset_combo") == 0) {
-        uint16_t c = combo_from_string(val);         // reset_combo: older files
-        if (combo_valid(c, NULL)) s.quit_combo = c;
+    } else if (strcasecmp(key, "reset_combo") == 0) {
+        uint16_t c = combo_from_string(val);
+        if (combo_valid(c, NULL)) s.reset_combo = c;
+    } else if (strcasecmp(key, "reset_enabled") == 0) {
+        s.reset_enabled = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "close_hold_ms") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 1000 && v <= 10000) s.close_hold_ms = v;
     } else if (strcasecmp(key, "diag") == 0) {
         s.diag = strtol(val, NULL, 10) != 0;
     }
@@ -156,7 +163,7 @@ void settings_load() {
         }
         overlay_status("Settings loaded from %s", path.c_str());
     }
-    if (s.menu_combo == s.quit_combo)       // keep the two combos distinct
+    if (s.menu_combo == s.reset_combo)      // keep the two combos distinct
         settings_defaults(s);
     settings = s;
 }
@@ -164,15 +171,19 @@ void settings_load() {
 bool settings_save() {
     std::string path = settings_path();
     std::string menu = combo_to_string(settings.menu_combo, false);
-    std::string quit = combo_to_string(settings.quit_combo, false);
+    std::string reset = combo_to_string(settings.reset_combo, false);
     int len = snprintf(cfgbuf, SETTINGS_BUF_SIZE,
         "# TangCore settings. Buttons: B Y SELECT START UP DOWN LEFT RIGHT A X L R\n"
-        "# In game, menu_combo opens the game menu; holding quit_combo for 3 s closes the game.\n"
+        "# In game: menu_combo opens the game menu. reset_combo resets the game;\n"
+        "# held for close_hold_ms it closes the game. reset_enabled=0 turns it off.\n"
         "menu_combo=%s\n"
-        "quit_combo=%s\n"
+        "reset_combo=%s\n"
+        "reset_enabled=%d\n"
+        "close_hold_ms=%lu\n"
         "# 1 shows a diagnostic line at the bottom of menus.\n"
         "diag=%d\n",
-        menu.c_str(), quit.c_str(), settings.diag ? 1 : 0);
+        menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
+        (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 

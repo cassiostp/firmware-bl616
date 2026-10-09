@@ -23,7 +23,9 @@
 // Persistent firmware settings, stored as key=value lines in <drv>tangcore.cfg
 struct Settings {
     uint16_t menu_combo;        // opens the game menu in game, closes the menus outside
-    uint16_t quit_combo;        // in game, held 3 s: close the game
+    uint16_t reset_combo;       // in game: resets the game, held close_hold_ms: closes it
+    bool reset_enabled;         // the reset combo can be turned off
+    uint32_t close_hold_ms;     // hold the reset combo this long to close the game
     bool diag;                  // show the diagnostic line at the bottom of menus
 };
 
