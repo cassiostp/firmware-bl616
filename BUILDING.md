@@ -7,7 +7,7 @@ Pushes to `master` are built by GitHub Actions (`.github/workflows/build.yml`). 
 * `tangcore-console60k`
 * `tangcore-console138k`
 
-Each artifact is a complete flash set: `tangcore_<board>.bin`, `flash_<board>.ini`, and Sipeed's `bl616_fpga_partner_<board>.bin`. The partner image is closed source, so CI takes it from the TangCore v0.9 release and verifies its SHA-256.
+Each artifact is a complete flash set: `tangcore_<board>.bin`, `flash_<board>.ini`, and Sipeed's `bl616_fpga_partner_<board>.bin`. The partner image is closed source; CI copies it from this repo's [`sipeed-partner-2025030317`](https://github.com/cassiostp/firmware-bl616/releases/tag/sipeed-partner-2025030317) release and verifies its SHA-256.
 
 ## Build locally (Linux x86_64)
 
