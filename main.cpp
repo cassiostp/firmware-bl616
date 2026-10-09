@@ -121,9 +121,11 @@ bool game_loaded(void) {
 static void clear_pad_states(void);
 
 // Program a bitstream. The new core is silent while it starts, and pads read
-// by the FPGA restart from nothing, so reset what tracks them.
+// by the FPGA restart from nothing, so reset what tracks them (and the
+// core_config copy, so one core's specific bits don't reach the next).
 static bool program_fpga(const char *fname) {
     bool r = fpga_program(fname);
+    forget_core_config();               // the new core starts with core_config = 0
     clear_pad_states();
     controls_reset();
     return r;
