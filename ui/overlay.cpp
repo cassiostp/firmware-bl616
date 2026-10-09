@@ -98,19 +98,27 @@ void overlay_message(const char *msg, int center) {
     int len = strlen(msg);
     const char *end = msg + len;
     const char *sol = msg;
+    // Host sim (TANGCORE_HOST): pointer difference is ptrdiff_t while 26 is
+    // int, and std::min needs matching types. Same values either way.
+#ifdef TANGCORE_HOST
+#define OVL_MIN(a, b) std::min<ptrdiff_t>((a), (ptrdiff_t)(b))
+#else
+#define OVL_MIN(a, b) std::min((a), (b))
+#endif
     for (int i = 0; i < 10; i++) {
         const char *eol = strchr(sol, '\n');
         if (eol) { // found \n
-            w[i] = std::min(eol - sol, 26);
+            w[i] = OVL_MIN(eol - sol, 26);
             maxw = std::max(w[i], maxw);
             sol = eol+1;
         } else {
-            w[i] = std::min(end - sol, 26);
+            w[i] = OVL_MIN(end - sol, 26);
             maxw = std::max(w[i], maxw);
             lines = i+1;
             break;
         }		
     }
+#undef OVL_MIN
     // status("");
     // printf("w=%d, lines=%d", maxw, lines);
     // draw a box 

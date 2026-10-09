@@ -74,7 +74,11 @@ static inline bool prefix(const char *pre, const char *str)
 {
     return strncasecmp(pre, str, strlen(pre)) == 0;
 }
+// Host sim (TANGCORE_HOST): glibc's <string.h> already declares strcasestr,
+// so skip this redeclaration (it fails to compile against glibc's overloads).
+#ifndef TANGCORE_HOST
 extern "C" char *strcasestr(const char *haystack, const char *needle);
+#endif
 
 // True if `fname` ends with `ext` (case-insensitive), e.g. has_ext("GAME.GBA", ".gba").
 // Unlike strcasestr, this is a suffix match: "gba_bios.bin" does not match ".gba".
