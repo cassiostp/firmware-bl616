@@ -3,6 +3,7 @@
 
 #include "utils.h"
 #include "cores.h"
+#include "saves.h"
 #include "overlay.h"
 
 int loadsms(const char *fname) {
@@ -53,6 +54,10 @@ int loadsms(const char *fname) {
 
     DEBUG("loadsms: %d bytes\n", total);
     overlay_status("Success");
+    // The game's save RAM goes in now, while the core is still held in the
+    // loading state: restore() sends the .sav, a recovered .sav.tmp, or the
+    // blank image, so the previous game's RAM cannot leak into this one.
+    saves_restore();
     core_running = true;
 
     overlay(0);		// turn off OSD
