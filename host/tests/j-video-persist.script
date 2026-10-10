@@ -1,0 +1,59 @@
+# Video filter choices are saved to tangcore.cfg on the way out and reach
+# the core again after a power cycle (brightness +1, grille mask).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+press down
+press a
+expect-screen "--- Color ---"
+press a
+expect-screen "Brightness: 1"
+press down
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "--- Video ---"
+press down
+press down
+press a
+expect-screen "--- CRT mask ---"
+press a
+expect-screen "Mask: Grille"
+press down
+press down
+press down
+press a
+expect-screen "--- Video ---"
+press down
+press down
+press down
+press a
+expect-screen "Resume"
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-video-config 0x12801

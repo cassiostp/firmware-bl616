@@ -245,6 +245,10 @@ run_test e-options-persist
 run_test f-md-save md:game.md
 run_test g-mode-early sms:cgame.sms
 run_test h-scanlines sms:cgame.sms
+run_test i-video-color sms:cgame.sms
+run_test j-video-persist sms:cgame.sms
+run_test k-video-grid sms:cgame.sms sms:game.gg
+run_test l-video-grid-gba gba
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then
