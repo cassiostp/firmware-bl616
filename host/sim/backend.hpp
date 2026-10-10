@@ -75,5 +75,7 @@ class FpgaBackend : public sim::Backend {
 void fpga_use_fake();
 void fpga_select(FpgaBackend *b);
 FpgaBackend *fpga_active();
-// RTL backend factory; null when the sim was built without RTL support.
-FpgaBackend *fpga_rtl_backend();
+// RTL backend factory; null when the sim was built without RTL support, or
+// without a model for core_name ("nestang-rtl", "snestang-rtl", ...). The
+// first call's name picks the model for the whole process.
+FpgaBackend *fpga_rtl_backend(const char *core_name = nullptr);
