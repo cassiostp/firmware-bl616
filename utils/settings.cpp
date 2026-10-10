@@ -44,6 +44,9 @@ void settings_defaults(Settings &s) {
     s.close_hold_ms = 3000;
     s.diag = false;
     s.scanlines = false;
+    s.scanline_dark = 2;            // 75 %
+    s.scanline_thick = false;
+    s.scanline_full = false;
     s.pause_in_menu = true;
 }
 
@@ -129,6 +132,13 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         s.diag = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "scanlines") == 0) {
         s.scanlines = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "scanline_darkness") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 25 && v <= 100) s.scanline_dark = (uint8_t)((v + 12) / 25 - 1);
+    } else if (strcasecmp(key, "scanline_thick") == 0) {
+        s.scanline_thick = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "scanline_full") == 0) {
+        s.scanline_full = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
         s.pause_in_menu = strtol(val, NULL, 10) != 0;
     }
@@ -189,13 +199,19 @@ bool settings_save() {
         "close_hold_ms=%lu\n"
         "# 1 shows a diagnostic line at the top of menus.\n"
         "diag=%d\n"
-        "# 1 darkens one line per picture line (NES, SNES, MegaDrive, SMS).\n"
+        "# Scanlines: 1 = on; darkness 25, 50, 75 or 100 (%%); thick 1 = thick lines;\n"
+        "# full 1 = full-size picture (0 = integer scale, evenly spaced lines).\n"
         "scanlines=%d\n"
+        "scanline_darkness=%d\n"
+        "scanline_thick=%d\n"
+        "scanline_full=%d\n"
         "# 0 keeps the game running while a menu is shown over it.\n"
         "pause_in_menu=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
-        settings.scanlines ? 1 : 0, settings.pause_in_menu ? 1 : 0);
+        settings.scanlines ? 1 : 0, scanline_dark_percent(settings.scanline_dark),
+        settings.scanline_thick ? 1 : 0, settings.scanline_full ? 1 : 0,
+        settings.pause_in_menu ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 
@@ -210,9 +226,26 @@ bool settings_save() {
 // Drive the core_config option bits from the settings. The game pauses while
 // any menu is shown over it. The low 16 bits are core specific (e.g. GBA's
 // prefetch delay), so keep whatever the firmware last sent there.
+static Preview preview;
+
 void apply_core_config() {
-    bool pause = settings.pause_in_menu && _overlay_on && core_running;
+    bool pause = core_running &&
+                 (preview == PREVIEW_PAUSED || (settings.pause_in_menu && _overlay_on));
+    bool mute = core_running && preview == PREVIEW_LIVE;
     set_core_config((get_core_config() & 0xffff) |
                     (settings.scanlines ? CORE_CFG_SCANLINES : 0) |
-                    (pause ? CORE_CFG_MENU_PAUSE : 0));
+                    ((uint32_t)(settings.scanline_dark & 3) << CORE_CFG_SCANLINE_DARK_SHIFT) |
+                    (settings.scanline_thick ? CORE_CFG_SCANLINE_THICK : 0) |
+                    (settings.scanline_full ? CORE_CFG_SCANLINE_FULL : 0) |
+                    (pause ? CORE_CFG_MENU_PAUSE : 0) |
+                    (mute ? CORE_CFG_MUTE_PADS : 0));
+}
+
+void core_config_preview(Preview p) {
+    preview = p;
+    apply_core_config();
+}
+
+int scanline_dark_percent(uint8_t dark) {
+    return 25 * ((dark & 3) + 1);
 }

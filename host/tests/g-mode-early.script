@@ -1,0 +1,16 @@
+# MODE pressed right after a game loads, before the firmware's first core-ID
+# poll of the new core: the FPGA answers as the flash bitstream (core 0)
+# without a silence the firmware saw, and it must still restart.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+mode-now 300
+expect-screen "TangCore"
+expect-core monitor

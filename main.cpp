@@ -617,8 +617,8 @@ struct GameMenu: Menu {
     GameMenu() {
         core_info *core = loaded_core();
         pcxt = core && core->id == 6;
-        rows = pcxt ? std::vector<int>{9, 10, 11, 12, 13, 15, 17}
-                    : std::vector<int>{9, 10, 11, 12, 15, 17};
+        rows = pcxt ? std::vector<int>{9, 10, 11, 12, 13, 14, 16, 18}
+                    : std::vector<int>{9, 10, 11, 12, 13, 16, 18};
     }
 
     void render() override {
@@ -632,19 +632,21 @@ struct GameMenu: Menu {
         overlay_cursor(2, 10);
         overlay_printf("Reset");
         overlay_cursor(2, 11);
-        overlay_printf("Game options (soon)");
+        overlay_printf("Scanlines...");
         overlay_cursor(2, 12);
+        overlay_printf("Game options (soon)");
+        overlay_cursor(2, 13);
         overlay_printf("Save states (soon)");
         if (pcxt) {
-            overlay_cursor(2, 13);
+            overlay_cursor(2, 14);
             overlay_printf("Floppy drives...");
         }
-        overlay_cursor(2, 15);
+        overlay_cursor(2, 16);
         overlay_printf("Close game");
-        overlay_cursor(2, 17);
+        overlay_cursor(2, 18);
         overlay_printf("<< Main menu");
         if (!message.empty()) {
-            overlay_cursor(2, 20);
+            overlay_cursor(2, 21);
             overlay_printf("%s", message.c_str());
         }
     }
@@ -661,16 +663,19 @@ struct GameMenu: Menu {
         } else if (row == 10) {
             pending_action = ACTION_RESET;
             return true;
-        } else if (row == 11 || row == 12) {
+        } else if (row == 11) {
+            push_menu(std::unique_ptr<Menu>(create_scanline_menu()));
+            return false;
+        } else if (row == 12 || row == 13) {
             message = "Not available yet";
             do_redraw();
             return false;
-        } else if (row == 13) {
+        } else if (row == 14) {
             core_info *core = loaded_core();
             string dir = string(drv).append(core->rom_dir);
             push_menu(std::unique_ptr<Menu>(create_pcxt_menu(dir.c_str())));
             return false;
-        } else if (row == 15) {
+        } else if (row == 16) {
             pending_action = ACTION_CLOSE;
             return true;
         }

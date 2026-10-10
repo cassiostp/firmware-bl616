@@ -21,6 +21,8 @@ static void stop_watchdog(void) {
         bflb_wdg_stop(wdg_dev);
 }
 
+static void restart_mcu(bool flash_mode);
+
 volatile GameAction pending_action = ACTION_NONE;
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -121,7 +123,10 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
 // dropped (while the FPGA sends a joypad or disk frame), so it takes several
 // misses in a row, over a real stretch of time. MODE then restarts
 // everything, like a power cycle.
-static void check_mode_button(bool in_game) {
+// A game core that hasn't answered yet (it was just programmed) can't show
+// that silence, but it never answers as the flash bitstream: core 0 there
+// means MODE was pressed before the core's first answer.
+static void check_mode_button(bool in_game, bool game_loaded) {
     uint32_t interval = !seen_answer ? POLL_MS_SILENT_CORE : in_game ? POLL_MS_GAME : POLL_MS_MENU;
     uint64_t poll_start = bflb_mtimer_get_time_ms();
     uint64_t gap = poll_start - last_poll;
@@ -148,14 +153,14 @@ static void check_mode_button(bool in_game) {
     // NES core resets its serial link on Select+Down)
     if (reloaded && last_id > 0 && id == last_id)
         reloaded = false;
+    if (!seen_answer && id == 0 && game_loaded)
+        reloaded = true;
     if (reloaded) {
-        dprint("FPGA silent for %lu ms, back as core %d: MODE pressed, restarting",
-               (unsigned long)(now - silent_since), id);
+        dprint("FPGA back as core %d: MODE pressed, restarting", id);
         overlay(1);
         overlay_status("Restarting...");
         delay(50);
-        stop_watchdog();
-        GLB_SW_System_Reset();
+        restart_mcu(false);
     }
     seen_answer = true;
     last_id = id;
@@ -168,7 +173,7 @@ bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded)
         return true;
     if (check_combos(pad1, pad2, in_game, game_loaded))
         return true;
-    check_mode_button(in_game);
+    check_mode_button(in_game, game_loaded);
     return false;
 }
 
@@ -241,8 +246,10 @@ static uint16_t capture_combo(const char *what) {
 #define USB_IRQ                 37
 
 static inline void reg_set(uint32_t addr, uint32_t bits, bool on) {
+#ifndef TANGCORE_HOST               // the host sim has no SoC registers
     volatile uint32_t *r = (volatile uint32_t *)addr;
     *r = on ? (*r | bits) : (*r & ~bits);
+#endif
 }
 
 // Put the USB block back the way power-on leaves it. The firmware runs it as a
@@ -280,10 +287,21 @@ static void reboot_to_flash_mode(void) {
     overlay_cursor(0, 15);
     overlay_printf("  Power-cycle to cancel.");
     delay(100);                     // let the UART drain
+    restart_mcu(true);
+}
+
+// Restart the MCU like a power cycle, or (flash_mode) into the ROM's USB
+// loader. Both need the USB block back in its power-on state first: after a
+// software reset Sipeed's bootloader finds the port still set up as a host,
+// takes it for a PC and stays in its debug mode, so TangCore never starts
+// (the screen keeps whatever the FPGA last showed). The ROM's loader likewise
+// never shows up on the PC.
+static void restart_mcu(bool flash_mode) {
     taskENTER_CRITICAL();
     usb_back_to_power_on_state();
-    arch_delay_ms(100);             // long enough for the PC to see a detach
-    HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
+    arch_delay_ms(100);             // long enough for the other end to see a detach
+    if (flash_mode)
+        HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
     stop_watchdog();
     GLB_SW_System_Reset();
 }
@@ -343,14 +361,12 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 13);
         overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
         overlay_cursor(2, 14);
-        overlay_printf("Scanlines: %s", edit.scanlines ? "ON" : "OFF");
-        overlay_cursor(2, 15);
         overlay_printf("Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF");
-        overlay_cursor(2, 16);
+        overlay_cursor(2, 15);
         overlay_printf("Flash mode...");
-        overlay_cursor(2, 17);
+        overlay_cursor(2, 16);
         overlay_printf("Save");
-        overlay_cursor(2, 18);
+        overlay_cursor(2, 17);
         overlay_printf("<< Back");
         overlay_cursor(2, 20);
         //                01234567890123456789012345678901
@@ -361,14 +377,16 @@ struct OptionsMenu: Menu {
         overlay_printf(" Reset combo: reset the game,");
         overlay_cursor(2, 23);
         overlay_printf(" keep holding: close the game");
+        overlay_cursor(2, 24);
+        overlay_printf("Scanlines: in the game menu");
         if (!message.empty()) {
-            overlay_cursor(2, 25);
+            overlay_cursor(2, 26);
             overlay_printf("%s", message.c_str());
         }
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -405,15 +423,12 @@ struct OptionsMenu: Menu {
             edit.diag = !edit.diag;
             break;
         case 5:
-            edit.scanlines = !edit.scanlines;
-            break;
-        case 6:
             edit.pause_in_menu = !edit.pause_in_menu;
             break;
-        case 7:
+        case 6:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 8:
+        case 7:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away
@@ -425,6 +440,153 @@ struct OptionsMenu: Menu {
         return false;
     }
 };
+
+/////////////////////////////////////////////////////////////////////////////////
+// Scanlines, in the game menu: changes reach the running core at once, and
+// are saved to tangcore.cfg on the way out
+
+// Show the game without the menu, and change the scanlines on it. Returns
+// true if anything changed. The game stays paused, except on the SNES and
+// MegaDrive: they buffer only a few lines, so a paused game shows garbage
+// without the menu. There it runs, with the pads muted.
+extern int16_t active_core;
+
+static bool scanline_preview(void) {
+    bool changed = false;
+    suppress_held_buttons();            // the A that chose Preview
+    bool live = active_core == 2 || active_core == 4;
+    core_config_preview(live ? PREVIEW_LIVE : PREVIEW_PAUSED);
+    overlay(0);
+    for (;;) {
+        uint16_t joy1, joy2, hid1, hid2;
+        get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        uint16_t p = joy1 | hid1 | joy2 | hid2;
+        if (controls_poll(joy1 | hid1, joy2 | hid2, false, game_loaded()))
+            break;                      // the menu combo: back to the game
+        bool step = true;
+        if ((p & BTN_LEFT) && settings.scanline_dark > 0)
+            settings.scanline_dark--;
+        else if ((p & BTN_RIGHT) && settings.scanline_dark < 3)
+            settings.scanline_dark++;
+        else if (p & (BTN_UP | BTN_DOWN))
+            settings.scanline_thick = !settings.scanline_thick;
+        else if (p & BTN_SELECT)
+            settings.scanlines = !settings.scanlines;
+        else if (p & BTN_START)
+            settings.scanline_full = !settings.scanline_full;
+        else if (p & (BTN_A | BTN_B))
+            break;
+        else
+            step = false;
+        if (step) {
+            settings.scanlines |= !(p & BTN_SELECT);    // adjusting lines turns them on
+            apply_core_config();
+            changed = true;
+            suppress_held_buttons();    // one press, one step
+        }
+        delay(20);
+    }
+    suppress_held_buttons();            // the button that ended it isn't a menu choice
+    overlay(1);
+    core_config_preview(PREVIEW_OFF);
+    return changed;
+}
+
+struct ScanlineMenu: Menu {
+    bool changed = false;
+    std::string message;
+
+    ~ScanlineMenu() {                   // left some other way than Back (the menu combo)
+        if (changed)
+            settings_save();
+    }
+
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- Scanlines ---");
+        overlay_cursor(2, 9);
+        overlay_printf("Scanlines: %s", settings.scanlines ? "ON" : "OFF");
+        overlay_cursor(2, 10);
+        overlay_printf("Darkness: %d%%", scanline_dark_percent(settings.scanline_dark));
+        overlay_cursor(2, 11);
+        overlay_printf("Lines: %s", settings.scanline_thick ? "Thick" : "Thin");
+        overlay_cursor(2, 12);
+        overlay_printf("Scale: %s", settings.scanline_full ? "Full" : "Integer");
+        overlay_cursor(2, 13);
+        overlay_printf("Preview");
+        overlay_cursor(2, 15);
+        overlay_printf("<< Back");
+        overlay_cursor(2, 17);
+        //                01234567890123456789012345678901
+        overlay_printf("Integer: even lines, smaller");
+        overlay_cursor(2, 18);
+        overlay_printf("picture. Full: full size.");
+        overlay_cursor(2, 20);
+        overlay_printf("Preview hides this menu:");
+        overlay_cursor(2, 21);
+        overlay_printf(" LEFT/RIGHT  darkness");
+        overlay_cursor(2, 22);
+        overlay_printf(" UP/DOWN     thin/thick");
+        overlay_cursor(2, 23);
+        overlay_printf(" START       scale");
+        overlay_cursor(2, 24);
+        overlay_printf(" SELECT      on/off");
+        overlay_cursor(2, 25);
+        overlay_printf(" A or B      back here");
+        if (!message.empty()) {
+            overlay_cursor(2, 27);
+            overlay_printf("%s", message.c_str());
+        }
+    }
+
+    std::vector<int> get_options() override {
+        return {9, 10, 11, 12, 13, 15};
+    }
+
+    bool on_choose(int idx) override {
+        message = "";
+        switch (idx) {
+        case 0:
+            settings.scanlines = !settings.scanlines;
+            break;
+        case 1:
+            settings.scanline_dark = (settings.scanline_dark + 1) & 3;
+            settings.scanlines = true;
+            break;
+        case 2:
+            settings.scanline_thick = !settings.scanline_thick;
+            settings.scanlines = true;
+            break;
+        case 3:
+            settings.scanline_full = !settings.scanline_full;
+            settings.scanlines = true;
+            break;
+        case 4:
+            changed |= scanline_preview();
+            do_redraw();
+            return false;
+        default:                        // << Back: keep what was chosen
+            if (changed && !settings_save()) {
+                changed = false;        // Back again leaves without saving
+                message = "Save failed. Read-only drive?";
+                do_redraw();
+                return false;
+            }
+            changed = false;
+            return true;
+        }
+        changed = true;
+        apply_core_config();
+        do_redraw();
+        return false;
+    }
+};
+
+Menu *create_scanline_menu(void) {
+    return new ScanlineMenu();
+}
 
 void menu_options(void) {
     menu_clear();

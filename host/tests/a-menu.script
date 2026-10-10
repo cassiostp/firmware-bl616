@@ -11,11 +11,18 @@ expect-core nestang
 # Menu combo opens the game menu over the running game...
 hold select+start+l 400ms
 expect-screen "Close game"
-# ...Close game (Resume/Reset/.../Close game/<< Main menu) returns to boot state.
+# ...Close game (Resume/Reset/Scanlines/.../Close game/<< Main menu) returns to boot state.
+expect-cursor-row 9
 press down
+expect-cursor-row 10
 press down
+expect-cursor-row 11
 press down
+expect-cursor-row 12
 press down
+expect-cursor-row 13
+press down
+expect-cursor-row 16
 press a
 expect-screen "TangCore"
 expect-cursor-row 9
