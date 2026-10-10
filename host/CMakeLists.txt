@@ -73,6 +73,42 @@ if (NESTANG_COSIM_DIR)
     endif ()
 endif ()
 
+# GBA variant: same story for the gbatang cosim. backend_rtl.cpp itself stays
+# untouched -- its new_nes_model() seam is renamed to new_gba_model() with a
+# compile definition, so the same bridge drives the GBA model. One RTL model
+# per simulator binary (--core picks it by name; see sim/main.cpp).
+set(GBATANG_COSIM_DIR "" CACHE PATH "Gbatang sim/cosim dir with a built model")
+if (GBATANG_COSIM_DIR)
+    if (NESTANG_COSIM_DIR)
+        message(FATAL_ERROR "pick one RTL model per build: both NESTANG_COSIM_DIR "
+            "and GBATANG_COSIM_DIR are set")
+    endif ()
+    set(GBA_MODEL_LIB "${GBATANG_COSIM_DIR}/build/obj/Vcosim_top__ALL.a")
+    set(GBA_RT_HDR "${GBATANG_COSIM_DIR}/build/runtime/verilated.h")
+    if (EXISTS "${GBA_MODEL_LIB}" AND EXISTS "${GBA_RT_HDR}")
+        target_sources(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/model_gba.cpp)
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp
+            PROPERTIES COMPILE_DEFINITIONS "new_nes_model=new_gba_model")
+        target_sources(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp)
+        target_include_directories(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl
+            ${GBATANG_COSIM_DIR}/build/obj
+            ${GBATANG_COSIM_DIR}/build/runtime
+            ${GBATANG_COSIM_DIR}/build/runtime/vltstd)
+        target_link_libraries(tangcore-sim PRIVATE
+            "${GBA_MODEL_LIB}"
+            "${GBATANG_COSIM_DIR}/build/obj/libverilated.a")
+        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1)
+        message(STATUS "RTL backend: gbatang model from ${GBATANG_COSIM_DIR}")
+    else ()
+        message(FATAL_ERROR "GBATANG_COSIM_DIR lacks a built model "
+            "(missing ${GBA_MODEL_LIB}); run make model in <gbatang>/sim/cosim first")
+    endif ()
+endif ()
+
 target_include_directories(tangcore-sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sim
     ${CMAKE_CURRENT_SOURCE_DIR}/shim

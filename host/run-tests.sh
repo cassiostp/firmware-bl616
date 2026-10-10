@@ -7,6 +7,8 @@
 #   bash host/run-tests.sh --rtl [COSIM]   NES RTL suite (needs docker once
 #                                          to build the model, then runs
 #                                          against the Verilated core).
+#   bash host/run-tests.sh --rtl-gba [...] GBA RTL suite (g-*.script, same
+#                                          idea against gbatang's sim/cosim).
 # COSIM defaults to ../../nestang/sim/cosim relative to host/ (the
 # sibling-worktree layout); pass another core's sim/cosim to run its suite.
 set -u
@@ -14,12 +16,15 @@ set -u
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 RTL=0
 NESTANG_COSIM=""
+GBATANG_COSIM=""
 
 for arg in "$@"; do
     case "$arg" in
         --rtl) RTL=1 ;;
         --rtl=*) RTL=1; NESTANG_COSIM="${arg#--rtl=}" ;;
-        *) echo "usage: $0 [--rtl[=<nestang>/sim/cosim]]"; exit 2 ;;
+        --rtl-gba) RTL=2 ;;
+        --rtl-gba=*) RTL=2; GBATANG_COSIM="${arg#--rtl-gba=}" ;;
+        *) echo "usage: $0 [--rtl[=<nestang>/sim/cosim]] [--rtl-gba[=<gbatang>/sim/cosim]]"; exit 2 ;;
     esac
 done
 
@@ -36,6 +41,23 @@ d[6] |= 0x02  # battery-backed WRAM
 d += bytes(24560)
 open(sys.argv[1], 'wb').write(bytes(d))
 EOF
+}
+
+add_gba_sram() {
+    # $1 = dir, $2 = name: 16 KB dummy GBA ROM carrying the SRAM_V113 backup
+    # ID (the firmware scans the stream for it and picks backup type 3, 64
+    # blocks = 32 KB) plus the gba_bios.bin the GBA loader wants (present so
+    # no missing-BIOS message box needs dismissing; the RTL model never runs
+    # it, it just gets streamed).
+    local dir="$1" name="$2"
+    mkdir -p "$dir/gba"
+    python3 - "$dir/gba/$name" <<'EOF'
+import sys
+d = bytearray(16384)
+d[0xC0:0xC9] = b'SRAM_V113'
+open(sys.argv[1], 'wb').write(bytes(d))
+EOF
+    head -c 16384 /dev/zero > "$dir/gba/gba_bios.bin"
 }
 
 if [ "$RTL" -eq 1 ]; then
@@ -84,6 +106,65 @@ if [ "$RTL" -eq 1 ]; then
     run_rtl_test r-reset-save
     run_rtl_test r-config
     run_rtl_test r-mode
+
+    echo "=== $PASS passed, $FAIL failed ==="
+    if [ "$FAIL" -ne 0 ]; then
+        echo "failed: ${FAILED_NAMES[*]}"
+        exit 1
+    fi
+    exit 0
+fi
+
+if [ "$RTL" -eq 2 ]; then
+    if [ -z "$GBATANG_COSIM" ]; then
+        # Default depends on the worktree layout: sibling cores (cosim/gbatang
+        # next to cosim/firmware) or a fw-* worktree nested under the firmware
+        # checkout. First hit wins.
+        GBATANG_COSIM="$HOST_DIR/../../gbatang/sim/cosim"
+        [ -d "$GBATANG_COSIM" ] || GBATANG_COSIM="$HOST_DIR/../../../../gbatang/sim/cosim"
+    fi
+    echo "=== building GBA RTL model ($GBATANG_COSIM) ==="
+    make -C "$GBATANG_COSIM" model || exit 1
+    BUILD_DIR="$HOST_DIR/build-rtl-gba"
+    SIM="$BUILD_DIR/tangcore-sim"
+    echo "=== building tangcore-sim (RTL-gba) ==="
+    cmake -S "$HOST_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+        -DGBATANG_COSIM_DIR="$GBATANG_COSIM" || exit 1
+    cmake --build "$BUILD_DIR" -j"$(nproc)" || exit 1
+
+    PASS=0
+    FAIL=0
+    FAILED_NAMES=()
+    run_rtl_gba_test() {
+        # $1 = script base name (g-rtl-*.script, runs with --core gbatang-rtl).
+        local name="$1"
+        local sd
+        sd="$(mktemp -d)"
+        rm -rf "$sd"
+        mkdir -p "$sd/cores/console138k"
+        local c
+        for c in monitor nestang snestang gbatang mdtang smstang pctang; do
+            head -c 4096 /dev/urandom > "$sd/cores/console138k/$c.bin"
+        done
+        add_gba_sram "$sd" game.gba
+        echo "=== test $name (sd: $sd) ==="
+        if timeout 400 "$SIM" --sd "$sd" --core gbatang-rtl \
+                --script "$HOST_DIR/tests/$name.script"; then
+            echo "--- PASS $name"
+            PASS=$((PASS + 1))
+            rm -rf "$sd"
+        else
+            echo "--- FAIL $name (sd kept at $sd)"
+            FAIL=$((FAIL + 1))
+            FAILED_NAMES+=("$name")
+        fi
+    }
+
+    run_rtl_gba_test g-rtl-save-roundtrip
+    run_rtl_gba_test g-rtl-combo-save
+    run_rtl_gba_test g-rtl-reset-save
+    run_rtl_gba_test g-rtl-config
+    run_rtl_gba_test g-rtl-mode
 
     echo "=== $PASS passed, $FAIL failed ==="
     if [ "$FAIL" -ne 0 ]; then

@@ -1,0 +1,29 @@
+# GBA battery save round trip on the RTL core: an SRAM_V game's save is
+# restored blank into sdram_gba's save client, a game-path cart-RAM burst
+# dirties it, the 2 s debounce flushes saves/gba/game.sav (64 blocks = 32768
+# bytes) through the real iosys save engine and SDRAM, a power cycle wipes
+# the FPGA, and the reload restores the same bytes from the file.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+wram-burst 0x000 512 0xA5
+expect-file saves/gba/game.sav size 32768
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x00 0xA5
+expect-save-ram 0x01 0xA6
+expect-save-ram 0x1FF 0xA4
+expect-save-ram 0x8000 0xFF

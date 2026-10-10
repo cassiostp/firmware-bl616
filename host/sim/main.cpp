@@ -846,10 +846,15 @@ int main(int argc, char **argv) {
 
     if (g_core == "fake") {
         fpga_use_fake();
-    } else if (g_core == "nestang-rtl") {
+    } else if (g_core == "nestang-rtl" || g_core == "gbatang-rtl") {
         FpgaBackend *rtl = fpga_rtl_backend();
         if (!rtl) {
-            fprintf(stderr, "RTL backend not built: cmake -DNESTANG_COSIM_DIR=<nestang>/sim/cosim after make model there\n");
+            fprintf(stderr, "RTL backend not built: cmake -DNESTANG_COSIM_DIR=<nestang>/sim/cosim or -DGBATANG_COSIM_DIR=<gbatang>/sim/cosim after make model there\n");
+            return 2;
+        }
+        if (g_core != std::string(rtl->name())) {
+            fprintf(stderr, "this binary's RTL model is %s, not %s (rebuild with the other *_COSIM_DIR)\n",
+                    rtl->name(), g_core.c_str());
             return 2;
         }
         fpga_select(rtl);
