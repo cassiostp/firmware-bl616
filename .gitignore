@@ -1,4 +1,3 @@
 # Linux host simulator build output
 host/build/
-host/build-rtl/
-host/build-rtl-snes/
+host/build-rtl*/

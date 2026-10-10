@@ -118,7 +118,7 @@ class SnesModel : public RtlModel {
 } // namespace
 
 // Factory used by backend_rtl.cpp (declared there).
-RtlModel *new_snes_model();
-RtlModel *new_snes_model() {
+RtlModel *new_rtl_model();
+RtlModel *new_rtl_model() {
     return new SnesModel();
 }

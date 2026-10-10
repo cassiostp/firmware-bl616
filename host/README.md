@@ -132,18 +132,27 @@ bitstreams), and runs `host/tests/*.script`:
 - `h-scanlines` — game menu scanlines screen drives `core_config` bits
   16/19:18/20/21 live, with preview; choice survives a power cycle.
 
-## RTL backend (NES co-simulation)
+## RTL backend (core co-simulation)
 
-The same firmware binary can talk to a Verilator model of the NES core's
-real interface logic instead of the fake core:
+The same firmware binary can talk to a Verilator model of a core's real
+interface logic instead of the fake core:
 
 ```bash
-bash host/run-tests.sh --rtl[=/path/to/nestang/sim/cosim]
+bash host/run-tests.sh --rtl-nes[=/path/to/nestang/sim/cosim]     # r-*.script (also plain --rtl)
+bash host/run-tests.sh --rtl-snes[=/path/to/snestang/sim/cosim]   # n-*.script
+bash host/run-tests.sh --rtl-md[=/path/to/mdtang/sim/cosim]       # m-*.script
 ```
 
-This builds the model once (`make model` in the core's `sim/cosim`, needs
-docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
-`r-*.script` suite with `--core nestang-rtl`:
+Each builds the core's model once (`make model` in its `sim/cosim`, needs
+docker), builds `host/build-rtl-<core>tang/tangcore-sim` against it, and
+runs that core's suite with `--core <core>tang-rtl`. The path defaults to
+`../../<core>tang/sim/cosim` relative to `host/`.
+
+A binary links exactly one core model: every `backend_rtl/model_<core>.cpp`
+defines `new_rtl_model()`, and CMake (`tangcore_rtl_model()`) refuses more
+than one `*_COSIM_DIR` per build dir. `main.cpp` checks `--core` against the
+linked model's `name()`. Adding a core means a `model_<core>.cpp`, one
+`tangcore_rtl_model()` line, and a case in `run-tests.sh`.
 
 - `r-save-roundtrip` — battery round trip through the real save engine and
   SDRAM (burst → `.sav` → power cycle → restore → same bytes in SDRAM).
@@ -153,6 +162,14 @@ docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
 - `r-config` — Scanlines screen drives the real `core_config` register;
   Resume clears the pause bit.
 - `r-mode` — MODE reloads the FPGA from flash, firmware reboots to the menu.
+- `m-save-roundtrip` — MegaDrive battery round trip (cart-SRAM burst →
+  16384-byte `.sav` from the header's `RA` range → power cycle → restore).
+- `m-combo-save` / `m-reset-save` — the same combos racing a dump with the
+  game writing cart SRAM (MD does not pause for dumps: real arbitration).
+- `m-config` — the Scanlines screen and its Preview drive the real register,
+  including bit 22 (the MegaDrive's pad mute; cosim_top checks the game
+  never sees the pads while it is set).
+- `m-mode` — MODE on the MegaDrive core.
 
 `--core nestang-rtl` also works for manual `--script` and interactive runs.
 On RTL, `press`/`hold` drive the FPGA's pad inputs (change-detect `0x03`
@@ -170,22 +187,15 @@ hardware); MODE gates both UART directions, then resets as core 0. MCU
 bytes queue and serialize back-to-back; a 4 KB bound applies hardware
 FIFO backpressure (blocking `putchar` pumps sim time, so no deadlock).
 
-### SNES variant
-
-The same backend drives snestang's model too:
-
-```bash
-bash host/run-tests.sh --snes-rtl[=/path/to/snestang/sim/cosim]   # n-*.script, --core snestang-rtl
-```
+### SNES
 
 `n-save-roundtrip` / `n-combo-save` / `n-reset-save` / `n-config` /
 `n-mode` mirror the `r-*` shapes with SNES fixtures (a LoROM header whose
 SRAM-size byte sizes the dump: 8 KB = 16 blocks) and the core's shared
 BSRAM port: `wram-*` writes go through the SNES cartridge bus and contend
 with the dump's reads in the real arbiter (SNES first, save bytes slip in
-between). The two models coexist in one binary (distinct Verilated
-prefixes); `--core` picks the model, and a build with only one
-`*_COSIM_DIR` set reports the other as not built.
+between). snestang's save bridge lives in `snestang_top.v`, so its
+`cosim_top.sv` carries a copy of that logic: keep the two in step.
 
 ## Simulated time
 

@@ -1,0 +1,61 @@
+# core_config bits reach the real core: the game menu's Scanlines screen
+# drives bits 16/19:18/20/21 of the actual iosys core_config register, the
+# Preview screen sets bit 22 (the MegaDrive's pad mute) while it runs the
+# game with the menu hidden -- the pads the bridge drives must still reach
+# the FIRMWARE (the option changes prove that) while cosim_top asserts they
+# never reach the game vector -- Pause sets bit 17 while the menu is up, and
+# Resume clears it.
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "game.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+expect-config-bit 16 0
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Scanlines ---"
+press a
+expect-screen "Scanlines: ON"
+expect-config-bit 16 1
+expect-config-bit 19 1
+expect-config-bit 18 0
+press down
+press a
+expect-screen "Darkness: 100%"
+expect-config-bit 18 1
+press down
+press a
+expect-screen "Lines: Thick"
+expect-config-bit 20 1
+press down
+press a
+expect-screen "Scale: Full"
+expect-config-bit 21 1
+# Preview: menu hidden, game live, pads muted toward the game (bit 22) but
+# still polled by the firmware. RIGHT (darkness is already capped at 100%)
+# is pressed THROUGH the muted core for 300 ms of it.
+press down
+press a
+expect-overlay off
+expect-config-bit 22 1
+hold right 300ms
+expect-config-bit 22 1
+expect-config-bit 19 1
+press b
+expect-overlay on
+expect-config-bit 22 0
+press down
+press a
+expect-screen "Resume"
+press a
+expect-overlay off
+expect-config-bit 17 0
+expect-config-bit 16 1

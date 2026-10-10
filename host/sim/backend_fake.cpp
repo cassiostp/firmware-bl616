@@ -544,7 +544,7 @@ const char *backend_name() {
 #ifndef TANGCORE_HAVE_RTL
 // Built without the Verilator model (no docker at build time): only the fake
 // core exists. backend_rtl.cpp replaces this stub when RTL is enabled.
-FpgaBackend *fpga_rtl_backend(const char *) {
+FpgaBackend *fpga_rtl_backend() {
     return nullptr;
 }
 #endif
