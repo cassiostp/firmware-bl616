@@ -40,3 +40,6 @@ void menu_options(void);
 // Game menu "Scanlines..." screen
 struct Menu;
 Menu *create_scanline_menu(void);
+
+// Game menu "Video..." screen (scanlines, color, CRT mask, LCD grid)
+Menu *create_video_menu(void);

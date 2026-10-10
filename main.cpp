@@ -632,7 +632,7 @@ struct GameMenu: Menu {
         overlay_cursor(2, 10);
         overlay_printf("Reset");
         overlay_cursor(2, 11);
-        overlay_printf("Scanlines...");
+        overlay_printf("Video...");
         overlay_cursor(2, 12);
         overlay_printf("Game options (soon)");
         overlay_cursor(2, 13);
@@ -664,7 +664,7 @@ struct GameMenu: Menu {
             pending_action = ACTION_RESET;
             return true;
         } else if (row == 11) {
-            push_menu(std::unique_ptr<Menu>(create_scanline_menu()));
+            push_menu(std::unique_ptr<Menu>(create_video_menu()));
             return false;
         } else if (row == 12 || row == 13) {
             message = "Not available yet";

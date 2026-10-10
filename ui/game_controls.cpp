@@ -378,7 +378,7 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 23);
         overlay_printf(" keep holding: close the game");
         overlay_cursor(2, 24);
-        overlay_printf("Scanlines: in the game menu");
+        overlay_printf("Video: in the game menu");
         if (!message.empty()) {
             overlay_cursor(2, 26);
             overlay_printf("%s", message.c_str());
@@ -586,6 +586,392 @@ struct ScanlineMenu: Menu {
 
 Menu *create_scanline_menu(void) {
     return new ScanlineMenu();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Video filters, in the game menu: changes reach the running core at once
+// (frame 0x13, next to core_config), and are saved to tangcore.cfg on the
+// way out
+
+// The LCD grid needs an integer scale in both directions: only the handheld
+// cores offer it (GBA, and SMS in Game Gear mode: core_config bit 0, set by
+// the .gg loader).
+static bool lcd_grid_offered(void) {
+    return active_core == 3 || (active_core == 5 && (get_core_config() & 1u));
+}
+
+// Show the game without the menu while the pads adjust a filter: step()
+// applies one press and returns true if a setting changed. Returns true if
+// anything changed. Paused, except on SNES/MD (live, pads muted): same as
+// the scanline preview.
+static bool video_preview(bool (*step)(uint16_t p)) {
+    suppress_held_buttons();            // the A that chose Preview
+    bool live = active_core == 2 || active_core == 4;
+    core_config_preview(live ? PREVIEW_LIVE : PREVIEW_PAUSED);
+    overlay(0);
+    bool changed = false;
+    for (;;) {
+        uint16_t joy1, joy2, hid1, hid2;
+        get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        uint16_t p = joy1 | hid1 | joy2 | hid2;
+        if (controls_poll(joy1 | hid1, joy2 | hid2, false, game_loaded()))
+            break;                      // the menu combo: back to the game
+        if (p & (BTN_A | BTN_B))
+            break;
+        if (step(p)) {
+            apply_core_config();
+            changed = true;
+            suppress_held_buttons();    // one press, one step
+        }
+        delay(20);
+    }
+    suppress_held_buttons();            // the button that ended it isn't a menu choice
+    overlay(1);
+    core_config_preview(PREVIEW_OFF);
+    return changed;
+}
+
+// Cycle a -4..+3 field up by one.
+static int8_t cycle_pm3(int8_t v) {
+    return (int8_t)(((v + 4 + 1) & 7) - 4);
+}
+
+static bool color_preview_step(uint16_t p) {
+    if ((p & BTN_LEFT) && settings.video_brightness > -4)
+        settings.video_brightness--;
+    else if ((p & BTN_RIGHT) && settings.video_brightness < 3)
+        settings.video_brightness++;
+    else if ((p & BTN_UP) && settings.video_contrast < 3)
+        settings.video_contrast++;
+    else if ((p & BTN_DOWN) && settings.video_contrast > -4)
+        settings.video_contrast--;
+    else if (p & BTN_SELECT)
+        settings.video_saturation = cycle_pm3(settings.video_saturation);
+    else if (p & BTN_START)
+        settings.video_gamma = (settings.video_gamma + 1) & 3;
+    else
+        return false;
+    return true;
+}
+
+static bool mask_preview_step(uint16_t p) {
+    if (p & BTN_LEFT)
+        settings.crt_mask_strength = (settings.crt_mask_strength + 3) & 3;
+    else if (p & BTN_RIGHT)
+        settings.crt_mask_strength = (settings.crt_mask_strength + 1) & 3;
+    else if (p & (BTN_UP | BTN_DOWN))
+        settings.crt_mask = (settings.crt_mask + 1) & 3;
+    else
+        return false;
+    return true;
+}
+
+static bool grid_preview_step(uint16_t p) {
+    if (p & BTN_LEFT)
+        settings.lcd_grid_strength = (settings.lcd_grid_strength + 3) & 3;
+    else if (p & BTN_RIGHT)
+        settings.lcd_grid_strength = (settings.lcd_grid_strength + 1) & 3;
+    else if (p & (BTN_UP | BTN_DOWN))
+        settings.lcd_grid = !settings.lcd_grid;
+    else
+        return false;
+    return true;
+}
+
+static const char *gamma_name(uint8_t g) {
+    static const char *names[] = {"Off", "Darker", "Brighter", "CRT"};
+    return names[g & 3];
+}
+
+static const char *mask_name(uint8_t m) {
+    static const char *names[] = {"Off", "Grille", "Slot", "Dot"};
+    return names[m & 3];
+}
+
+struct ColorMenu: Menu {
+    bool changed = false;
+    std::string message;
+
+    ~ColorMenu() {
+        if (changed)
+            settings_save();
+    }
+
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- Color ---");
+        overlay_cursor(2, 9);
+        overlay_printf("Brightness: %d", settings.video_brightness);
+        overlay_cursor(2, 10);
+        overlay_printf("Contrast: %d", settings.video_contrast);
+        overlay_cursor(2, 11);
+        overlay_printf("Saturation: %d", settings.video_saturation);
+        overlay_cursor(2, 12);
+        overlay_printf("Gamma: %s", gamma_name(settings.video_gamma));
+        overlay_cursor(2, 13);
+        overlay_printf("Reset colors");
+        overlay_cursor(2, 14);
+        overlay_printf("Preview");
+        overlay_cursor(2, 16);
+        overlay_printf("<< Back");
+        overlay_cursor(2, 18);
+        overlay_printf("Preview hides this menu:");
+        overlay_cursor(2, 19);
+        overlay_printf(" LEFT/RIGHT  brightness");
+        overlay_cursor(2, 20);
+        overlay_printf(" UP/DOWN     contrast");
+        overlay_cursor(2, 21);
+        overlay_printf(" SELECT      saturation");
+        overlay_cursor(2, 22);
+        overlay_printf(" START       gamma");
+        overlay_cursor(2, 23);
+        overlay_printf(" A or B      back here");
+        if (!message.empty()) {
+            overlay_cursor(2, 25);
+            overlay_printf("%s", message.c_str());
+        }
+    }
+
+    std::vector<int> get_options() override {
+        return {9, 10, 11, 12, 13, 14, 16};
+    }
+
+    bool on_choose(int idx) override {
+        message = "";
+        switch (idx) {
+        case 0:
+            settings.video_brightness = cycle_pm3(settings.video_brightness);
+            break;
+        case 1:
+            settings.video_contrast = cycle_pm3(settings.video_contrast);
+            break;
+        case 2:
+            settings.video_saturation = cycle_pm3(settings.video_saturation);
+            break;
+        case 3:
+            settings.video_gamma = (settings.video_gamma + 1) & 3;
+            break;
+        case 4:
+            settings.video_brightness = 0;
+            settings.video_contrast = 0;
+            settings.video_saturation = 0;
+            settings.video_gamma = 0;
+            break;
+        case 5:
+            changed |= video_preview(color_preview_step);
+            do_redraw();
+            return false;
+        default:                        // << Back: keep what was chosen
+            if (changed && !settings_save()) {
+                changed = false;        // Back again leaves without saving
+                message = "Save failed. Read-only drive?";
+                do_redraw();
+                return false;
+            }
+            changed = false;
+            return true;
+        }
+        changed = true;
+        apply_core_config();
+        do_redraw();
+        return false;
+    }
+};
+
+struct CrtMaskMenu: Menu {
+    bool changed = false;
+    std::string message;
+
+    ~CrtMaskMenu() {
+        if (changed)
+            settings_save();
+    }
+
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- CRT mask ---");
+        overlay_cursor(2, 9);
+        overlay_printf("Mask: %s", mask_name(settings.crt_mask));
+        overlay_cursor(2, 10);
+        overlay_printf("Strength: %d", (settings.crt_mask_strength & 3) + 1);
+        overlay_cursor(2, 11);
+        overlay_printf("Preview");
+        overlay_cursor(2, 13);
+        overlay_printf("<< Back");
+        overlay_cursor(2, 15);
+        overlay_printf("Preview hides this menu:");
+        overlay_cursor(2, 16);
+        overlay_printf(" LEFT/RIGHT  strength");
+        overlay_cursor(2, 17);
+        overlay_printf(" UP/DOWN     mask type");
+        overlay_cursor(2, 18);
+        overlay_printf(" A or B      back here");
+        if (!message.empty()) {
+            overlay_cursor(2, 20);
+            overlay_printf("%s", message.c_str());
+        }
+    }
+
+    std::vector<int> get_options() override {
+        return {9, 10, 11, 13};
+    }
+
+    bool on_choose(int idx) override {
+        message = "";
+        switch (idx) {
+        case 0:
+            settings.crt_mask = (settings.crt_mask + 1) & 3;
+            break;
+        case 1:
+            settings.crt_mask_strength = (settings.crt_mask_strength + 1) & 3;
+            break;
+        case 2:
+            changed |= video_preview(mask_preview_step);
+            do_redraw();
+            return false;
+        default:                        // << Back: keep what was chosen
+            if (changed && !settings_save()) {
+                changed = false;        // Back again leaves without saving
+                message = "Save failed. Read-only drive?";
+                do_redraw();
+                return false;
+            }
+            changed = false;
+            return true;
+        }
+        changed = true;
+        apply_core_config();
+        do_redraw();
+        return false;
+    }
+};
+
+struct LcdGridMenu: Menu {
+    bool changed = false;
+    std::string message;
+
+    ~LcdGridMenu() {
+        if (changed)
+            settings_save();
+    }
+
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- LCD grid ---");
+        overlay_cursor(2, 9);
+        overlay_printf("Grid: %s", settings.lcd_grid ? "ON" : "OFF");
+        overlay_cursor(2, 10);
+        overlay_printf("Strength: %d", (settings.lcd_grid_strength & 3) + 1);
+        overlay_cursor(2, 11);
+        overlay_printf("Preview");
+        overlay_cursor(2, 13);
+        overlay_printf("<< Back");
+        overlay_cursor(2, 15);
+        overlay_printf("Preview hides this menu:");
+        overlay_cursor(2, 16);
+        overlay_printf(" LEFT/RIGHT  strength");
+        overlay_cursor(2, 17);
+        overlay_printf(" UP/DOWN     on/off");
+        overlay_cursor(2, 18);
+        overlay_printf(" A or B      back here");
+        if (!message.empty()) {
+            overlay_cursor(2, 20);
+            overlay_printf("%s", message.c_str());
+        }
+    }
+
+    std::vector<int> get_options() override {
+        return {9, 10, 11, 13};
+    }
+
+    bool on_choose(int idx) override {
+        message = "";
+        switch (idx) {
+        case 0:
+            settings.lcd_grid = !settings.lcd_grid;
+            break;
+        case 1:
+            settings.lcd_grid_strength = (settings.lcd_grid_strength + 1) & 3;
+            break;
+        case 2:
+            changed |= video_preview(grid_preview_step);
+            do_redraw();
+            return false;
+        default:                        // << Back: keep what was chosen
+            if (changed && !settings_save()) {
+                changed = false;        // Back again leaves without saving
+                message = "Save failed. Read-only drive?";
+                do_redraw();
+                return false;
+            }
+            changed = false;
+            return true;
+        }
+        changed = true;
+        apply_core_config();
+        do_redraw();
+        return false;
+    }
+};
+
+struct VideoMenu: Menu {
+    std::vector<int> rows;
+
+    VideoMenu() {
+        rows = lcd_grid_offered() ? std::vector<int>{9, 10, 11, 12, 14}
+                                  : std::vector<int>{9, 10, 11, 14};
+    }
+
+    void render() override {
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- Video ---");
+        overlay_cursor(2, 9);
+        overlay_printf("Scanlines...");
+        overlay_cursor(2, 10);
+        overlay_printf("Color...");
+        overlay_cursor(2, 11);
+        overlay_printf("CRT mask...");
+        if (lcd_grid_offered()) {
+            overlay_cursor(2, 12);
+            overlay_printf("LCD grid...");
+        }
+        overlay_cursor(2, 14);
+        overlay_printf("<< Back");
+    }
+
+    std::vector<int> get_options() override {
+        return rows;
+    }
+
+    bool on_choose(int idx) override {
+        int row = rows[idx];
+        if (row == 9) {
+            push_menu(std::unique_ptr<Menu>(new ScanlineMenu()));
+            return false;
+        } else if (row == 10) {
+            push_menu(std::unique_ptr<Menu>(new ColorMenu()));
+            return false;
+        } else if (row == 11) {
+            push_menu(std::unique_ptr<Menu>(new CrtMaskMenu()));
+            return false;
+        } else if (row == 12) {
+            push_menu(std::unique_ptr<Menu>(new LcdGridMenu()));
+            return false;
+        }
+        return true;                    // << Back: the game menu stays loaded
+    }
+};
+
+Menu *create_video_menu(void) {
+    return new VideoMenu();
 }
 
 void menu_options(void) {
