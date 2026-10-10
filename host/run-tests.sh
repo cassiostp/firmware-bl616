@@ -7,21 +7,50 @@
 #   bash host/run-tests.sh --rtl [COSIM]   NES RTL suite (needs docker once
 #                                          to build the model, then runs
 #                                          against the Verilated core).
-# COSIM defaults to ../../nestang/sim/cosim relative to host/ (the
-# sibling-worktree layout); pass another core's sim/cosim to run its suite.
+#   bash host/run-tests.sh --snes-rtl      SNES RTL suite (n-*.script, same
+#   [COSIM]                               shape against snestang's model).
+# COSIM defaults to ../../nestang/sim/cosim (resp. ../../snestang/sim/cosim)
+# relative to host/ (the sibling-worktree layout); pass another core's
+# sim/cosim to run its suite.
 set -u
 
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 RTL=0
 NESTANG_COSIM=""
+SNESTANG_COSIM=""
 
 for arg in "$@"; do
     case "$arg" in
         --rtl) RTL=1 ;;
         --rtl=*) RTL=1; NESTANG_COSIM="${arg#--rtl=}" ;;
-        *) echo "usage: $0 [--rtl[=<nestang>/sim/cosim]]"; exit 2 ;;
+        --snes-rtl) RTL=2 ;;
+        --snes-rtl=*) RTL=2; SNESTANG_COSIM="${arg#--snes-rtl=}" ;;
+        *) echo "usage: $0 [--rtl[=<nestang>/sim/cosim]] [--snes-rtl[=<snestang>/sim/cosim]]"
+           exit 2 ;;
     esac
 done
+
+add_snes() {
+    # $1 = dir, $2 = name: 32 KB SNES ROM with a valid LoROM header at 0x7FC0
+    # (core/snes.cpp's rules): ASCII title, map_ctrl 0, ROM size 5 (32 KB),
+    # SRAM size 3 -- 8 KB battery RAM, so saves/snes/<rom>.sav is 16 blocks
+    # (8192 bytes) -- checksum pair summing to 0xFFFF, reset vector 0x8000.
+    local dir="$1" name="$2"
+    mkdir -p "$dir/snes"
+    python3 - "$dir/snes/$name" <<'EOF'
+import sys
+d = bytearray(32768)
+d[0x7FC0:0x7FC0 + 21] = b'COSIM TEST GAME'.ljust(21, b' ')
+d[0x7FD5] = 0x00        # map_ctrl: LoROM
+d[0x7FD6] = 0x31        # rom type: LoROM, ROM + SRAM (battery)
+d[0x7FD7] = 0x05        # ROM size: 32 KB
+d[0x7FD8] = 0x03        # SRAM size byte: 8 KB (16 save blocks)
+d[0x7FDC:0x7FDE] = b'\x00\x00'    # checksum
+d[0x7FDE:0x7FE0] = b'\xFF\xFF'    # complement (sum = 0xFFFF)
+d[0x7FFC:0x7FFE] = b'\x00\x80'    # reset vector 0x8000
+open(sys.argv[1], 'wb').write(bytes(d))
+EOF
+}
 
 add_nes_battery() {
     # $1 = dir, $2 = name: minimal iNES ROM (16 KB PRG + 8 KB CHR) WITH the
@@ -84,6 +113,61 @@ if [ "$RTL" -eq 1 ]; then
     run_rtl_test r-reset-save
     run_rtl_test r-config
     run_rtl_test r-mode
+
+    echo "=== $PASS passed, $FAIL failed ==="
+    if [ "$FAIL" -ne 0 ]; then
+        echo "failed: ${FAILED_NAMES[*]}"
+        exit 1
+    fi
+    exit 0
+fi
+
+if [ "$RTL" -eq 2 ]; then
+    if [ -z "$SNESTANG_COSIM" ]; then
+        SNESTANG_COSIM="$HOST_DIR/../../snestang/sim/cosim"
+    fi
+    echo "=== building SNES RTL model ($SNESTANG_COSIM) ==="
+    make -C "$SNESTANG_COSIM" model || exit 1
+    BUILD_DIR="$HOST_DIR/build-rtl-snes"
+    SIM="$BUILD_DIR/tangcore-sim"
+    echo "=== building tangcore-sim (SNES RTL) ==="
+    cmake -S "$HOST_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+        -DSNESTANG_COSIM_DIR="$SNESTANG_COSIM" || exit 1
+    cmake --build "$BUILD_DIR" -j"$(nproc)" || exit 1
+
+    PASS=0
+    FAIL=0
+    FAILED_NAMES=()
+    run_snes_rtl_test() {
+        # $1 = script base name (n-*.script, runs with --core snestang-rtl).
+        local name="$1"
+        local sd
+        sd="$(mktemp -d)"
+        rm -rf "$sd"
+        mkdir -p "$sd/cores/console138k"
+        local c
+        for c in monitor nestang snestang gbatang mdtang smstang pctang; do
+            head -c 4096 /dev/urandom > "$sd/cores/console138k/$c.bin"
+        done
+        add_snes "$sd" game.smc
+        echo "=== test $name (sd: $sd) ==="
+        if timeout 400 "$SIM" --sd "$sd" --core snestang-rtl \
+                --script "$HOST_DIR/tests/$name.script"; then
+            echo "--- PASS $name"
+            PASS=$((PASS + 1))
+            rm -rf "$sd"
+        else
+            echo "--- FAIL $name (sd kept at $sd)"
+            FAIL=$((FAIL + 1))
+            FAILED_NAMES+=("$name")
+        fi
+    }
+
+    run_snes_rtl_test n-save-roundtrip
+    run_snes_rtl_test n-combo-save
+    run_snes_rtl_test n-reset-save
+    run_snes_rtl_test n-config
+    run_snes_rtl_test n-mode
 
     echo "=== $PASS passed, $FAIL failed ==="
     if [ "$FAIL" -ne 0 ]; then

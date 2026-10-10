@@ -170,6 +170,23 @@ hardware); MODE gates both UART directions, then resets as core 0. MCU
 bytes queue and serialize back-to-back; a 4 KB bound applies hardware
 FIFO backpressure (blocking `putchar` pumps sim time, so no deadlock).
 
+### SNES variant
+
+The same backend drives snestang's model too:
+
+```bash
+bash host/run-tests.sh --snes-rtl[=/path/to/snestang/sim/cosim]   # n-*.script, --core snestang-rtl
+```
+
+`n-save-roundtrip` / `n-combo-save` / `n-reset-save` / `n-config` /
+`n-mode` mirror the `r-*` shapes with SNES fixtures (a LoROM header whose
+SRAM-size byte sizes the dump: 8 KB = 16 blocks) and the core's shared
+BSRAM port: `wram-*` writes go through the SNES cartridge bus and contend
+with the dump's reads in the real arbiter (SNES first, save bytes slip in
+between). The two models coexist in one binary (distinct Verilated
+prefixes); `--core` picks the model, and a build with only one
+`*_COSIM_DIR` set reports the other as not built.
+
 ## Simulated time
 
 Everything runs on a virtual clock (`host/sim/sim_time.*`): mtimer,

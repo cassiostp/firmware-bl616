@@ -42,7 +42,18 @@
 #include "backend.hpp"
 #include "rtl_model.hpp"
 
+// Model factories from the model_<core>.cpp files that were linked in (the
+// CMake RTL_MODEL_* defines say which). fpga_rtl_backend(core_name) below
+// instantiates the requested one -- this factory is the ONE thing that grew
+// beyond the single-core NES template: backend_rtl.cpp cannot know a second
+// core's factory by itself, so --core selection lands here. Everything else
+// in this file is core-agnostic (it speaks only RtlModel).
+#ifdef RTL_MODEL_NES
 RtlModel *new_nes_model(); // model_nes.cpp
+#endif
+#ifdef RTL_MODEL_SNES
+RtlModel *new_snes_model(); // model_snes.cpp
+#endif
 
 namespace {
 
@@ -633,8 +644,24 @@ RtlBackend *g_rtl = nullptr;
 
 } // namespace
 
-FpgaBackend *fpga_rtl_backend() {
-    if (!g_rtl)
-        g_rtl = new RtlBackend(new_nes_model());
+FpgaBackend *fpga_rtl_backend(const char *core_name) {
+    if (!g_rtl) {
+        // Instantiate the model the --core name asks for (the snestang check
+        // must come first: "snestang" contains "nestang"). Null when that
+        // model was not linked in; main.cpp reports it as "not built".
+        std::string c = core_name ? core_name : "";
+        RtlModel *m = nullptr;
+#ifdef RTL_MODEL_SNES
+        if (c.find("snestang") != std::string::npos)
+            m = new_snes_model();
+#endif
+#ifdef RTL_MODEL_NES
+        if (!m && (c.empty() || c.find("nestang") != std::string::npos))
+            m = new_nes_model(); // no/unknown name: the template's default
+#endif
+        if (!m)
+            return nullptr;
+        g_rtl = new RtlBackend(m);
+    }
     return g_rtl;
 }

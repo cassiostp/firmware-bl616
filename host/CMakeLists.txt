@@ -65,11 +65,41 @@ if (NESTANG_COSIM_DIR)
         target_link_libraries(tangcore-sim PRIVATE
             "${NES_MODEL_LIB}"
             "${NESTANG_COSIM_DIR}/build/obj/libverilated.a")
-        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1)
+        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1
+            RTL_MODEL_NES=1)
         message(STATUS "RTL backend: nestang model from ${NESTANG_COSIM_DIR}")
     else ()
         message(FATAL_ERROR "NESTANG_COSIM_DIR lacks a built model "
             "(missing ${NES_MODEL_LIB}); run make model in <nestang>/sim/cosim first")
+    endif ()
+endif ()
+
+# The SNES model works the same way (snestang sim/cosim: make model, then
+# -DSNESTANG_COSIM_DIR). Its Verilated prefix differs (Vsnestang_cosim), so
+# a binary can link both core models and --core picks one at runtime;
+# backend_rtl.cpp's factory dispatches on the RTL_MODEL_* defines above.
+set(SNESTANG_COSIM_DIR "" CACHE PATH "Snestang sim/cosim dir with a built model")
+if (SNESTANG_COSIM_DIR)
+    set(SNES_MODEL_LIB "${SNESTANG_COSIM_DIR}/build/obj/Vsnestang_cosim__ALL.a")
+    set(SNES_RT_HDR "${SNESTANG_COSIM_DIR}/build/runtime/verilated.h")
+    if (EXISTS "${SNES_MODEL_LIB}" AND EXISTS "${SNES_RT_HDR}")
+        target_sources(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/model_snes.cpp)
+        target_include_directories(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl
+            ${SNESTANG_COSIM_DIR}/build/obj
+            ${SNESTANG_COSIM_DIR}/build/runtime
+            ${SNESTANG_COSIM_DIR}/build/runtime/vltstd)
+        target_link_libraries(tangcore-sim PRIVATE
+            "${SNES_MODEL_LIB}"
+            "${SNESTANG_COSIM_DIR}/build/obj/libverilated.a")
+        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1
+            RTL_MODEL_SNES=1)
+        message(STATUS "RTL backend: snestang model from ${SNESTANG_COSIM_DIR}")
+    else ()
+        message(FATAL_ERROR "SNESTANG_COSIM_DIR lacks a built model "
+            "(missing ${SNES_MODEL_LIB}); run make model in <snestang>/sim/cosim first")
     endif ()
 endif ()
 
