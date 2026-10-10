@@ -92,19 +92,40 @@ bool has_any_ext(const char *fname, const char *exts) {
 }
 
 static uint32_t core_config;
+static uint32_t video_config;
 
 uint32_t get_core_config(void) {
     return core_config;
 }
 
+uint32_t get_video_config(void) {
+    return video_config;
+}
+
 void forget_core_config(void) {
     core_config = 0;
+    video_config = 0;
+}
+
+void forget_video_config(void) {
+    video_config = 0;
 }
 
 void set_core_config(uint32_t config) {
     core_config = config;
     taskENTER_CRITICAL();
     fpga_tx_header(0x03, 5);
+    fpga_tx_byte(config >> 24);
+    fpga_tx_byte(config >> 16);
+    fpga_tx_byte(config >> 8);
+    fpga_tx_byte(config);
+    taskEXIT_CRITICAL();
+}
+
+void set_video_config(uint32_t config) {
+    video_config = config;
+    taskENTER_CRITICAL();
+    fpga_tx_header(0x13, 5);
     fpga_tx_byte(config >> 24);
     fpga_tx_byte(config >> 16);
     fpga_tx_byte(config >> 8);

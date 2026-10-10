@@ -156,6 +156,9 @@ extern int16_t get_core_id(void);
 extern uint32_t get_core_config(void);
 extern void set_core_config(uint32_t config);
 extern void forget_core_config(void);     // a new bitstream: our copy is 0 again
+extern uint32_t get_video_config(void);
+extern void set_video_config(uint32_t config);
+extern void forget_video_config(void);    // same: the new core starts with video_config = 0
 
 // core_config option bits shared by all game cores. Bit 16 enables the
 // optional scanline effect, bit 17 pauses the game while the game menu is
@@ -169,5 +172,23 @@ extern void forget_core_config(void);     // a new bitstream: our copy is 0 agai
 #define CORE_CFG_SCANLINE_THICK (1u << 20)
 #define CORE_CFG_SCANLINE_FULL (1u << 21)
 #define CORE_CFG_MUTE_PADS (1u << 22)
+
+// video_config option bits (frame 0x13) shared by all game cores. Bits 2:0
+// add -4..+3 steps of 16 to every channel (brightness), bits 5:3 scale
+// around 128 (contrast), bits 8:6 blend towards luma (saturation, -4 is
+// grey), bits 10:9 pick a gamma table (0 off, 1 darker, 2 brighter, 3 CRT),
+// bits 12:11 pick the CRT mask (0 off, 1 grille, 2 slot, 3 dot), bits 14:13
+// set how much the mask dims (1/4, 3/8, 1/2, 5/8), bit 15 turns the LCD grid
+// on, and bits 17:16 set how much the grid dims (1/8, 1/4, 3/8, 1/2).
+// Bits 19:18 are reserved for phase-2 smoothing. Every core defaults them
+// to 0, and all-zero video_config leaves the picture unchanged.
+#define VIDEO_CFG_BRIGHT_SHIFT 0
+#define VIDEO_CFG_CONTRAST_SHIFT 3
+#define VIDEO_CFG_SATUR_SHIFT 6
+#define VIDEO_CFG_GAMMA_SHIFT 9
+#define VIDEO_CFG_MASK_SHIFT 11
+#define VIDEO_CFG_MASK_STRENGTH_SHIFT 13
+#define VIDEO_CFG_LCD_GRID (1u << 15)
+#define VIDEO_CFG_GRID_STRENGTH_SHIFT 16
 
 extern const char *cstr_find_ignore_case(const char *str, const char *substr);
