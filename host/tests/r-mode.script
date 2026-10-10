@@ -1,0 +1,12 @@
+# MODE on the RTL core: the FPGA goes silent (reloading from flash), then
+# answers as core 0, and the firmware restarts like after a power cycle.
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+mode
+expect-screen "TangCore"
+expect-cursor-row 9

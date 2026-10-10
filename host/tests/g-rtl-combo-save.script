@@ -1,0 +1,23 @@
+# Menu combo while a save dump is in progress, with the game writing backup
+# SRAM continuously (churn): the dump, the pad frames, the overlay and the
+# pause bit must all get through each other on the real serial link.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+wram-burst 0x000 512 0x5A
+churn on
+poke-save 0x10 0x42
+wait-dump
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-config-bit 17 1
+churn off
+press a
+expect-overlay off
+expect-config-bit 17 0

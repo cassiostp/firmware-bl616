@@ -27,6 +27,7 @@
 
 #include "fpga.hpp"
 #include "host.h"
+#include "sim_time.hpp"
 
 namespace {
 std::atomic<uint64_t> g_wdg_feeds{0};
@@ -116,12 +117,12 @@ int bflb_uart_rxavailable(struct bflb_device_s *dev) {
     return fpga::rx_available() ? 1 : 0;
 }
 
-// ---- timers/clocks ----
+// ---- timers/clocks: the virtual simulation clock ----
 uint64_t bflb_mtimer_get_time_ms(void) {
-    return sim_uptime_ms();
+    return sim::now_ms();
 }
 uint64_t bflb_mtimer_get_time_us(void) {
-    return sim_uptime_ms() * 1000;
+    return sim::now_us();
 }
 uint32_t bflb_clk_get_system_clock(int type) {
     (void)type;
@@ -161,7 +162,7 @@ void GLB_SW_System_Reset(void) {
         std::this_thread::sleep_for(std::chrono::hours(24));
 }
 void arch_delay_ms(uint32_t ms) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    sim::advance_by((uint64_t)ms * sim::TICKS_PER_MS);
 }
 uint8_t HBN_Get_User_Boot_Config(void) {
     return g_hbn_boot;
@@ -190,7 +191,7 @@ extern "C" {
 // ---- FPGA programming: record the core, pretend success ----
 bool fpga_program(const char *fname) {
     fpga::set_programmed(fname ? fname : "");
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    sim::advance_by(50 * sim::TICKS_PER_MS); // JTAG took a moment
     return true;
 }
 

@@ -3,11 +3,17 @@ name: host-sim
 # Builds the Linux host simulator and runs its scripted tests: on every push
 # to master, and on demand for any branch
 # (gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>).
+# The rtl jobs run each core's co-simulation suite against that core's
+# Verilated interface logic, checked out from its cassiostp fork at core_ref.
 # No pull_request trigger: nobody else's code runs here.
 on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      core_ref:
+        description: Branch of the core repos with sim/cosim
+        default: feature/cosim
 
 concurrency:
   group: host-sim-${{ github.workflow }}-${{ github.ref }}
@@ -28,3 +34,43 @@ jobs:
 
       - name: Build and test
         run: bash host/run-tests.sh
+
+  rtl:
+    name: rtl (${{ matrix.core }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        core: [nes, snes, md, sms, gba]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: firmware
+          persist-credentials: false
+
+      - name: Check the core ref exists
+        id: ref
+        env:
+          REF: ${{ inputs.core_ref || 'feature/cosim' }}
+          REPO: cassiostp/${{ matrix.core }}tang
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/$REPO.git" "$REF" >/dev/null; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$REPO has no branch $REF; skipping"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.ref.outputs.ok == 'true'
+        with:
+          repository: cassiostp/${{ matrix.core }}tang
+          ref: ${{ inputs.core_ref || 'feature/cosim' }}
+          path: ${{ matrix.core }}tang
+          persist-credentials: false
+
+      - name: Build the model and run the RTL suite
+        if: steps.ref.outputs.ok == 'true'
+        run: bash firmware/host/run-tests.sh --rtl-${{ matrix.core }}

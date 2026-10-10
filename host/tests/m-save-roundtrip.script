@@ -1,0 +1,32 @@
+# MegaDrive battery save round trip on the RTL core: a game-path cart-SRAM
+# burst dirties the save, the 2 s debounce flushes it into
+# saves/genesis/game.sav (32 blocks = 16384 bytes, sized by the ROM header's
+# "RA" range $200000-$203FFF) through the real iosys save engine and sdram.v
+# port 3, a power cycle wipes the FPGA, and the reload restores the same
+# bytes from the file.
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "game.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+wram-burst 0x000 512 0xA5
+expect-file saves/genesis/game.sav size 16384
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "game.md"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x00 0xA5
+expect-save-ram 0x01 0xA6
+expect-save-ram 0x1FF 0xA4
+expect-save-ram 0x2000 0xFF

@@ -1,0 +1,26 @@
+# Reset combo while a save dump is in progress, with the game writing backup
+# SRAM continuously (churn): the reset must settle (flush) the save, toggle
+# the loading state and come back to the running game. gba_memory clears the
+# backup type at loading=1, so this also proves the firmware's
+# gba_resend_backup_type() reached the RTL: after the reset, a fresh game
+# write must dirty the save AGAIN (no type -> no backup_written -> no
+# notice -> no dump -> wait-dump times out and fails).
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+wram-burst 0x000 512 0x5A
+churn on
+poke-save 0x10 0x42
+wait-dump
+hold select+start+r 500ms
+expect-overlay off
+churn off
+poke-save 0x20 0x77
+wait-dump
+expect-save-ram 0x20 0x77
