@@ -1,0 +1,30 @@
+name: host-sim
+
+# Builds the Linux host simulator and runs its scripted tests: on every push
+# to master, and on demand for any branch
+# (gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>).
+# No pull_request trigger: nobody else's code runs here.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: host-sim-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host-sim:
+    name: host-sim
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and test
+        run: bash host/run-tests.sh

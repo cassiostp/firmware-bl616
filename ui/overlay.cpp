@@ -101,11 +101,11 @@ void overlay_message(const char *msg, int center) {
     for (int i = 0; i < 10; i++) {
         const char *eol = strchr(sol, '\n');
         if (eol) { // found \n
-            w[i] = std::min(eol - sol, 26);
+            w[i] = std::min<ptrdiff_t>(eol - sol, 26);
             maxw = std::max(w[i], maxw);
             sol = eol+1;
         } else {
-            w[i] = std::min(end - sol, 26);
+            w[i] = std::min<ptrdiff_t>(end - sol, 26);
             maxw = std::max(w[i], maxw);
             lines = i+1;
             break;

@@ -1,0 +1,25 @@
+# MegaDrive battery save round trip. The ROM header's "RA" range
+# $200000-$203FFF sizes the image at 32 blocks = 16384 bytes.
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "game.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+poke-save 0x20 0x7E
+expect-file saves/genesis/game.sav size 16384
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "game.md"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x20 0x7E

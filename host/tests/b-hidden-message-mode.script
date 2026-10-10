@@ -1,0 +1,19 @@
+# gba_bios.bin is hidden by the .gba browser filter; loading without it pops a
+# message box that A dismisses; MODE restarts the firmware.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+expect-no-screen "gba_bios.bin"
+# Drop the BIOS behind the firmware's back, then load: the BIOS loader complains.
+host-rm gba/gba_bios.bin
+press down
+press a
+expect-screen "gba_bios"
+press a
+expect-overlay off
+# MODE reloads the FPGA from flash: the firmware reboots into the main menu.
+mode
+expect-screen "TangCore"
+expect-cursor-row 9

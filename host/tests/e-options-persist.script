@@ -1,0 +1,28 @@
+# Options toggles persist across a power cycle (scanlines = core_config bit 16).
+expect-screen "TangCore"
+expect-config-bit 16 0
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Scanlines"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Scanlines: ON"
+press down
+press down
+press down
+press a
+expect-screen "Saved"
+power-cycle
+expect-screen "TangCore"
+expect-config-bit 16 1
