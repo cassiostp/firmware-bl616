@@ -72,6 +72,7 @@ class SmsModel : public RtlModel {
         pins.uart_tx = top.uart_tx != 0;
         pins.tx_pending = top.tx_pending != 0;
         pins.core_config = top.core_config;
+        pins.video_config = top.video_config;
         pins.overlay = top.overlay != 0;
         pins.busy = false; // no SDRAM controller to initialize (and unused)
         pins.rom_bytes = top.rom_bytes;

@@ -137,8 +137,6 @@ class RtlBackend : public FpgaBackend {
         case 3:
             if (b == 0x12)
                 save_reqs.fetch_add(1, std::memory_order_relaxed);
-            if (b == 0x13)
-                video_n = 0;
             tx_type = b;
             tx_ps = (tx_plen <= 1) ? 0 : 4;
             tx_left = tx_plen > 1 ? tx_plen - 1 : 0;
@@ -149,18 +147,8 @@ class RtlBackend : public FpgaBackend {
             }
             break;
         case 4:
-            if (tx_type == 0x13 && video_n < 4)
-                video_buf[video_n++] = b;
             if (--tx_left == 0) {
                 tx_ps = 0;
-                // The models predate video_config: no core register to read,
-                // so the script view is the MCU-sent word, like the fake.
-                if (tx_type == 0x13 && video_n == 4) {
-                    uint32_t v = ((uint32_t)video_buf[0] << 24) |
-                                 ((uint32_t)video_buf[1] << 16) |
-                                 ((uint32_t)video_buf[2] << 8) | video_buf[3];
-                    last_video_cached.store(v, std::memory_order_relaxed);
-                }
                 if (verbose.load(std::memory_order_relaxed)) {
                     char msg[64];
                     snprintf(msg, sizeof(msg), "tx frame type=0x%02x len=%u", tx_type,
@@ -175,8 +163,6 @@ class RtlBackend : public FpgaBackend {
     int tx_ps = 0;
     uint16_t tx_plen = 0, tx_left = 0;
     uint8_t tx_type = 0;
-    uint8_t video_buf[4] = {0, 0, 0, 0};
-    int video_n = 0;
     std::atomic<uint64_t> save_reqs{0};
 
     bool rx_available() override {
@@ -470,6 +456,7 @@ class RtlBackend : public FpgaBackend {
                 sample_tx(txbuf[i], p);
             // Refresh slow outputs per piece (ack latency ~ one piece).
             last_config_cached.store(pins.core_config, std::memory_order_relaxed);
+            last_video_cached.store(pins.video_config, std::memory_order_relaxed);
             overlay_cached.store(pins.overlay, std::memory_order_relaxed);
             rom_bytes_cached.store(pins.rom_bytes, std::memory_order_relaxed);
         }
