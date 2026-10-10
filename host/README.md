@@ -142,6 +142,7 @@ bash host/run-tests.sh --rtl-nes[=/path/to/nestang/sim/cosim]     # r-*.script (
 bash host/run-tests.sh --rtl-snes[=/path/to/snestang/sim/cosim]   # n-*.script
 bash host/run-tests.sh --rtl-md[=/path/to/mdtang/sim/cosim]       # m-*.script
 bash host/run-tests.sh --rtl-sms[=/path/to/smstang/sim/cosim]     # s-*.script
+bash host/run-tests.sh --rtl-gba[=/path/to/gbatang/sim/cosim]     # g-rtl-*.script
 ```
 
 Each builds the core's model once (`make model` in its `sim/cosim`, needs
@@ -208,6 +209,15 @@ the other), so its model has no SDRAM: `cosim_top.sv` is iosys plus the real
 `dpram.v`, and the model clocks at 21.492 MHz with `FREQ` set to match so
 the wire runs at 2 Mbaud in firmware time (iosys's 20 ms pad throttle
 becomes ~46 ms; the firmware doesn't mind).
+
+### Game Boy Advance
+
+`g-rtl-save-roundtrip` / `g-rtl-combo-save` / `g-rtl-reset-save` /
+`g-rtl-config` / `g-rtl-mode` run against gbatang's model: the real iosys and
+`sdram_gba` with its save client, and a ROM carrying `SRAM_V113` so the
+firmware picks the SRAM type (32 KB). Not modelled: Flash and EEPROM saves,
+and `gba_memory` itself; `cosim_top.sv` carries a copy of how the core
+latches the backup type from the loader, which must be kept in step.
 
 ## Simulated time
 

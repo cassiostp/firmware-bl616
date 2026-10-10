@@ -1,17 +1,19 @@
-// MdModel: RtlModel for the MegaDrive cosim_top (mdtang sim/cosim/).
+// GbaModel: RtlModel for the GBA cosim_top (gbatang sim/cosim/).
 //
 // Core-specific facts encapsulated here (the recipe for the next core lists
 // them): the Verilated header names, the hierarchical paths of the OSD text
 // array (iosys sys -> textdisp disp -> DPB menu_mem -> mem) and the SDRAM
-// array (chip -> mem), the save window base (linear 0x820000, cart SRAM at
-// SDRAM words {8'h41, 1'b0, X[15:1]}), the big-endian byte lane (even byte =
-// word UPPER half, mdtang_top's sv_q mux), and the clocking: sdram.v and
-// iosys share ONE clock in mdtang_top, so cosim_top has no fclk and one
-// tick = one clk period = one posedge.
+// array (chip -> mem), the save window base (sdram_gba's static cart-RAM map,
+// linear 0x40000), and the clock ratio (fclk = 4x clk, coincident rising
+// edges: the board's 67MHz ram clock over the 16.65MHz GBA clock, whose
+// posedges drive sdram_gba's frame resync -- mclk is tied to clk there).
 //
-// Stepping: three evals per tick (low, rising edge, back low) -- the complete
-// event set for a design with no falling-edge or multi-clock logic. The NES
-// model's seven-eval loop exists for its fclk=3x clkref resync only.
+// Stepping: one clk period is 8 evals (fclk toggles 4x per clk, clk rising
+// coincident with an fclk rise, like the board PLL). hclk mirrors clk: it
+// only feeds textdisp's render pipeline, whose pixels nobody observes.
+//
+// Factory: new_rtl_model() at the bottom (one core model per build, see
+// host/CMakeLists.txt).
 #include <atomic>
 #include "rtl_model.hpp"
 
@@ -25,18 +27,19 @@
 
 namespace {
 
-class MdModel : public RtlModel {
+class GbaModel : public RtlModel {
   public:
-    MdModel() {
+    GbaModel() {
         Verilated::debug(0);
         top.clk = 0;
+        top.fclk = 0;
         top.hclk = 0;
         top.resetn = 0;
         top.joy1 = 0;
         top.joy2 = 0;
         top.uart_rx = 1;
         top.silence = 0;
-        top.cosim_core_id = 4;
+        top.cosim_core_id = 3;
         top.poke_valid = 0;
         top.poke_off = 0;
         top.poke_data = 0;
@@ -55,16 +58,33 @@ class MdModel : public RtlModel {
         top.poke_off = pins.poke_off;
         top.poke_data = pins.poke_data;
         top.churn_en = pins.churn ? 1 : 0;
+        // Eight evals per tick (every edge): fclk runs 4x clk and clk's own
+        // edges coincide with an fclk rise (fall) as they do on the board's
+        // PLL output set. Fewer (rising edges only) breaks the save path in
+        // practice, so the extra evals stay (see model_nes.cpp).
         for (uint64_t i = 0; i < n; i++) {
             top.clk = 0;
+            top.fclk = 0;
             top.eval();
-            top.clk = 1;
+            top.clk = 1;          // clk rises with an fclk rise
+            top.fclk = 1;
             top.hclk = 1;
             top.eval();
             if (tx_levels)
                 tx_levels[i] = top.uart_tx ? 1 : 0;
-            top.clk = 0;
+            top.fclk = 0;
+            top.eval();
+            top.fclk = 1;
+            top.eval();
+            top.fclk = 0;         // clk falls with an fclk rise (hclk follows)
+            top.fclk = 1;
             top.hclk = 0;
+            top.eval();
+            top.fclk = 0;
+            top.eval();
+            top.fclk = 1;
+            top.eval();
+            top.fclk = 0;
             top.eval();
         }
         pins.uart_tx = top.uart_tx != 0;
@@ -82,22 +102,21 @@ class MdModel : public RtlModel {
     }
 
     uint8_t save_byte(uint32_t linear_addr) override {
-        // Big-endian lane: the EVEN byte of a word is its UPPER half
-        // (mdtang_top's sv_q mux / be3 -- the inverse of the NES model).
-        uint32_t w = linear_addr >> 1;
-        uint16_t word = (uint16_t)top.cosim_top->chip->mem[w & ((1 << 23) - 1)];
-        return (linear_addr & 1) ? (uint8_t)(word & 0xff) : (uint8_t)(word >> 8);
+        uint32_t w = (linear_addr >> 1) & ((1 << 18) - 1);
+        uint8_t hi = (linear_addr & 1) ? 1 : 0;
+        uint16_t word = top.cosim_top->chip->mem[w];
+        return hi ? (uint8_t)(word >> 8) : (uint8_t)(word & 0xff);
     }
 
     const char *name() override {
-        return "mdtang-rtl";
+        return "gbatang-rtl";
     }
 
     uint32_t save_base() override {
-        return 0x820000; // cart SRAM in SDRAM (mdtang_top's port-3 mapping)
+        return 0x40000; // sdram_gba's cart-RAM save window (linear, chip 1)
     }
 
-    Vcosim_top top;
+  Vcosim_top top;
 };
 
 } // namespace
@@ -105,5 +124,5 @@ class MdModel : public RtlModel {
 // The core model factory backend_rtl.cpp calls (one model per build).
 RtlModel *new_rtl_model();
 RtlModel *new_rtl_model() {
-    return new MdModel();
+    return new GbaModel();
 }

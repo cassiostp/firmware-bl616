@@ -8,7 +8,8 @@
 #                                                 Verilated model (docker builds it
 #                                                 once). <core>: nes (r-*.script,
 #                                                 also plain --rtl), snes (n-*),
-#                                                 md (m-*), sms (s-*).
+#                                                 md (m-*), sms (s-*),
+#                                                 gba (g-rtl-*).
 # COSIM is the core's sim/cosim directory; it defaults to
 # ../../<core>tang/sim/cosim relative to host/ (sibling worktrees).
 set -u
@@ -21,7 +22,7 @@ for arg in "$@"; do
         --rtl|--rtl=*) RTL_CORE=nes; RTL_COSIM="${arg#--rtl}" ;;
         --rtl-*) a="${arg#--rtl-}"; RTL_CORE="${a%%=*}"
                  case "$a" in *=*) RTL_COSIM="${a#*=}" ;; *) RTL_COSIM="" ;; esac ;;
-        *) echo "usage: $0 [--rtl-<nes|snes|md|sms>[=<core>/sim/cosim]]"; exit 2 ;;
+        *) echo "usage: $0 [--rtl-<nes|snes|md|sms|gba>[=<core>/sim/cosim]]"; exit 2 ;;
     esac
 done
 RTL_COSIM="${RTL_COSIM#=}"
@@ -63,6 +64,23 @@ open(sys.argv[1], 'wb').write(bytes(d))
 EOF
 }
 
+add_gba_sram() {
+    # $1 = dir, $2 = name: 16 KB dummy GBA ROM carrying the SRAM_V113 backup
+    # ID (the firmware scans the stream for it and picks backup type 3, 64
+    # blocks = 32 KB) plus the gba_bios.bin the GBA loader wants (present so
+    # no missing-BIOS message box needs dismissing; the RTL model never runs
+    # it, it just gets streamed).
+    local dir="$1" name="$2"
+    mkdir -p "$dir/gba"
+    python3 - "$dir/gba/$name" <<'EOF'
+import sys
+d = bytearray(16384)
+d[0xC0:0xC9] = b'SRAM_V113'
+open(sys.argv[1], 'wb').write(bytes(d))
+EOF
+    head -c 16384 /dev/zero > "$dir/gba/gba_bios.bin"
+}
+
 add_md() {
     # $1 = dir, $2 = name: 2 KB ROM with an "RA" backup-RAM header for
     # $200000-$203FFF (16 KB image = 32 save blocks).
@@ -83,6 +101,7 @@ if [ -n "$RTL_CORE" ]; then
         nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; } ;;
         snes) SUITE=n; add_rom() { add_snes "$1" game.smc; } ;;
         md)   SUITE=m; add_rom() { add_md "$1" game.md; } ;;
+        gba)  SUITE=g-rtl; add_rom() { add_gba_sram "$1" game.gba; } ;;
         sms)  SUITE=s; add_rom() {    # $2 = test: s-gg-config gets a Game Gear file
                   local f=game.sms; [ "$2" = s-gg-config ] && f=game.gg
                   mkdir -p "$1/sms"; head -c 8192 /dev/zero > "$1/sms/$f"; } ;;

@@ -79,10 +79,13 @@ set(NESTANG_COSIM_DIR "" CACHE PATH "nestang sim/cosim dir with a built model")
 set(SNESTANG_COSIM_DIR "" CACHE PATH "snestang sim/cosim dir with a built model")
 set(MDTANG_COSIM_DIR "" CACHE PATH "mdtang sim/cosim dir with a built model")
 set(SMSTANG_COSIM_DIR "" CACHE PATH "smstang sim/cosim dir with a built model")
+set(GBATANG_COSIM_DIR "" CACHE PATH "gbatang sim/cosim dir with a built model")
 tangcore_rtl_model(NESTANG_COSIM_DIR Vcosim_top__ALL.a model_nes.cpp)
 tangcore_rtl_model(SNESTANG_COSIM_DIR Vsnestang_cosim__ALL.a model_snes.cpp)
 tangcore_rtl_model(MDTANG_COSIM_DIR Vcosim_top__ALL.a model_md.cpp)
 tangcore_rtl_model(SMSTANG_COSIM_DIR Vcosim_top__ALL.a model_sms.cpp)
+tangcore_rtl_model(GBATANG_COSIM_DIR Vcosim_top__ALL.a model_gba.cpp)
+
 
 
 target_include_directories(tangcore-sim PRIVATE
