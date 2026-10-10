@@ -128,6 +128,10 @@ bitstreams), and runs `host/tests/*.script`:
   real FAT returns directory order.
 - Simulated wall-clock time (no time scaling): debounce and watchdog
   constants behave as on hardware.
+- The MCU→FPGA UART is paced to 2 Mbaud (5 µs per byte), so the firmware's
+  busy menu loops can't outrun the fake FPGA; a 1 MB ROM takes ~5 s to load.
+  Set `TANGCORE_SIM_FAST_UART=1` to disable the pacing (interactive use with
+  big ROMs; scripted tests rely on it).
 - The Flash-mode menu path is not usable in the sim (it pokes real USB
   registers); the register writes would fault, so scripts must not select it.
 - `GLB_SW_System_Reset` (MODE, flash mode) and `power-cycle` re-exec the sim

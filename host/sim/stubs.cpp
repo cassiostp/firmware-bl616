@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -36,6 +37,28 @@ uint8_t g_hbn_boot = 0;
 uint64_t steady_ms() {
     using namespace std::chrono;
     return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+// The link to the FPGA runs at 2 Mbaud 8N1: 5 us per byte. Pace TX to that
+// rate (in bursts of at most 0.5 ms). Unpaced, the firmware's busy menu loops
+// write bytes far faster than the fake FPGA thread consumes them, so the OSD
+// lags behind the firmware by a growing backlog and the script runner's polls
+// starve on the FPGA state lock.
+void uart_pace_tx() {
+    using namespace std::chrono;
+    const int64_t BYTE_NS = 5000, BURST_NS = 500000, SLACK_NS = 250000;
+    static const bool unpaced = getenv("TANGCORE_SIM_FAST_UART") != nullptr;
+    if (unpaced)
+        return;
+    static std::atomic<int64_t> wire_free_ns{0}; // when the last queued byte is out
+    int64_t now = (int64_t)duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+    int64_t prev = wire_free_ns.load(std::memory_order_relaxed);
+    int64_t done;
+    do {
+        done = (prev > now ? prev : now) + BYTE_NS;
+    } while (!wire_free_ns.compare_exchange_weak(prev, done, std::memory_order_relaxed));
+    if (done - now > BURST_NS)
+        std::this_thread::sleep_for(nanoseconds(done - now - SLACK_NS));
 }
 
 // Dummy devices handed out by name.
@@ -105,6 +128,7 @@ void bflb_uart_init(struct bflb_device_s *dev, const struct bflb_uart_config_s *
 }
 void bflb_uart_putchar(struct bflb_device_s *dev, uint8_t b) {
     (void)dev;
+    uart_pace_tx();
     fpga::tx_push(b);
 }
 uint8_t bflb_uart_getchar(struct bflb_device_s *dev) {
