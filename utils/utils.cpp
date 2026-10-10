@@ -107,10 +107,6 @@ void forget_core_config(void) {
     video_config = 0;
 }
 
-void forget_video_config(void) {
-    video_config = 0;
-}
-
 void set_core_config(uint32_t config) {
     core_config = config;
     taskENTER_CRITICAL();

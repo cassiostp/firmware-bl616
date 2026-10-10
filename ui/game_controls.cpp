@@ -593,13 +593,6 @@ Menu *create_scanline_menu(void) {
 // (frame 0x13, next to core_config), and are saved to tangcore.cfg on the
 // way out
 
-// The LCD grid needs an integer scale in both directions: only the handheld
-// cores offer it (GBA, and SMS in Game Gear mode: core_config bit 0, set by
-// the .gg loader).
-static bool lcd_grid_offered(void) {
-    return active_core == 3 || (active_core == 5 && (get_core_config() & 1u));
-}
-
 // Show the game without the menu while the pads adjust a filter: step()
 // applies one press and returns true if a setting changed. Returns true if
 // anything changed. Paused, except on SNES/MD (live, pads muted): same as

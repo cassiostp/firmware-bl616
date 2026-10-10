@@ -155,10 +155,9 @@ extern void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, ui
 extern int16_t get_core_id(void);
 extern uint32_t get_core_config(void);
 extern void set_core_config(uint32_t config);
-extern void forget_core_config(void);     // a new bitstream: our copy is 0 again
+extern void forget_core_config(void);     // a new bitstream: our copies (core_config, video_config) are 0 again
 extern uint32_t get_video_config(void);
 extern void set_video_config(uint32_t config);
-extern void forget_video_config(void);    // same: the new core starts with video_config = 0
 
 // core_config option bits shared by all game cores. Bit 16 enables the
 // optional scanline effect, bit 17 pauses the game while the game menu is
@@ -180,7 +179,7 @@ extern void forget_video_config(void);    // same: the new core starts with vide
 // bits 12:11 pick the CRT mask (0 off, 1 grille, 2 slot, 3 dot), bits 14:13
 // set how much the mask dims (1/4, 3/8, 1/2, 5/8), bit 15 turns the LCD grid
 // on, and bits 17:16 set how much the grid dims (1/8, 1/4, 3/8, 1/2).
-// Bits 19:18 are reserved for phase-2 smoothing. Every core defaults them
+// Bits 19:18 are reserved (smoothing). Every core defaults them
 // to 0, and all-zero video_config leaves the picture unchanged.
 #define VIDEO_CFG_BRIGHT_SHIFT 0
 #define VIDEO_CFG_CONTRAST_SHIFT 3

@@ -289,8 +289,19 @@ void apply_core_config() {
     set_video_config(build_video_config());
 }
 
+extern int16_t active_core;
+
+// The LCD grid needs an integer scale in both directions: only the handheld
+// cores offer it (GBA, and SMS in Game Gear mode: core_config bit 0, set by
+// the .gg loader).
+bool lcd_grid_offered() {
+    return active_core == 3 || (active_core == 5 && (get_core_config() & 1u));
+}
+
 // Pack the filter settings into the video_config word (frame 0x13). The
-// signed -4..+3 fields go out as 3-bit two's complement.
+// signed -4..+3 fields go out as 3-bit two's complement. The grid bit only
+// goes to cores that offer the grid, since it switches the core to its
+// integer-scale geometry.
 uint32_t build_video_config() {
     return ((uint32_t)(settings.video_brightness & 7) << VIDEO_CFG_BRIGHT_SHIFT) |
            ((uint32_t)(settings.video_contrast & 7) << VIDEO_CFG_CONTRAST_SHIFT) |
@@ -298,7 +309,7 @@ uint32_t build_video_config() {
            ((uint32_t)(settings.video_gamma & 3) << VIDEO_CFG_GAMMA_SHIFT) |
            ((uint32_t)(settings.crt_mask & 3) << VIDEO_CFG_MASK_SHIFT) |
            ((uint32_t)(settings.crt_mask_strength & 3) << VIDEO_CFG_MASK_STRENGTH_SHIFT) |
-           (settings.lcd_grid ? VIDEO_CFG_LCD_GRID : 0) |
+           (settings.lcd_grid && lcd_grid_offered() ? VIDEO_CFG_LCD_GRID : 0) |
            ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT);
 }
 

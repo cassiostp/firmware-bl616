@@ -56,6 +56,9 @@ void apply_core_config();
 // Build the video_config word (frame 0x13) from the filter settings.
 uint32_t build_video_config();
 
+// True if the running core offers the LCD grid (GBA, Game Gear).
+bool lcd_grid_offered();
+
 // The scanline preview shows the running game with the menu hidden: paused,
 // or running with the pads muted (cores that can't show a paused frame
 // without the menu).
