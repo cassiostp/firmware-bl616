@@ -67,19 +67,28 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
 - `press down`, `press a`, `press select+start+l` — tap buttons. The press is
   released as soon as the OSD reacts, so navigation steps exactly once.
   Buttons: `up down left right a b x y l r start select` (`sel` = select).
-- `hold select+start+l 400ms` — hold for a wall-clock duration (combos).
+- `hold select+start+l 400ms` — hold for a sim-time duration (combos).
 - `expect-screen "text"` / `expect-no-screen "text"` — OSD contains (or for
   the whole timeout, never contains) the substring.
 - `expect-cursor-row 9` — the `>` cursor is on that OSD row.
 - `expect-core smstang` — the programmed core (`monitor nestang snestang
   gbatang mdtang smstang pctang`).
-- `expect-config-bit 17 1` — a bit of the last `core_config` word.
+- `expect-config-bit 17 1` — a bit of the last `core_config` word (on the
+  RTL backend this reads the core's real register).
 - `expect-overlay on|off`.
 - `expect-file saves/sms/game.sav size 32768` / `expect-no-file <rel>`.
-- `poke-save 0x10 0x42` — write one fake-FPGA save-RAM byte and raise the
-  dirty notice (`0x0B`).
-- `expect-save-ram 0x10 0x42` — check a fake-FPGA save-RAM byte (verifies
-  restore frames after a reload).
+- `poke-save 0x10 0x42` — write one save-RAM byte and raise the dirty notice
+  (`0x0B`): direct RAM write on fake, game-path WRAM write on RTL.
+- `wram-write 0x10 0x42` — a game-path write into save RAM (dirties the save
+  like a running game would; on fake identical to `poke-save`).
+- `wram-burst 0x000 512 0xA5` — `len` game-path writes of a seeded pattern
+  (`seed+i`) from `off`.
+- `expect-save-ram 0x10 0x42` — check a save-RAM byte (verifies restore
+  frames after a reload; on RTL reads the SDRAM model).
+- `churn on|off` — the "game" continuously scribbles WRAM (RTL only; the
+  fake has no game model and ignores it). For combo/reset-during-dump tests.
+- `wait-dump [timeout]` — returns once a save-block request (`0x12`) is
+  seen, i.e. a dump is in progress, so a held combo races it.
 - `expect-alive 5s` — the watchdog heartbeat keeps moving.
 - `mode [silence-ms]` — press the MODE button: the FPGA goes silent, then
   answers as core 0, and the firmware reboots. The script resumes after this
@@ -120,6 +129,60 @@ bitstreams), and runs `host/tests/*.script`:
 - `f-md-save` — MegaDrive battery round trip (16384 bytes from an `RA` header).
 - `g-mode-early` — MODE pressed right after a game loads, before the
   firmware has polled the new core, still restarts.
+- `h-scanlines` — game menu scanlines screen drives `core_config` bits
+  16/19:18/20/21 live, with preview; choice survives a power cycle.
+
+## RTL backend (NES co-simulation)
+
+The same firmware binary can talk to a Verilator model of the NES core's
+real interface logic instead of the fake core:
+
+```bash
+bash host/run-tests.sh --rtl[=/path/to/nestang/sim/cosim]
+```
+
+This builds the model once (`make model` in the core's `sim/cosim`, needs
+docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
+`r-*.script` suite with `--core nestang-rtl`:
+
+- `r-save-roundtrip` — battery round trip through the real save engine and
+  SDRAM (burst → `.sav` → power cycle → restore → same bytes in SDRAM).
+- `r-combo-save` — menu combo while a dump is in progress with the game
+  writing WRAM continuously (pause bit set, Resume clears it).
+- `r-reset-save` — reset combo likewise (back to the running game).
+- `r-config` — Scanlines screen drives the real `core_config` register;
+  Resume clears the pause bit.
+- `r-mode` — MODE reloads the FPGA from flash, firmware reboots to the menu.
+
+`--core nestang-rtl` also works for manual `--script` and interactive runs.
+On RTL, `press`/`hold` drive the FPGA's pad inputs (change-detect `0x03`
+frames reach the firmware like hardware, 20 ms throttle included),
+`poke-save`/`wram-*` go through the game WRAM path, `expect-config-bit`
+reads the real register, and `expect-save-ram` reads the SDRAM model.
+`SCRIPT PASS` prints sim and wall seconds (rate ≈ 0.2–1 sim-s per wall-s
+on RTL; the suite takes ~2 min, model build once ~2 min).
+
+How it works (see `host/sim/backend_rtl/` + the core's `sim/cosim/`):
+bit-level UART at the real 2 Mbaud, model stepped in ≤ 256-tick batches,
+fully quiet batches jumped without evaluating (only dead air is skipped).
+Programming sets the model's core ID and resets it (SDRAM retained, like
+hardware); MODE gates both UART directions, then resets as core 0. MCU
+bytes queue and serialize back-to-back; a 4 KB bound applies hardware
+FIFO backpressure (blocking `putchar` pumps sim time, so no deadlock).
+
+## Simulated time
+
+Everything runs on a virtual clock (`host/sim/sim_time.*`): mtimer,
+`arch_delay_ms`, `vTaskDelay`, semaphore/notify timeouts and script
+waits/timeouts are sim milliseconds (1 tick = 1/21.492 MHz core clock).
+Threads waiting with a deadline drive the clock forward in 5 ms chunks;
+pure event waits (`portMAX_DELAY`) sleep until kicked. A FIFO ticket lock
+keeps chunk steps fair, clock reads are lock-free, and every chunk sleeps
+~2 ms of wall time (rate cap): uncapped, the sim runs 30–3000 sim-s per
+wall-s and firmware timeouts (the 1 s save-block fetch, the 2 s save
+debounce) land inside normal scheduling jitter and fail spuriously. The
+cap keeps them at ~100 ms of wall time each. Suite runs are deterministic
+(4/4 consecutive full passes, including once under load average 20).
 
 ## Current state and limits
 
@@ -131,8 +194,6 @@ bitstreams), and runs `host/tests/*.script`:
   the hardware text console.
 - Directory listings are sorted alphabetically for deterministic tests;
   real FAT returns directory order.
-- Simulated wall-clock time (no time scaling): debounce and watchdog
-  constants behave as on hardware.
 - The Flash-mode menu path is not usable in the sim: there is no ROM
   loader to reboot into, so scripts must not select it.
 - `GLB_SW_System_Reset` (MODE, flash mode) and `power-cycle` re-exec the sim

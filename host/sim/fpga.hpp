@@ -52,6 +52,11 @@ void set_pads(uint16_t p1, uint16_t p2);
 // MODE button: go silent for silence_ms, then answer as core 0 again.
 void trigger_mode(int silence_ms);
 
+// Continuous game WRAM writes (RTL only; fake ignores).
+void set_churn(bool on);
+// Save-block requests received so far (wait-dump watches for a new one).
+uint64_t save_requests();
+
 bool overlay_visible();
 uint64_t rom_bytes();
 

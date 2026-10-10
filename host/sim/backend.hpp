@@ -58,6 +58,12 @@ class FpgaBackend : public sim::Backend {
     // MODE button: silent for silence_ms sim ms, then answer as core 0.
     virtual void trigger_mode(int silence_ms) = 0;
 
+    // Continuous game WRAM writes (combo-during-dump tests). The fake has no
+    // game model and ignores it; the RTL traffic generator scribbles WRAM.
+    virtual void set_churn(bool on) = 0;
+    // Number of 0x12 save-block requests received (wait-dump watches it).
+    virtual uint64_t save_requests() = 0;
+
     virtual bool overlay_visible() = 0;
     virtual uint64_t rom_bytes() = 0; // ROM payload bytes consumed
 

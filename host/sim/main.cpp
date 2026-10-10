@@ -56,6 +56,7 @@ long g_script_pos = 0;
 bool g_verbose = false;
 
 std::atomic<int> g_current_line{0};
+std::chrono::steady_clock::time_point g_wall_t0;
 
 // Sim time (see sim_time.hpp): everything the firmware and the script do is
 // measured in it. Advancing yields wall-clock time between 5 ms chunks so the
@@ -593,6 +594,30 @@ int run_script() {
                 script_fail(lineno, "usage: wram-burst <off> <len> <seed>");
             printf("[%d] wram-burst 0x%lx len %ld seed 0x%lx\n", lineno, off, len, seed);
             fpga::wram_burst((uint16_t)off, (uint16_t)len, (uint8_t)seed);
+        } else if (cmd == "churn") {
+            if (t.size() != 2 || (t[1] != "on" && t[1] != "off"))
+                script_fail(lineno, "usage: churn <on|off>");
+            printf("[%d] churn %s\n", lineno, t[1].c_str());
+            fpga::set_churn(t[1] == "on");
+        } else if (cmd == "wait-dump") {
+            // Returns once the core asks for (or is asked for) a new save
+            // block: a dump is in progress, so combos held now race it.
+            uint64_t to = 15000;
+            if (t.size() > 2 || (t.size() == 2 && !parse_dur(t[1], to)))
+                script_fail(lineno, "usage: wait-dump [timeout]");
+            uint64_t r0 = fpga::save_requests();
+            printf("[%d] wait-dump\n", lineno);
+            uint64_t t0 = now_ms();
+            bool started = false;
+            while (now_ms() - t0 < to) {
+                if (fpga::save_requests() != r0) {
+                    started = true;
+                    break;
+                }
+                msleep(20);
+            }
+            if (!started)
+                script_fail(lineno, "no save dump started");
         } else if (cmd == "mode" || cmd == "mode-now") {
             long ms = 4000;
             if (t.size() > 2 || (t.size() == 2 && !parse_num(t[1], ms)))
@@ -633,7 +658,12 @@ int run_script() {
             script_fail(lineno, "unknown command: " + cmd);
         }
     }
-    printf("SCRIPT PASS (%s)\n", g_script.c_str());
+    {
+        double wall_s =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - g_wall_t0).count();
+        printf("SCRIPT PASS (%s; sim %.1fs, wall %.1fs)\n", g_script.c_str(),
+               sim::now_ms() / 1000.0, wall_s);
+    }
     fflush(stdout);
     _exit(0);
 }
@@ -783,6 +813,7 @@ void supervisor() {
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    g_wall_t0 = std::chrono::steady_clock::now();
     g_argv0 = argv[0];
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -818,7 +849,7 @@ int main(int argc, char **argv) {
     } else if (g_core == "nestang-rtl") {
         FpgaBackend *rtl = fpga_rtl_backend();
         if (!rtl) {
-            fprintf(stderr, "RTL backend not built in (needs docker + NESTANG_DIR at build time)\n");
+            fprintf(stderr, "RTL backend not built: cmake -DNESTANG_COSIM_DIR=<nestang>/sim/cosim after make model there\n");
             return 2;
         }
         fpga_select(rtl);

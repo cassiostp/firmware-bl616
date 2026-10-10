@@ -158,6 +158,12 @@ class FakeBackend : public FpgaBackend {
         rx_push_frame(0x03, payload, sizeof(payload));
     }
 
+    void set_churn(bool) override {} // no game model on the fake
+
+    uint64_t save_requests() override {
+        return save_reqs_.load(std::memory_order_relaxed);
+    }
+
     void trigger_mode(int silence_ms) override {
         {
             std::lock_guard<std::recursive_mutex> lk(m_);
@@ -225,6 +231,7 @@ class FakeBackend : public FpgaBackend {
     uint64_t rom_bytes_ = 0;
     uint16_t pad1_ = 0, pad2_ = 0;
     std::vector<uint8_t> save_ram_;
+    std::atomic<uint64_t> save_reqs_{0};
     std::atomic<bool> verbose_{false};
     std::vector<std::string> log_;
     std::string log_cur_;
@@ -339,6 +346,7 @@ class FakeBackend : public FpgaBackend {
             break;
         }
         case 0x12: { // save request: answer with a 0x0A block
+            save_reqs_.fetch_add(1, std::memory_order_relaxed);
             if (p.size() < 2 || silenced())
                 break;
             uint16_t blk = ((uint16_t)p[0] << 8) | p[1];
@@ -508,6 +516,12 @@ void set_pads(uint16_t p1, uint16_t p2) {
 }
 void trigger_mode(int silence_ms) {
     g_active->trigger_mode(silence_ms);
+}
+void set_churn(bool on) {
+    g_active->set_churn(on);
+}
+uint64_t save_requests() {
+    return g_active->save_requests();
 }
 bool overlay_visible() {
     return g_active->overlay_visible();

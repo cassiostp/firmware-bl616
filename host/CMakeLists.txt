@@ -43,6 +43,36 @@ set(SIM_SOURCES
 
 add_executable(tangcore-sim ${SIM_SOURCES} ${FW_SOURCES})
 
+# RTL backend (optional): Verilated cosim_top of a core, prebuilt by that
+# core's sim/cosim/Makefile (needs docker at model-build time, not here).
+#   cmake -S host -B host/build -DNESTANG_COSIM_DIR=<nestang>/sim/cosim
+# The directory must contain build/obj/Vcosim_top__ALL.a (the model) and
+# build/runtime/verilated.h (Verilator runtime headers); without it the sim
+# builds with the fake core only and --core nestang-rtl reports unbuilt.
+set(NESTANG_COSIM_DIR "" CACHE PATH "Nestang sim/cosim dir with a built model")
+if (NESTANG_COSIM_DIR)
+    set(NES_MODEL_LIB "${NESTANG_COSIM_DIR}/build/obj/Vcosim_top__ALL.a")
+    set(NES_RT_HDR "${NESTANG_COSIM_DIR}/build/runtime/verilated.h")
+    if (EXISTS "${NES_MODEL_LIB}" AND EXISTS "${NES_RT_HDR}")
+        target_sources(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/model_nes.cpp)
+        target_include_directories(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl
+            ${NESTANG_COSIM_DIR}/build/obj
+            ${NESTANG_COSIM_DIR}/build/runtime
+            ${NESTANG_COSIM_DIR}/build/runtime/vltstd)
+        target_link_libraries(tangcore-sim PRIVATE
+            "${NES_MODEL_LIB}"
+            "${NESTANG_COSIM_DIR}/build/obj/libverilated.a")
+        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1)
+        message(STATUS "RTL backend: nestang model from ${NESTANG_COSIM_DIR}")
+    else ()
+        message(FATAL_ERROR "NESTANG_COSIM_DIR lacks a built model "
+            "(missing ${NES_MODEL_LIB}); run make model in <nestang>/sim/cosim first")
+    endif ()
+endif ()
+
 target_include_directories(tangcore-sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sim
     ${CMAKE_CURRENT_SOURCE_DIR}/shim
