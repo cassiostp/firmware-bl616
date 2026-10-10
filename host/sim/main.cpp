@@ -128,9 +128,9 @@ std::string dump_screen() {
         out += n;
     }
     char tail[256];
-    snprintf(tail, sizeof(tail), "] core=%d (%s) config=0x%08x overlay=%s\n",
+    snprintf(tail, sizeof(tail), "] core=%d (%s) config=0x%08x video=0x%08x overlay=%s\n",
              fpga::programmed_id(), fpga::programmed_file().c_str(),
-             fpga::last_config(), _overlay_on ? "on" : "off");
+             fpga::last_config(), fpga::last_video_config(), _overlay_on ? "on" : "off");
     out += tail;
     return out;
 }
@@ -385,6 +385,13 @@ bool c_bit(void *a) {
     CondBit *c = (CondBit *)a;
     return (int)((fpga::last_config() >> c->bit) & 1) == c->val;
 }
+bool c_videobit(void *a) {
+    CondBit *c = (CondBit *)a;
+    return (int)((fpga::last_video_config() >> c->bit) & 1) == c->val;
+}
+bool c_videocfg(void *a) {
+    return fpga::last_video_config() == *(uint32_t *)a;
+}
 bool c_overlay(void *a) {
     return (_overlay_on != 0) == *(bool *)a;
 }
@@ -511,6 +518,29 @@ int run_script() {
             printf("[%d] expect-config-bit %ld %ld\n", lineno, bit, val);
             if (!poll_until(to, c_bit, &c))
                 script_fail(lineno, "config bit never matched");
+        } else if (cmd == "expect-video-bit") {
+            long bit, val;
+            uint64_t to = 10000;
+            if (t.size() < 3 || t.size() > 4 || !parse_num(t[1], bit) ||
+                !parse_num(t[2], val))
+                script_fail(lineno, "usage: expect-video-bit <bit> <0|1> [timeout]");
+            if (t.size() == 4 && !parse_dur(t[3], to))
+                script_fail(lineno, "bad timeout");
+            CondBit c{(int)bit, (int)val};
+            printf("[%d] expect-video-bit %ld %ld\n", lineno, bit, val);
+            if (!poll_until(to, c_videobit, &c))
+                script_fail(lineno, "video config bit never matched");
+        } else if (cmd == "expect-video-config") {
+            long word;
+            uint64_t to = 10000;
+            if (t.size() < 2 || t.size() > 3 || !parse_num(t[1], word))
+                script_fail(lineno, "usage: expect-video-config <word> [timeout]");
+            if (t.size() == 3 && !parse_dur(t[2], to))
+                script_fail(lineno, "bad timeout");
+            uint32_t w = (uint32_t)word;
+            printf("[%d] expect-video-config 0x%08x\n", lineno, w);
+            if (!poll_until(to, c_videocfg, &w))
+                script_fail(lineno, "video config word never matched");
         } else if (cmd == "expect-overlay") {
             uint64_t to = 10000;
             if (t.size() < 2 || t.size() > 3)

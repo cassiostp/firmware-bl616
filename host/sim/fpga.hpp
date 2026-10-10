@@ -32,6 +32,8 @@ uint64_t ms_since_program(); // sim ms since the last programming (huge if never
 
 // Last core_config word received (MCU -> FPGA command 0x03).
 uint32_t last_config();
+// Last video_config word received (MCU -> FPGA command 0x13).
+uint32_t last_video_config();
 
 // OSD text buffer.
 OsdSnapshot osd_snapshot();
