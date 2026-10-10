@@ -21,6 +21,7 @@ expect-no-screen "LCD grid"
 press down
 press down
 press down
+press down
 press a
 expect-screen "Resume"
 press down
@@ -63,6 +64,7 @@ press down
 press down
 press a
 expect-screen "--- Video ---"
+press down
 press down
 press down
 press down

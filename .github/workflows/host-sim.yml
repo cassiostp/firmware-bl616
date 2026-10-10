@@ -13,7 +13,7 @@ on:
     inputs:
       core_ref:
         description: Branch of the core repos with sim/cosim
-        default: feature/video-fx
+        default: feature/smoothing
 
 concurrency:
   group: host-sim-${{ github.workflow }}-${{ github.ref }}
@@ -53,7 +53,7 @@ jobs:
       - name: Check the core ref exists
         id: ref
         env:
-          REF: ${{ inputs.core_ref || 'feature/video-fx' }}
+          REF: ${{ inputs.core_ref || 'feature/smoothing' }}
           REPO: cassiostp/${{ matrix.core }}tang
         run: |
           if git ls-remote --exit-code --heads "https://github.com/$REPO.git" "$REF" >/dev/null; then
@@ -67,7 +67,7 @@ jobs:
         if: steps.ref.outputs.ok == 'true'
         with:
           repository: cassiostp/${{ matrix.core }}tang
-          ref: ${{ inputs.core_ref || 'feature/video-fx' }}
+          ref: ${{ inputs.core_ref || 'feature/smoothing' }}
           path: ${{ matrix.core }}tang
           persist-credentials: false
 

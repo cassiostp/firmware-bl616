@@ -1,0 +1,42 @@
+# Game menu > Video > Smoothing cycles Off, Sharp, Soft and back to Off, sending
+# video_config bits 19:18 at once, and the choice survives a power cycle.
+# (Strengths default 1 with the effects off, so the idle word is 0x12000.)
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-video-config 0x12000
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-screen "Smoothing: Off"
+press down
+press down
+press down
+press a
+expect-screen "Smoothing: Sharp"
+expect-video-config 0x52000
+press a
+expect-screen "Smoothing: Soft"
+expect-video-config 0x92000
+press a
+expect-screen "Smoothing: Off"
+expect-video-config 0x12000
+press a
+expect-screen "Smoothing: Sharp"
+press down
+press a
+expect-screen "Resume"
+power-cycle
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-video-config 0x52000

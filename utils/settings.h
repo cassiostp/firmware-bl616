@@ -39,6 +39,7 @@ struct Settings {
     uint8_t crt_mask_strength;  // 0..3: the mask dims 1/4, 3/8, 1/2, 5/8 (video_config bits 14:13)
     bool lcd_grid;              // handheld pixel grid (video_config bit 15)
     uint8_t lcd_grid_strength;  // 0..3: the grid dims 1/8, 1/4, 3/8, 1/2 (video_config bits 17:16)
+    uint8_t smoothing;          // 0..2: off, sharp, soft (video_config bits 19:18)
     bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
 };
 

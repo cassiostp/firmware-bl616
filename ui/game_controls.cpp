@@ -913,12 +913,27 @@ struct LcdGridMenu: Menu {
     }
 };
 
+static const char *smoothing_name(uint8_t s) {
+    switch (s) {
+    case 1:  return "Sharp";
+    case 2:  return "Soft";
+    default: return "Off";
+    }
+}
+
 struct VideoMenu: Menu {
     std::vector<int> rows;
+    bool changed = false;
+    std::string message;
 
     VideoMenu() {
-        rows = lcd_grid_offered() ? std::vector<int>{9, 10, 11, 12, 14}
-                                  : std::vector<int>{9, 10, 11, 14};
+        rows = lcd_grid_offered() ? std::vector<int>{9, 10, 11, 12, 13, 15}
+                                  : std::vector<int>{9, 10, 11, 13, 15};
+    }
+
+    ~VideoMenu() {
+        if (changed)
+            settings_save();
     }
 
     void render() override {
@@ -936,8 +951,14 @@ struct VideoMenu: Menu {
             overlay_cursor(2, 12);
             overlay_printf("LCD grid...");
         }
-        overlay_cursor(2, 14);
+        overlay_cursor(2, 13);
+        overlay_printf("Smoothing: %s", smoothing_name(settings.smoothing));
+        overlay_cursor(2, 15);
         overlay_printf("<< Back");
+        if (!message.empty()) {
+            overlay_cursor(2, 17);
+            overlay_printf("%s", message.c_str());
+        }
     }
 
     std::vector<int> get_options() override {
@@ -946,6 +967,7 @@ struct VideoMenu: Menu {
 
     bool on_choose(int idx) override {
         int row = rows[idx];
+        message = "";
         if (row == 9) {
             push_menu(std::unique_ptr<Menu>(new ScanlineMenu()));
             return false;
@@ -958,8 +980,22 @@ struct VideoMenu: Menu {
         } else if (row == 12) {
             push_menu(std::unique_ptr<Menu>(new LcdGridMenu()));
             return false;
+        } else if (row == 13) {         // Off, Sharp, Soft
+            settings.smoothing = (settings.smoothing + 1) % 3;
+            changed = true;
+            apply_core_config();
+            do_redraw();
+            return false;
         }
-        return true;                    // << Back: the game menu stays loaded
+        // << Back: the game menu stays loaded
+        if (changed && !settings_save()) {
+            changed = false;            // Back again leaves without saving
+            message = "Save failed. Read-only drive?";
+            do_redraw();
+            return false;
+        }
+        changed = false;
+        return true;
     }
 };
 

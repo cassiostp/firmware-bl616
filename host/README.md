@@ -141,6 +141,8 @@ bitstreams), and runs `host/tests/*.script`:
 - `k-video-grid` — no LCD grid row for `.sms`, one for `.gg` (Game Gear
   mode); Grid ON sets `video_config` bit 15.
 - `l-video-grid-gba` — LCD grid row for GBA; Grid ON sets bit 15.
+- `o-video-smoothing` — Video > Smoothing cycles Off, Sharp, Soft (bits
+  19:18) and survives a power cycle.
 
 ## RTL backend (core co-simulation)
 

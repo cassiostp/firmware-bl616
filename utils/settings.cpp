@@ -55,6 +55,7 @@ void settings_defaults(Settings &s) {
     s.crt_mask_strength = 1;
     s.lcd_grid = false;
     s.lcd_grid_strength = 1;
+    s.smoothing = 0;
     s.pause_in_menu = true;
 }
 
@@ -170,6 +171,9 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
     } else if (strcasecmp(key, "lcd_grid_strength") == 0) {
         long v = strtol(val, NULL, 10);
         if (v >= 0 && v <= 3) s.lcd_grid_strength = (uint8_t)v;
+    } else if (strcasecmp(key, "smoothing") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 0 && v <= 2) s.smoothing = (uint8_t)v;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
         s.pause_in_menu = strtol(val, NULL, 10) != 0;
     }
@@ -238,7 +242,7 @@ bool settings_save() {
         "scanline_full=%d\n"
         "# Video filters: brightness/contrast/saturation -4..3, gamma 0..3\n"
         "# (off, darker, brighter, CRT), mask 0..3 (off, grille, slot, dot),\n"
-        "# strengths 0..3, grid 1 = on.\n"
+        "# strengths 0..3, grid 1 = on, smoothing 0..2 (off, sharp, soft).\n"
         "video_brightness=%d\n"
         "video_contrast=%d\n"
         "video_saturation=%d\n"
@@ -247,6 +251,7 @@ bool settings_save() {
         "crt_mask_strength=%d\n"
         "lcd_grid=%d\n"
         "lcd_grid_strength=%d\n"
+        "smoothing=%d\n"
         "# 0 keeps the game running while a menu is shown over it.\n"
         "pause_in_menu=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
@@ -255,7 +260,7 @@ bool settings_save() {
         settings.scanline_thick ? 1 : 0, settings.scanline_full ? 1 : 0,
         settings.video_brightness, settings.video_contrast, settings.video_saturation,
         settings.video_gamma, settings.crt_mask, settings.crt_mask_strength,
-        settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength,
+        settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength, settings.smoothing,
         settings.pause_in_menu ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
@@ -310,7 +315,8 @@ uint32_t build_video_config() {
            ((uint32_t)(settings.crt_mask & 3) << VIDEO_CFG_MASK_SHIFT) |
            ((uint32_t)(settings.crt_mask_strength & 3) << VIDEO_CFG_MASK_STRENGTH_SHIFT) |
            (settings.lcd_grid && lcd_grid_offered() ? VIDEO_CFG_LCD_GRID : 0) |
-           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT);
+           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT) |
+           ((uint32_t)(settings.smoothing & 3) << VIDEO_CFG_SMOOTH_SHIFT);
 }
 
 void core_config_preview(Preview p) {

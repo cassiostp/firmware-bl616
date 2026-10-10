@@ -57,6 +57,7 @@ expect-screen "--- Video ---"
 press down
 press down
 press down
+press down
 press a
 expect-screen "Resume"
 power-cycle

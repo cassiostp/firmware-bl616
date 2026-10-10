@@ -249,6 +249,7 @@ run_test i-video-color sms:cgame.sms
 run_test j-video-persist sms:cgame.sms
 run_test k-video-grid sms:cgame.sms sms:game.gg
 run_test l-video-grid-gba gba
+run_test o-video-smoothing nes:game.nes
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

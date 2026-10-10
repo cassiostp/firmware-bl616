@@ -179,7 +179,7 @@ extern void set_video_config(uint32_t config);
 // bits 12:11 pick the CRT mask (0 off, 1 grille, 2 slot, 3 dot), bits 14:13
 // set how much the mask dims (1/4, 3/8, 1/2, 5/8), bit 15 turns the LCD grid
 // on, and bits 17:16 set how much the grid dims (1/8, 1/4, 3/8, 1/2).
-// Bits 19:18 are reserved (smoothing). Every core defaults them
+// Bits 19:18 smooth the picture (0 off, 1 sharp, 2 soft). Every core defaults them
 // to 0, and all-zero video_config leaves the picture unchanged.
 #define VIDEO_CFG_BRIGHT_SHIFT 0
 #define VIDEO_CFG_CONTRAST_SHIFT 3
@@ -189,5 +189,6 @@ extern void set_video_config(uint32_t config);
 #define VIDEO_CFG_MASK_STRENGTH_SHIFT 13
 #define VIDEO_CFG_LCD_GRID (1u << 15)
 #define VIDEO_CFG_GRID_STRENGTH_SHIFT 16
+#define VIDEO_CFG_SMOOTH_SHIFT 18
 
 extern const char *cstr_find_ignore_case(const char *str, const char *substr);
