@@ -8,7 +8,7 @@
 #                                                 Verilated model (docker builds it
 #                                                 once). <core>: nes (r-*.script,
 #                                                 also plain --rtl), snes (n-*),
-#                                                 md (m-*).
+#                                                 md (m-*), sms (s-*).
 # COSIM is the core's sim/cosim directory; it defaults to
 # ../../<core>tang/sim/cosim relative to host/ (sibling worktrees).
 set -u
@@ -21,7 +21,7 @@ for arg in "$@"; do
         --rtl|--rtl=*) RTL_CORE=nes; RTL_COSIM="${arg#--rtl}" ;;
         --rtl-*) a="${arg#--rtl-}"; RTL_CORE="${a%%=*}"
                  case "$a" in *=*) RTL_COSIM="${a#*=}" ;; *) RTL_COSIM="" ;; esac ;;
-        *) echo "usage: $0 [--rtl-<nes|snes|md>[=<core>/sim/cosim]]"; exit 2 ;;
+        *) echo "usage: $0 [--rtl-<nes|snes|md|sms>[=<core>/sim/cosim]]"; exit 2 ;;
     esac
 done
 RTL_COSIM="${RTL_COSIM#=}"
@@ -83,6 +83,9 @@ if [ -n "$RTL_CORE" ]; then
         nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; } ;;
         snes) SUITE=n; add_rom() { add_snes "$1" game.smc; } ;;
         md)   SUITE=m; add_rom() { add_md "$1" game.md; } ;;
+        sms)  SUITE=s; add_rom() {    # $2 = test: s-gg-config gets a Game Gear file
+                  local f=game.sms; [ "$2" = s-gg-config ] && f=game.gg
+                  mkdir -p "$1/sms"; head -c 8192 /dev/zero > "$1/sms/$f"; } ;;
         *) echo "unknown RTL core: $RTL_CORE"; exit 2 ;;
     esac
     BACKEND="${RTL_CORE}tang-rtl"
@@ -111,7 +114,7 @@ if [ -n "$RTL_CORE" ]; then
         for c in monitor nestang snestang gbatang mdtang smstang pctang; do
             head -c 4096 /dev/urandom > "$sd/cores/console138k/$c.bin"
         done
-        add_rom "$sd"
+        add_rom "$sd" "$name"
         echo "=== test $name (sd: $sd) ==="
         if timeout 400 "$SIM" --sd "$sd" --core "$BACKEND" \
                 --script "$HOST_DIR/tests/$name.script"; then

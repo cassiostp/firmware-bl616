@@ -1,0 +1,48 @@
+# core_config bits reach the real core: the game menu's Scanlines screen
+# drives bits 16/19:18/20/21 of the actual iosys core_config register, Pause
+# sets bit 17 while the menu is up, and Resume clears it. Bit 0 (Game Gear
+# mode, see s-gg-config) stays clear for a .sms load.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+expect-config-bit 0 0
+expect-config-bit 16 0
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Scanlines ---"
+press a
+expect-screen "Scanlines: ON"
+expect-config-bit 16 1
+expect-config-bit 19 1
+expect-config-bit 18 0
+press down
+press a
+expect-screen "Darkness: 100%"
+expect-config-bit 18 1
+press down
+press a
+expect-screen "Lines: Thick"
+expect-config-bit 20 1
+press down
+press a
+expect-screen "Scale: Full"
+expect-config-bit 21 1
+press down
+press down
+press a
+expect-screen "Resume"
+press a
+expect-overlay off
+expect-config-bit 17 0
+expect-config-bit 16 1

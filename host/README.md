@@ -141,6 +141,7 @@ interface logic instead of the fake core:
 bash host/run-tests.sh --rtl-nes[=/path/to/nestang/sim/cosim]     # r-*.script (also plain --rtl)
 bash host/run-tests.sh --rtl-snes[=/path/to/snestang/sim/cosim]   # n-*.script
 bash host/run-tests.sh --rtl-md[=/path/to/mdtang/sim/cosim]       # m-*.script
+bash host/run-tests.sh --rtl-sms[=/path/to/smstang/sim/cosim]     # s-*.script
 ```
 
 Each builds the core's model once (`make model` in its `sim/cosim`, needs
@@ -196,6 +197,17 @@ BSRAM port: `wram-*` writes go through the SNES cartridge bus and contend
 with the dump's reads in the real arbiter (SNES first, save bytes slip in
 between). snestang's save bridge lives in `snestang_top.v`, so its
 `cosim_top.sv` carries a copy of that logic: keep the two in step.
+
+### Master System
+
+`s-save-roundtrip` / `s-combo-save` / `s-reset-save` / `s-config` / `s-mode`
+mirror the `r-*` shapes against smstang's model; `s-gg-config` loads a
+`.gg` file and checks Game Gear mode (core_config bit 0). smstang keeps its
+32 KB battery RAM in on-chip dual-port RAM (iosys on one port, the game on
+the other), so its model has no SDRAM: `cosim_top.sv` is iosys plus the real
+`dpram.v`, and the model clocks at 21.492 MHz with `FREQ` set to match so
+the wire runs at 2 Mbaud in firmware time (iosys's 20 ms pad throttle
+becomes ~46 ms; the firmware doesn't mind).
 
 ## Simulated time
 
