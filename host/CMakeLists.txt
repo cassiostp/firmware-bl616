@@ -73,6 +73,43 @@ if (NESTANG_COSIM_DIR)
     endif ()
 endif ()
 
+# MDTANG_COSIM_DIR: same shape for the MegaDrive core (mdtang sim/cosim, run
+# make model there). backend_rtl.cpp stays byte-identical across cores: it
+# constructs its model through new_nes_model(), so this build renames that
+# call to new_md_model() at compile time. One RTL model per binary (the
+# rename is per-TU, so both cores' models cannot coexist in one link; build
+# them in separate build dirs, e.g. host/build-rtl and host/build-rtl-md).
+set(MDTANG_COSIM_DIR "" CACHE PATH "Mdtang sim/cosim dir with a built model")
+if (MDTANG_COSIM_DIR)
+    if (NESTANG_COSIM_DIR)
+        message(FATAL_ERROR "one RTL model per binary: configure either "
+            "NESTANG_COSIM_DIR or MDTANG_COSIM_DIR, in separate build dirs")
+    endif ()
+    set(MD_MODEL_LIB "${MDTANG_COSIM_DIR}/build/obj/Vcosim_top__ALL.a")
+    set(MD_RT_HDR "${MDTANG_COSIM_DIR}/build/runtime/verilated.h")
+    if (EXISTS "${MD_MODEL_LIB}" AND EXISTS "${MD_RT_HDR}")
+        target_sources(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/model_md.cpp)
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp
+            PROPERTIES COMPILE_DEFINITIONS "new_nes_model=new_md_model")
+        target_include_directories(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl
+            ${MDTANG_COSIM_DIR}/build/obj
+            ${MDTANG_COSIM_DIR}/build/runtime
+            ${MDTANG_COSIM_DIR}/build/runtime/vltstd)
+        target_link_libraries(tangcore-sim PRIVATE
+            "${MD_MODEL_LIB}"
+            "${MDTANG_COSIM_DIR}/build/obj/libverilated.a")
+        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1)
+        message(STATUS "RTL backend: mdtang model from ${MDTANG_COSIM_DIR}")
+    else ()
+        message(FATAL_ERROR "MDTANG_COSIM_DIR lacks a built model "
+            "(missing ${MD_MODEL_LIB}); run make model in <mdtang>/sim/cosim first")
+    endif ()
+endif ()
+
 target_include_directories(tangcore-sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sim
     ${CMAKE_CURRENT_SOURCE_DIR}/shim

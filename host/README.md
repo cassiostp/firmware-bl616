@@ -132,18 +132,20 @@ bitstreams), and runs `host/tests/*.script`:
 - `h-scanlines` — game menu scanlines screen drives `core_config` bits
   16/19:18/20/21 live, with preview; choice survives a power cycle.
 
-## RTL backend (NES co-simulation)
+## RTL backend (NES and MegaDrive co-simulation)
 
-The same firmware binary can talk to a Verilator model of the NES core's
-real interface logic instead of the fake core:
+The same firmware binary can talk to a Verilator model of a core's real
+interface logic instead of the fake core:
 
 ```bash
 bash host/run-tests.sh --rtl[=/path/to/nestang/sim/cosim]
+bash host/run-tests.sh --rtl-md[=/path/to/mdtang/sim/cosim]
 ```
 
-This builds the model once (`make model` in the core's `sim/cosim`, needs
-docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
-`r-*.script` suite with `--core nestang-rtl`:
+Each builds the model once (`make model` in that core's `sim/cosim`, needs
+docker), builds `host/build-rtl`/`host/build-rtl-md/tangcore-sim` against it
+(one RTL model per binary), and runs the `r-*.script`/`m-*.script` suite
+with `--core nestang-rtl`/`--core mdtang-rtl`:
 
 - `r-save-roundtrip` — battery round trip through the real save engine and
   SDRAM (burst → `.sav` → power cycle → restore → same bytes in SDRAM).
@@ -153,6 +155,14 @@ docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
 - `r-config` — Scanlines screen drives the real `core_config` register;
   Resume clears the pause bit.
 - `r-mode` — MODE reloads the FPGA from flash, firmware reboots to the menu.
+- `m-save-roundtrip` — MegaDrive battery round trip (cart-SRAM burst →
+  16384-byte `.sav` from the header's `RA` range → power cycle → restore).
+- `m-combo-save` / `m-reset-save` — the same combos racing a dump with the
+  game writing cart SRAM (MD does not pause for dumps: real arbitration).
+- `m-config` — the Scanlines screen and its Preview drive the real register,
+  including bit 22 (the MegaDrive's pad mute; cosim_top checks the game
+  never sees the pads while it is set).
+- `m-mode` — MODE on the MegaDrive core.
 
 `--core nestang-rtl` also works for manual `--script` and interactive runs.
 On RTL, `press`/`hold` drive the FPGA's pad inputs (change-detect `0x03`

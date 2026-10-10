@@ -1,3 +1,4 @@
 # Linux host simulator build output
 host/build/
 host/build-rtl/
+host/build-rtl-md/
