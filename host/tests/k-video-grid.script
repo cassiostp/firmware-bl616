@@ -1,0 +1,88 @@
+# The LCD grid row only appears for handheld cores: a .sms game has no LCD
+# grid row in its Video menu, while a .gg game (Game Gear mode) does, and
+# turning the grid on sets video_config bit 15; the .sms game never gets it.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-no-screen "LCD grid"
+press down
+press down
+press down
+press a
+expect-screen "Resume"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.gg"
+press down
+press down
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-screen "LCD grid..."
+press down
+press down
+press down
+press a
+expect-screen "--- LCD grid ---"
+press a
+expect-screen "Grid: ON"
+expect-video-bit 15 1
+expect-video-config 0x1a000
+# The setting is saved, but a game without the grid (back to the .sms game)
+# never gets bit 15: it would switch the core to its integer-scale geometry.
+press down
+press down
+press down
+press a
+expect-screen "--- Video ---"
+press down
+press down
+press down
+press down
+press a
+expect-screen "Resume"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-video-bit 15 0

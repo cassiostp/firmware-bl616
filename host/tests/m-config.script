@@ -1,6 +1,6 @@
-# core_config bits reach the real core: the game menu's Scanlines screen
-# drives bits 16/19:18/20/21 of the actual iosys core_config register, the
-# Preview screen sets bit 22 (the MegaDrive's pad mute) while it runs the
+# core_config and video_config reach the real core: the game menu's Video > Scanlines
+# screen drives bits 16/19:18/20/21 of the actual iosys core_config register,
+# the Preview screen sets bit 22 (the MegaDrive's pad mute) while it runs the
 # game with the menu hidden -- the pads the bridge drives must still reach
 # the FIRMWARE (the option changes prove that) while cosim_top asserts they
 # never reach the game vector -- Pause sets bit 17 while the menu is up, and
@@ -20,6 +20,8 @@ hold select+start+l 400ms
 expect-screen "Resume"
 press down
 press down
+press a
+expect-screen "--- Video ---"
 press a
 expect-screen "--- Scanlines ---"
 press a
@@ -54,8 +56,28 @@ expect-overlay on
 expect-config-bit 22 0
 press down
 press a
+expect-screen "--- Video ---"
+press down
+press down
+press down
+press a
 expect-screen "Resume"
 press a
 expect-overlay off
 expect-config-bit 17 0
 expect-config-bit 16 1
+# video_config (frame 0x13) reaches the real core: the idle word, then
+# Video > Color > Brightness +1.
+expect-video-config 0x12000
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+press down
+press a
+expect-screen "--- Color ---"
+press a
+expect-screen "Brightness: 1"
+expect-video-config 0x12001

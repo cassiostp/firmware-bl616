@@ -75,6 +75,9 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   gbatang mdtang smstang pctang`).
 - `expect-config-bit 17 1` — a bit of the last `core_config` word (on the
   RTL backend this reads the core's real register).
+- `expect-video-bit 15 1` — a bit of the last `video_config` word (frame
+  `0x13`; on RTL sniffed from the MCU stream, as the models predate it).
+- `expect-video-config 0x1a000` — the whole last `video_config` word.
 - `expect-overlay on|off`.
 - `expect-file saves/sms/game.sav size 32768` / `expect-no-file <rel>`.
 - `poke-save 0x10 0x42` — write one save-RAM byte and raise the dirty notice
@@ -129,8 +132,15 @@ bitstreams), and runs `host/tests/*.script`:
 - `f-md-save` — MegaDrive battery round trip (16384 bytes from an `RA` header).
 - `g-mode-early` — MODE pressed right after a game loads, before the
   firmware has polled the new core, still restarts.
-- `h-scanlines` — game menu scanlines screen drives `core_config` bits
-  16/19:18/20/21 live, with preview; choice survives a power cycle.
+- `h-scanlines` — game menu Video > Scanlines screen drives `core_config`
+  bits 16/19:18/20/21 live, with preview; choice survives a power cycle.
+- `i-video-color` — Video > Color drives the `video_config` word
+  (brightness, gamma, reset), with a Preview round-trip.
+- `j-video-persist` — brightness and CRT mask choices saved to
+  `tangcore.cfg`, same `video_config` word after a power cycle.
+- `k-video-grid` — no LCD grid row for `.sms`, one for `.gg` (Game Gear
+  mode); Grid ON sets `video_config` bit 15.
+- `l-video-grid-gba` — LCD grid row for GBA; Grid ON sets bit 15.
 
 ## RTL backend (core co-simulation)
 
@@ -161,14 +171,14 @@ linked model's `name()`. Adding a core means a `model_<core>.cpp`, one
 - `r-combo-save` — menu combo while a dump is in progress with the game
   writing WRAM continuously (pause bit set, Resume clears it).
 - `r-reset-save` — reset combo likewise (back to the running game).
-- `r-config` — Scanlines screen drives the real `core_config` register;
+- `r-config` — Video > Scanlines screen drives the real `core_config` register;
   Resume clears the pause bit.
 - `r-mode` — MODE reloads the FPGA from flash, firmware reboots to the menu.
 - `m-save-roundtrip` — MegaDrive battery round trip (cart-SRAM burst →
   16384-byte `.sav` from the header's `RA` range → power cycle → restore).
 - `m-combo-save` / `m-reset-save` — the same combos racing a dump with the
   game writing cart SRAM (MD does not pause for dumps: real arbitration).
-- `m-config` — the Scanlines screen and its Preview drive the real register,
+- `m-config` — the Video > Scanlines screen and its Preview drive the real register,
   including bit 22 (the MegaDrive's pad mute; cosim_top checks the game
   never sees the pads while it is set).
 - `m-mode` — MODE on the MegaDrive core.

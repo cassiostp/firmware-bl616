@@ -216,6 +216,9 @@ class RtlBackend : public FpgaBackend {
     uint32_t last_config() override {
         return last_config_cached.load(std::memory_order_relaxed);
     }
+    uint32_t last_video_config() override {
+        return last_video_cached.load(std::memory_order_relaxed);
+    }
     BackendOsd osd_snapshot() override {
         BackendOsd s;
         for (int r = 0; r < BackendOsd::ROWS; r++)
@@ -346,6 +349,7 @@ class RtlBackend : public FpgaBackend {
     std::atomic<bool> churn{false};
     std::atomic<uint16_t> core_id{1};
     std::atomic<uint32_t> last_config_cached{0};
+    std::atomic<uint32_t> last_video_cached{0};
     std::atomic<bool> overlay_cached{true};
     std::atomic<uint32_t> rom_bytes_cached{0};
 
@@ -452,6 +456,7 @@ class RtlBackend : public FpgaBackend {
                 sample_tx(txbuf[i], p);
             // Refresh slow outputs per piece (ack latency ~ one piece).
             last_config_cached.store(pins.core_config, std::memory_order_relaxed);
+            last_video_cached.store(pins.video_config, std::memory_order_relaxed);
             overlay_cached.store(pins.overlay, std::memory_order_relaxed);
             rom_bytes_cached.store(pins.rom_bytes, std::memory_order_relaxed);
         }

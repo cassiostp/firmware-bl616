@@ -75,6 +75,11 @@ class FakeBackend : public FpgaBackend {
         return config_;
     }
 
+    uint32_t last_video_config() override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        return video_config_;
+    }
+
     BackendOsd osd_snapshot() override {
         std::lock_guard<std::recursive_mutex> lk(m_);
         BackendOsd s;
@@ -227,6 +232,7 @@ class FakeBackend : public FpgaBackend {
     uint64_t program_tick_ = 0;
     uint64_t silence_until_ = 0;
     uint32_t config_ = 0;
+    uint32_t video_config_ = 0;
     bool overlay_visible_ = true;
     uint64_t rom_bytes_ = 0;
     uint16_t pad1_ = 0, pad2_ = 0;
@@ -302,6 +308,11 @@ class FakeBackend : public FpgaBackend {
             if (p.size() >= 4)
                 config_ = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
                           ((uint32_t)p[2] << 8) | p[3];
+            break;
+        case 0x13: // video_config
+            if (p.size() >= 4)
+                video_config_ = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+                                ((uint32_t)p[2] << 8) | p[3];
             break;
         case 0x04: // overlay cursor
             if (p.size() >= 2) {
@@ -481,6 +492,9 @@ uint64_t ms_since_program() {
 }
 uint32_t last_config() {
     return g_active->last_config();
+}
+uint32_t last_video_config() {
+    return g_active->last_video_config();
 }
 OsdSnapshot osd_snapshot() {
     BackendOsd s = g_active->osd_snapshot();

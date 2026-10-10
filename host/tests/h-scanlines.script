@@ -1,4 +1,4 @@
-# Game menu > Scanlines: each change reaches the core at once (bit 16 on,
+# Game menu > Video > Scanlines: each change reaches the core at once (bit 16 on,
 # bits 19:18 darkness, bit 20 thick, bit 21 full size); Preview hides the menu with the game
 # paused (SMS) and steps darkness with LEFT/RIGHT; the choice survives a power cycle.
 expect-screen "TangCore"
@@ -16,6 +16,8 @@ hold select+start+l 400ms
 expect-screen "Resume"
 press down
 press down
+press a
+expect-screen "--- Video ---"
 press a
 expect-screen "--- Scanlines ---"
 press a
@@ -49,6 +51,11 @@ expect-config-bit 19 1
 press b
 expect-screen "Darkness: 75%"
 expect-config-bit 17 1
+press down
+press a
+expect-screen "--- Video ---"
+press down
+press down
 press down
 press a
 expect-screen "Resume"

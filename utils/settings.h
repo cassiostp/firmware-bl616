@@ -31,6 +31,14 @@ struct Settings {
     uint8_t scanline_dark;      // 0..3: 25, 50, 75, 100 % darker (core_config bits 19:18)
     bool scanline_thick;        // thick lines instead of thin ones (core_config bit 20)
     bool scanline_full;         // full-size picture, lines at a fixed pitch (core_config bit 21)
+    int8_t video_brightness;    // -4..+3: add 16*n to every channel (video_config bits 2:0)
+    int8_t video_contrast;      // -4..+3: scale around 128 (video_config bits 5:3)
+    int8_t video_saturation;    // -4..+3: blend towards luma, -4 is grey (video_config bits 8:6)
+    uint8_t video_gamma;        // 0..3: off, darker, brighter, CRT (video_config bits 10:9)
+    uint8_t crt_mask;           // 0..3: off, grille, slot, dot (video_config bits 12:11)
+    uint8_t crt_mask_strength;  // 0..3: the mask dims 1/4, 3/8, 1/2, 5/8 (video_config bits 14:13)
+    bool lcd_grid;              // handheld pixel grid (video_config bit 15)
+    uint8_t lcd_grid_strength;  // 0..3: the grid dims 1/8, 1/4, 3/8, 1/2 (video_config bits 17:16)
     bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
 };
 
@@ -44,6 +52,12 @@ bool settings_save();
 // shown over a running game (if pause_in_menu). Keeps the low 16 bits.
 // overlay() calls it on every change.
 void apply_core_config();
+
+// Build the video_config word (frame 0x13) from the filter settings.
+uint32_t build_video_config();
+
+// True if the running core offers the LCD grid (GBA, Game Gear).
+bool lcd_grid_offered();
 
 // The scanline preview shows the running game with the menu hidden: paused,
 // or running with the pads muted (cores that can't show a paused frame

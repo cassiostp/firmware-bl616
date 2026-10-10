@@ -47,6 +47,14 @@ void settings_defaults(Settings &s) {
     s.scanline_dark = 2;            // 75 %
     s.scanline_thick = false;
     s.scanline_full = false;
+    s.video_brightness = 0;
+    s.video_contrast = 0;
+    s.video_saturation = 0;
+    s.video_gamma = 0;
+    s.crt_mask = 0;
+    s.crt_mask_strength = 1;
+    s.lcd_grid = false;
+    s.lcd_grid_strength = 1;
     s.pause_in_menu = true;
 }
 
@@ -139,6 +147,29 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         s.scanline_thick = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "scanline_full") == 0) {
         s.scanline_full = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "video_brightness") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= -4 && v <= 3) s.video_brightness = (int8_t)v;
+    } else if (strcasecmp(key, "video_contrast") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= -4 && v <= 3) s.video_contrast = (int8_t)v;
+    } else if (strcasecmp(key, "video_saturation") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= -4 && v <= 3) s.video_saturation = (int8_t)v;
+    } else if (strcasecmp(key, "video_gamma") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 0 && v <= 3) s.video_gamma = (uint8_t)v;
+    } else if (strcasecmp(key, "crt_mask") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 0 && v <= 3) s.crt_mask = (uint8_t)v;
+    } else if (strcasecmp(key, "crt_mask_strength") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 0 && v <= 3) s.crt_mask_strength = (uint8_t)v;
+    } else if (strcasecmp(key, "lcd_grid") == 0) {
+        s.lcd_grid = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "lcd_grid_strength") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 0 && v <= 3) s.lcd_grid_strength = (uint8_t)v;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
         s.pause_in_menu = strtol(val, NULL, 10) != 0;
     }
@@ -205,12 +236,26 @@ bool settings_save() {
         "scanline_darkness=%d\n"
         "scanline_thick=%d\n"
         "scanline_full=%d\n"
+        "# Video filters: brightness/contrast/saturation -4..3, gamma 0..3\n"
+        "# (off, darker, brighter, CRT), mask 0..3 (off, grille, slot, dot),\n"
+        "# strengths 0..3, grid 1 = on.\n"
+        "video_brightness=%d\n"
+        "video_contrast=%d\n"
+        "video_saturation=%d\n"
+        "video_gamma=%d\n"
+        "crt_mask=%d\n"
+        "crt_mask_strength=%d\n"
+        "lcd_grid=%d\n"
+        "lcd_grid_strength=%d\n"
         "# 0 keeps the game running while a menu is shown over it.\n"
         "pause_in_menu=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
         settings.scanlines ? 1 : 0, scanline_dark_percent(settings.scanline_dark),
         settings.scanline_thick ? 1 : 0, settings.scanline_full ? 1 : 0,
+        settings.video_brightness, settings.video_contrast, settings.video_saturation,
+        settings.video_gamma, settings.crt_mask, settings.crt_mask_strength,
+        settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength,
         settings.pause_in_menu ? 1 : 0);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
@@ -239,6 +284,33 @@ void apply_core_config() {
                     (settings.scanline_full ? CORE_CFG_SCANLINE_FULL : 0) |
                     (pause ? CORE_CFG_MENU_PAUSE : 0) |
                     (mute ? CORE_CFG_MUTE_PADS : 0));
+    // The filters go out with every core_config: same value semantics (they
+    // may change at any time), so every apply path covers both frames.
+    set_video_config(build_video_config());
+}
+
+extern int16_t active_core;
+
+// The LCD grid needs an integer scale in both directions: only the handheld
+// cores offer it (GBA, and SMS in Game Gear mode: core_config bit 0, set by
+// the .gg loader).
+bool lcd_grid_offered() {
+    return active_core == 3 || (active_core == 5 && (get_core_config() & 1u));
+}
+
+// Pack the filter settings into the video_config word (frame 0x13). The
+// signed -4..+3 fields go out as 3-bit two's complement. The grid bit only
+// goes to cores that offer the grid, since it switches the core to its
+// integer-scale geometry.
+uint32_t build_video_config() {
+    return ((uint32_t)(settings.video_brightness & 7) << VIDEO_CFG_BRIGHT_SHIFT) |
+           ((uint32_t)(settings.video_contrast & 7) << VIDEO_CFG_CONTRAST_SHIFT) |
+           ((uint32_t)(settings.video_saturation & 7) << VIDEO_CFG_SATUR_SHIFT) |
+           ((uint32_t)(settings.video_gamma & 3) << VIDEO_CFG_GAMMA_SHIFT) |
+           ((uint32_t)(settings.crt_mask & 3) << VIDEO_CFG_MASK_SHIFT) |
+           ((uint32_t)(settings.crt_mask_strength & 3) << VIDEO_CFG_MASK_STRENGTH_SHIFT) |
+           (settings.lcd_grid && lcd_grid_offered() ? VIDEO_CFG_LCD_GRID : 0) |
+           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT);
 }
 
 void core_config_preview(Preview p) {

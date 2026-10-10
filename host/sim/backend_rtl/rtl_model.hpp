@@ -31,6 +31,7 @@ struct RtlPins {
     bool uart_tx = true;
     bool tx_pending = true; // a reply is owed or a frame is on the wire
     uint32_t core_config = 0;
+    uint32_t video_config = 0;
     bool overlay = true;
     bool busy = true; // SDRAM controller still initializing
     uint32_t rom_bytes = 0;

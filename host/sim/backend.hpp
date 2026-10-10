@@ -35,6 +35,7 @@ class FpgaBackend : public sim::Backend {
     virtual uint64_t ms_since_program() = 0; // sim ms, huge if never
 
     virtual uint32_t last_config() = 0; // last core_config word (MCU -> core)
+    virtual uint32_t last_video_config() = 0; // last video_config word (0x13)
 
     virtual BackendOsd osd_snapshot() = 0;
     virtual uint64_t osd_hash() = 0;

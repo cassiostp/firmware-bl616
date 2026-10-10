@@ -1,0 +1,27 @@
+# The LCD grid row also appears for the Game Boy Advance: turning it on
+# sets video_config bit 15, keeping the default strength (bits 17:16 = 1).
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-screen "LCD grid..."
+press down
+press down
+press down
+press a
+expect-screen "--- LCD grid ---"
+press a
+expect-screen "Grid: ON"
+expect-video-bit 15 1
+expect-video-config 0x1a000
