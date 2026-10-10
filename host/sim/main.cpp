@@ -28,6 +28,8 @@
 
 #include "fpga.hpp"
 #include "host.h"
+#include "backend.hpp"
+#include "sim_time.hpp"
 
 namespace sim_rtos {
 void init_timebase();
@@ -49,21 +51,25 @@ namespace {
 std::string g_argv0;
 std::string g_sdroot;
 std::string g_script;
+std::string g_core = "fake";
 long g_script_pos = 0;
 bool g_verbose = false;
 
 std::atomic<int> g_current_line{0};
 
+// Sim time (see sim_time.hpp): everything the firmware and the script do is
+// measured in it. Advancing yields wall-clock time between 5 ms chunks so the
+// firmware threads keep running while the script waits.
 uint64_t now_ms() {
-    using namespace std::chrono;
-    return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    return sim::now_ms();
 }
 
 void msleep(uint64_t ms) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    sim::advance_by(ms * sim::TICKS_PER_MS);
 }
 
-// ---- pad injection: bits are ORed into the FPGA pad 1 state ----
+// ---- pad injection: bits are the FPGA's own pad inputs; the core reports
+// them back to the firmware in change-detect 0x03 frames, like hardware ----
 std::mutex g_pad_m;
 uint16_t g_pad_bits = 0; // currently driven bits
 
@@ -73,10 +79,7 @@ void drive_pads() {
         std::lock_guard<std::mutex> lk(g_pad_m);
         bits = g_pad_bits;
     }
-    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-        joy1_state = bits;
-        xSemaphoreGive(state_mutex);
-    }
+    fpga::set_pads(bits, 0);
 }
 
 void pads_add(uint16_t bits) {
@@ -93,6 +96,14 @@ void pads_remove(uint16_t bits) {
         g_pad_bits &= (uint16_t)~bits;
     }
     drive_pads();
+    // Drop the level from the firmware's view at once (the pad frame queued
+    // above still carries the edge for fidelity). Otherwise a menu pass
+    // sampling between our observation and the frame's delivery would act on
+    // the stale held level a second time.
+    if (state_mutex && xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        joy1_state &= (uint16_t)~bits;
+        xSemaphoreGive(state_mutex);
+    }
 }
 
 // ---- OSD dump for failure reports ----
@@ -253,7 +264,9 @@ bool poll_until(uint64_t timeout_ms, bool (*cond)(void *), void *arg) {
             return true;
         if (now_ms() - t0 >= timeout_ms)
             return false;
-        msleep(10);
+        // Small chunks: time flows (firmware delays expire, the RTL model
+        // steps) while the condition is rechecked promptly.
+        msleep(5);
     }
 }
 
@@ -262,18 +275,33 @@ bool poll_until(uint64_t timeout_ms, bool (*cond)(void *), void *arg) {
 // content changes), then release. The firmware steps once per input-loop
 // pass and then debounces ~100 ms, so releasing promptly after the first
 // visible reaction gives exactly one step.
+//
+// Two things make this deterministic (independent of host scheduling):
+//  - While waiting, the script never advances the clock itself: it only
+//    yields, so its observe-release window stays microseconds of wall time.
+//    The rate cap (yield_wall) stretches the firmware's 100 ms debounce to
+//    ~10 ms of wall time, which cannot elapse unseen in that window. A
+//    periodic tiny advance is only a backstop in case time ever stops
+//    flowing.
+//  - On release the pressed bits are cleared straight in the firmware's pad
+//    state (under state_mutex), as well as through the normal pad frame, so
+//    a menu pass sampling after the release can never see the level held.
 void cmd_press(uint16_t bits) {
     msleep(100); // let the previous screen settle
     auto rows0 = fpga::cursor_rows();
     uint64_t h0 = fpga::osd_hash();
     pads_add(bits);
     uint64_t t0 = now_ms();
+    int spin = 0;
     for (;;) {
         if (fpga::cursor_rows() != rows0 || fpga::osd_hash() != h0)
             break;
         if (now_ms() - t0 > 2000)
             break; // no reaction (e.g. at list end): release anyway
-        msleep(2);
+        if (++spin % 20000 == 0)
+            msleep(5); // backstop: keep time flowing no matter what
+        else
+            std::this_thread::yield();
     }
     pads_remove(bits);
     msleep(300);
@@ -301,11 +329,12 @@ void cmd_hold(uint16_t bits, uint64_t ms) {
     fflush(stdout);
     fflush(stderr);
     if (g_script.empty()) {
-        execl(self.c_str(), self.c_str(), "--sd", g_sdroot.c_str(),
-              (char *)nullptr);
+        execl(self.c_str(), self.c_str(), "--sd", g_sdroot.c_str(), "--core",
+              g_core.c_str(), (char *)nullptr);
     } else {
-        execl(self.c_str(), self.c_str(), "--sd", g_sdroot.c_str(), "--script",
-              g_script.c_str(), "--script-pos", pos, (char *)nullptr);
+        execl(self.c_str(), self.c_str(), "--sd", g_sdroot.c_str(), "--core",
+              g_core.c_str(), "--script", g_script.c_str(), "--script-pos", pos,
+              (char *)nullptr);
     }
     perror("execl");
     exit(1);
@@ -551,6 +580,19 @@ int run_script() {
                 script_fail(lineno, "usage: poke-save <off> <byte>");
             printf("[%d] poke-save 0x%lx 0x%lx\n", lineno, off, val);
             fpga::poke_save((uint16_t)off, (uint8_t)val);
+        } else if (cmd == "wram-write") {
+            long off, val;
+            if (t.size() != 3 || !parse_num(t[1], off) || !parse_num(t[2], val))
+                script_fail(lineno, "usage: wram-write <off> <byte>");
+            printf("[%d] wram-write 0x%lx 0x%lx\n", lineno, off, val);
+            fpga::wram_write((uint16_t)off, (uint8_t)val);
+        } else if (cmd == "wram-burst") {
+            long off, len, seed;
+            if (t.size() != 4 || !parse_num(t[1], off) || !parse_num(t[2], len) ||
+                !parse_num(t[3], seed))
+                script_fail(lineno, "usage: wram-burst <off> <len> <seed>");
+            printf("[%d] wram-burst 0x%lx len %ld seed 0x%lx\n", lineno, off, len, seed);
+            fpga::wram_burst((uint16_t)off, (uint16_t)len, (uint8_t)seed);
         } else if (cmd == "mode" || cmd == "mode-now") {
             long ms = 4000;
             if (t.size() > 2 || (t.size() == 2 && !parse_num(t[1], ms)))
@@ -717,10 +759,13 @@ int run_interactive() {
 
 void supervisor() {
     // Re-exec on firmware-requested reset (MODE button, flash mode path).
+    // Time keeps flowing while watching: the rebooting firmware may still
+    // need its delays to expire (e.g. MODE detection after the silence).
     for (;;) {
-        msleep(50);
-        if (!g_reset_requested.load())
+        if (!g_reset_requested.load()) {
+            msleep(50);
             continue;
+        }
         if (g_script.empty()) {
             printf("firmware reset: rebooting\n");
             fflush(stdout);
@@ -743,6 +788,8 @@ int main(int argc, char **argv) {
         std::string a = argv[i];
         if (a == "--sd" && i + 1 < argc)
             g_sdroot = argv[++i];
+        else if (a == "--core" && i + 1 < argc)
+            g_core = argv[++i];
         else if (a == "--script" && i + 1 < argc)
             g_script = argv[++i];
         else if (a == "--script-pos" && i + 1 < argc)
@@ -750,12 +797,14 @@ int main(int argc, char **argv) {
         else if (a == "--verbose")
             g_verbose = true;
         else {
-            fprintf(stderr, "usage: %s --sd <dir> [--script <file>] [--verbose]\n", argv[0]);
+            fprintf(stderr, "usage: %s --sd <dir> [--core fake|nestang-rtl] [--script <file>] [--verbose]\n",
+                    argv[0]);
             return 2;
         }
     }
     if (g_sdroot.empty()) {
-        fprintf(stderr, "usage: %s --sd <dir> [--script <file>] [--verbose]\n", argv[0]);
+        fprintf(stderr, "usage: %s --sd <dir> [--core fake|nestang-rtl] [--script <file>] [--verbose]\n",
+                argv[0]);
         return 2;
     }
     struct stat st;
@@ -764,6 +813,21 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (g_core == "fake") {
+        fpga_use_fake();
+    } else if (g_core == "nestang-rtl") {
+        FpgaBackend *rtl = fpga_rtl_backend();
+        if (!rtl) {
+            fprintf(stderr, "RTL backend not built in (needs docker + NESTANG_DIR at build time)\n");
+            return 2;
+        }
+        fpga_select(rtl);
+    } else {
+        fprintf(stderr, "unknown core backend: %s\n", g_core.c_str());
+        return 2;
+    }
+    printf("backend: %s\n", fpga::backend_name());
+
     sim_rtos::init_timebase();
     fpga::set_verbose(g_verbose);
     ffsim_set_root(g_sdroot.c_str());
@@ -771,7 +835,9 @@ int main(int argc, char **argv) {
 
     std::thread(firmware_main).detach();
 
-    // Wait for the firmware to create its shared-state mutex.
+    // Wait for the firmware to create its shared-state mutex. The firmware
+    // drives sim time with its own delays, so this wait terminates even if
+    // the script never advances the clock.
     uint64_t t0 = now_ms();
     while (state_mutex == nullptr && now_ms() - t0 < 10000)
         msleep(5);

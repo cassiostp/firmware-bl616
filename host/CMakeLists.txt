@@ -34,9 +34,10 @@ set(FW_SOURCES
 
 set(SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sim/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sim/sim_time.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sim/rtos.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sim/ffsim.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/sim/fpga.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_fake.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sim/stubs.cpp
 )
 
