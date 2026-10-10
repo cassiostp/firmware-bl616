@@ -7,19 +7,23 @@
 #   bash host/run-tests.sh --rtl [COSIM]   NES RTL suite (needs docker once
 #                                          to build the model, then runs
 #                                          against the Verilated core).
-# COSIM defaults to ../../nestang/sim/cosim relative to host/ (the
+#   bash host/run-tests.sh --sms [COSIM]   SMS RTL suite (same, smstang).
+# COSIM defaults to ../../<core>/sim/cosim relative to host/ (the
 # sibling-worktree layout); pass another core's sim/cosim to run its suite.
 set -u
 
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 RTL=0
 NESTANG_COSIM=""
+SMSTANG_COSIM=""
 
 for arg in "$@"; do
     case "$arg" in
         --rtl) RTL=1 ;;
         --rtl=*) RTL=1; NESTANG_COSIM="${arg#--rtl=}" ;;
-        *) echo "usage: $0 [--rtl[=<nestang>/sim/cosim]]"; exit 2 ;;
+        --sms) RTL=1; SMS=1 ;;
+        --sms=*) RTL=1; SMS=1; SMSTANG_COSIM="${arg#--sms=}" ;;
+        *) echo "usage: $0 [--rtl[=<nestang>/sim/cosim]] [--sms[=<smstang>/sim/cosim]]"; exit 2 ;;
     esac
 done
 
@@ -39,24 +43,37 @@ EOF
 }
 
 if [ "$RTL" -eq 1 ]; then
-    if [ -z "$NESTANG_COSIM" ]; then
-        NESTANG_COSIM="$HOST_DIR/../../nestang/sim/cosim"
+    if [ -n "${SMS:-}" ]; then
+        CORE=smstang
+        COSIM_DIR_VAR=SMSTANG_COSIM_DIR
+        COSIM="$SMSTANG_COSIM"
+        [ -z "$COSIM" ] && COSIM="$HOST_DIR/../../smstang/sim/cosim"
+        TESTS="s-save-roundtrip s-combo-save s-reset-save s-config s-mode s-gg-config"
+        ROMFIX=game.sms
+    else
+        CORE=nestang
+        COSIM_DIR_VAR=NESTANG_COSIM_DIR
+        COSIM="$NESTANG_COSIM"
+        [ -z "$COSIM" ] && COSIM="$HOST_DIR/../../nestang/sim/cosim"
+        TESTS="r-save-roundtrip r-combo-save r-reset-save r-config r-mode"
     fi
-    echo "=== building NES RTL model ($NESTANG_COSIM) ==="
-    make -C "$NESTANG_COSIM" model || exit 1
-    BUILD_DIR="$HOST_DIR/build-rtl"
+    echo "=== building $CORE RTL model ($COSIM) ==="
+    make -C "$COSIM" model || exit 1
+    BUILD_DIR="$HOST_DIR/build-rtl-$CORE"
     SIM="$BUILD_DIR/tangcore-sim"
-    echo "=== building tangcore-sim (RTL) ==="
+    echo "=== building tangcore-sim (RTL: $CORE) ==="
     cmake -S "$HOST_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
-        -DNESTANG_COSIM_DIR="$NESTANG_COSIM" || exit 1
+        -D"$COSIM_DIR_VAR=$COSIM" || exit 1
     cmake --build "$BUILD_DIR" -j"$(nproc)" || exit 1
 
     PASS=0
     FAIL=0
     FAILED_NAMES=()
     run_rtl_test() {
-        # $1 = script base name (r-*.script, runs with --core nestang-rtl).
+        # $1 = script base name, $2.. = ROM fixtures ("sms:game.sms" etc.);
+        # runs with --core <core>-rtl.
         local name="$1"
+        shift
         local sd
         sd="$(mktemp -d)"
         rm -rf "$sd"
@@ -65,9 +82,16 @@ if [ "$RTL" -eq 1 ]; then
         for c in monitor nestang snestang gbatang mdtang smstang pctang; do
             head -c 4096 /dev/urandom > "$sd/cores/console138k/$c.bin"
         done
-        add_nes_battery "$sd" game.nes
+        local spec
+        for spec in "$@"; do
+            case "$spec" in
+                nes:*) add_nes_battery "$sd" "${spec#nes:}" ;;
+                sms:*) mkdir -p "$sd/sms"; head -c 8192 /dev/zero > "$sd/sms/${spec#sms:}" ;;
+                *) echo "bad fixture: $spec"; exit 2 ;;
+            esac
+        done
         echo "=== test $name (sd: $sd) ==="
-        if timeout 400 "$SIM" --sd "$sd" --core nestang-rtl \
+        if timeout 400 "$SIM" --sd "$sd" --core "$CORE-rtl" \
                 --script "$HOST_DIR/tests/$name.script"; then
             echo "--- PASS $name"
             PASS=$((PASS + 1))
@@ -79,11 +103,20 @@ if [ "$RTL" -eq 1 ]; then
         fi
     }
 
-    run_rtl_test r-save-roundtrip
-    run_rtl_test r-combo-save
-    run_rtl_test r-reset-save
-    run_rtl_test r-config
-    run_rtl_test r-mode
+    if [ -n "${SMS:-}" ]; then
+        run_rtl_test s-save-roundtrip sms:game.sms
+        run_rtl_test s-combo-save sms:game.sms
+        run_rtl_test s-reset-save sms:game.sms
+        run_rtl_test s-config sms:game.sms
+        run_rtl_test s-mode sms:game.sms
+        run_rtl_test s-gg-config sms:game.gg
+    else
+        run_rtl_test r-save-roundtrip nes:game.nes
+        run_rtl_test r-combo-save nes:game.nes
+        run_rtl_test r-reset-save nes:game.nes
+        run_rtl_test r-config nes:game.nes
+        run_rtl_test r-mode nes:game.nes
+    fi
 
     echo "=== $PASS passed, $FAIL failed ==="
     if [ "$FAIL" -ne 0 ]; then

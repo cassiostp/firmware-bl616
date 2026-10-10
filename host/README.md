@@ -142,8 +142,8 @@ bash host/run-tests.sh --rtl[=/path/to/nestang/sim/cosim]
 ```
 
 This builds the model once (`make model` in the core's `sim/cosim`, needs
-docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
-`r-*.script` suite with `--core nestang-rtl`:
+docker), builds `host/build-rtl-nestang/tangcore-sim` against it, and runs
+the `r-*.script` suite with `--core nestang-rtl`:
 
 - `r-save-roundtrip` — battery round trip through the real save engine and
   SDRAM (burst → `.sav` → power cycle → restore → same bytes in SDRAM).
@@ -154,11 +154,32 @@ docker), builds `host/build-rtl/tangcore-sim` against it, and runs the
   Resume clears the pause bit.
 - `r-mode` — MODE reloads the FPGA from flash, firmware reboots to the menu.
 
-`--core nestang-rtl` also works for manual `--script` and interactive runs.
+### Master System (`--sms`, smstang model)
+
+```bash
+bash host/run-tests.sh --sms[=/path/to/smstang/sim/cosim]
+```
+
+Same machinery against the smstang model (`SMSTANG_COSIM_DIR`, one RTL
+model per binary — the CMake blocks are mutually exclusive), running
+`s-*.script` with `--core smstang-rtl`: `s-save-roundtrip` (32768-byte
+`saves/sms/<rom>.sav`, dump/restore through the on-chip dual-port nvram —
+no SDRAM in this save path, nothing pauses the dump), `s-combo-save` and
+`s-reset-save` (combos racing a dump while the game writes nvram
+continuously), `s-config` (scanlines/pause bits on the real register),
+`s-gg-config` (Game Gear `core_config` bit 0 from a `.gg` load), `s-mode`.
+`expect-save-ram` here reads the dpram array; the model runs at 21.492 MHz
+so the UART stays exactly 2 Mbaud in sim time (see the core's
+`sim/cosim/README.md` for the port deviations).
+
+`--core nestang-rtl` (or `smstang-rtl`) also works for manual `--script`
+and interactive runs — whichever model was linked answers, and the banner
+prints its real name.
 On RTL, `press`/`hold` drive the FPGA's pad inputs (change-detect `0x03`
-frames reach the firmware like hardware, 20 ms throttle included),
-`poke-save`/`wram-*` go through the game WRAM path, `expect-config-bit`
-reads the real register, and `expect-save-ram` reads the SDRAM model.
+frames reach the firmware like hardware, throttle included),
+`poke-save`/`wram-*` go through the game save-RAM path,
+`expect-config-bit` reads the real register, and `expect-save-ram` reads
+the core's save array.
 `SCRIPT PASS` prints sim and wall seconds (rate ≈ 0.2–1 sim-s per wall-s
 on RTL; the suite takes ~2 min, model build once ~2 min).
 

@@ -828,13 +828,13 @@ int main(int argc, char **argv) {
         else if (a == "--verbose")
             g_verbose = true;
         else {
-            fprintf(stderr, "usage: %s --sd <dir> [--core fake|nestang-rtl] [--script <file>] [--verbose]\n",
+            fprintf(stderr, "usage: %s --sd <dir> [--core fake|nestang-rtl|smstang-rtl] [--script <file>] [--verbose]\n",
                     argv[0]);
             return 2;
         }
     }
     if (g_sdroot.empty()) {
-        fprintf(stderr, "usage: %s --sd <dir> [--core fake|nestang-rtl] [--script <file>] [--verbose]\n",
+        fprintf(stderr, "usage: %s --sd <dir> [--core fake|nestang-rtl|smstang-rtl] [--script <file>] [--verbose]\n",
                 argv[0]);
         return 2;
     }
@@ -846,10 +846,13 @@ int main(int argc, char **argv) {
 
     if (g_core == "fake") {
         fpga_use_fake();
-    } else if (g_core == "nestang-rtl") {
+    } else if (g_core == "nestang-rtl" || g_core == "smstang-rtl") {
+        // One RTL model per sim binary (see host/CMakeLists.txt): whichever
+        // core's cosim_top was linked answers under either name; the backend
+        // banner prints its real name.
         FpgaBackend *rtl = fpga_rtl_backend();
         if (!rtl) {
-            fprintf(stderr, "RTL backend not built: cmake -DNESTANG_COSIM_DIR=<nestang>/sim/cosim after make model there\n");
+            fprintf(stderr, "RTL backend not built: cmake -D{NESTANG,SMSTANG}_COSIM_DIR=<core>/sim/cosim after make model there\n");
             return 2;
         }
         fpga_select(rtl);

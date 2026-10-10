@@ -73,6 +73,38 @@ if (NESTANG_COSIM_DIR)
     endif ()
 endif ()
 
+# SMSTANG_COSIM_DIR: same, for the Master System model (smstang sim/cosim).
+# One RTL model per sim binary: model_<core>.cpp provides the factory under
+# the name backend_rtl.cpp calls, so the two model files must not be linked
+# together (and a Verilated cosim_top's headers are per-core anyway).
+set(SMSTANG_COSIM_DIR "" CACHE PATH "Smstang sim/cosim dir with a built model")
+if (SMSTANG_COSIM_DIR)
+    if (NESTANG_COSIM_DIR)
+        message(FATAL_ERROR "pick one RTL model: NESTANG_COSIM_DIR and "
+            "SMSTANG_COSIM_DIR are both set")
+    endif ()
+    set(SMS_MODEL_LIB "${SMSTANG_COSIM_DIR}/build/obj/Vcosim_top__ALL.a")
+    set(SMS_RT_HDR "${SMSTANG_COSIM_DIR}/build/runtime/verilated.h")
+    if (EXISTS "${SMS_MODEL_LIB}" AND EXISTS "${SMS_RT_HDR}")
+        target_sources(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/backend_rtl.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl/model_sms.cpp)
+        target_include_directories(tangcore-sim PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/sim/backend_rtl
+            ${SMSTANG_COSIM_DIR}/build/obj
+            ${SMSTANG_COSIM_DIR}/build/runtime
+            ${SMSTANG_COSIM_DIR}/build/runtime/vltstd)
+        target_link_libraries(tangcore-sim PRIVATE
+            "${SMS_MODEL_LIB}"
+            "${SMSTANG_COSIM_DIR}/build/obj/libverilated.a")
+        target_compile_definitions(tangcore-sim PRIVATE TANGCORE_HAVE_RTL=1)
+        message(STATUS "RTL backend: smstang model from ${SMSTANG_COSIM_DIR}")
+    else ()
+        message(FATAL_ERROR "SMSTANG_COSIM_DIR lacks a built model "
+            "(missing ${SMS_MODEL_LIB}); run make model in <smstang>/sim/cosim first")
+    endif ()
+endif ()
+
 target_include_directories(tangcore-sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sim
     ${CMAKE_CURRENT_SOURCE_DIR}/shim

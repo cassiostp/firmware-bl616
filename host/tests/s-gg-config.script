@@ -1,0 +1,15 @@
+# Game Gear mode reaches the RTL core_config register: the .gg loader sets
+# core_config bit 0 (and keeps the other bits) BEFORE the ROM stream, so it
+# is in place when the load reset starts the system.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.gg"
+press down
+press a
+expect-overlay off
+expect-core smstang
+expect-config-bit 0 1
