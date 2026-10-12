@@ -98,6 +98,8 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   line in the fresh process.
 - `mode-now [silence-ms]` — the same, pressed at once instead of after the
   firmware's first poll of a freshly programmed core.
+- `drop-id <count>` — drop the next <count> core-ID replies (a colliding
+  joypad frame on hardware): one dropped reply must not restart.
 - `power-cycle` — reboot the sim with the same SD; the script resumes after
   this line.
 - `host-rm <relpath>` — delete a file from the virtual SD mid-run.
@@ -143,6 +145,14 @@ bitstreams), and runs `host/tests/*.script`:
 - `l-video-grid-gba` — LCD grid row for GBA; Grid ON sets bit 15.
 - `o-video-smoothing` — Video > Smoothing cycles Off, Sharp, Soft (bits
   19:18) and survives a power cycle.
+- `p-mode-game-short` — short reload in game (core 0 after the game core
+  with no silence) restarts.
+- `q-mode-menu-short` — short reload in the main menu (~300 ms silence)
+  restarts.
+- `u-mode-drop-once` — one dropped core-ID reply in the menu does not
+  restart.
+- `v-mode-fresh-silent` — a freshly programmed (still silent) core does not
+  restart.
 
 ## RTL backend (core co-simulation)
 

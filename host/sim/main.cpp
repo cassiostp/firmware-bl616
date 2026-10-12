@@ -670,6 +670,12 @@ int run_script() {
                 script_fail(lineno, "MODE did not restart the firmware");
             for (;;)
                 msleep(1000); // supervisor takes over (re-exec)
+        } else if (cmd == "drop-id") {
+            long n;
+            if (t.size() != 2 || !parse_num(t[1], n) || n <= 0)
+                script_fail(lineno, "usage: drop-id <count>");
+            printf("[%d] drop-id %ld (drop next core-ID replies)\n", lineno, n);
+            fpga::drop_ids((int)n);
         } else if (cmd == "power-cycle") {
             printf("[%d] power-cycle: rebooting\n", lineno);
             fflush(stdout);

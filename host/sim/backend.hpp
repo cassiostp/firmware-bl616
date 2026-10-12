@@ -59,6 +59,9 @@ class FpgaBackend : public sim::Backend {
     // MODE button: silent for silence_ms sim ms, then answer as core 0.
     virtual void trigger_mode(int silence_ms) = 0;
 
+    // Drop the next n core-ID replies (a colliding joypad frame on hardware).
+    virtual void drop_ids(int n) = 0;
+
     // Continuous game WRAM writes (combo-during-dump tests). The fake has no
     // game model and ignores it; the RTL traffic generator scribbles WRAM.
     virtual void set_churn(bool on) = 0;

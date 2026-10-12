@@ -324,8 +324,9 @@ static void send_hid_to_core(void) {
 
 // Diagnostic line on row 0 (row 26 sits under some cores' logos, hiding it).
 // Shows raw pad states (FPGA pads J, USB pads H), the pending action and
-// whether a combo is held (a), the core ID (c), and a counter that stops if
-// this loop stops running.
+// whether a combo is held (a), the core ID (c), the longest silent gap seen
+// (s, ms, capped at 999, for reporting reload times), and a counter that
+// stops if this loop stops running.
 static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
     static uint64_t last_draw;
     static uint32_t beat;
@@ -333,11 +334,15 @@ static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
     if (!settings.diag || now - last_draw < 250)
         return;
     last_draw = now;
+    uint16_t silent = mode_silence_ms();
+    if (silent > 999)
+        silent = 999;
     overlay_cursor(0, 0);
-    // fixed width, exactly 32 columns: J00000000 H00000000 a00 c0  #000
-    overlay_printf("J%04x%04x H%04x%04x a%d%d c%-2d #%03lu", joy1, joy2, hid1, hid2,
+    // fixed width, exactly 32 columns: J000000 H000000 a00 c0  s000 #00
+    overlay_printf("J%03x%03x H%03x%03x a%d%d c%-2d s%3d #%02lu", joy1 & 0xfff, joy2 & 0xfff,
+                   hid1 & 0xfff, hid2 & 0xfff,
                    (int)pending_action, combo_in_progress(joy1 | hid1, joy2 | hid2) ? 1 : 0,
-                   active_core, (unsigned long)(beat++ % 1000));
+                   active_core, silent, (unsigned long)(beat++ % 100));
 }
 
 // // (R L X A RT LT DN UP START SELECT Y B)

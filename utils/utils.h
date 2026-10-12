@@ -153,6 +153,9 @@ extern volatile uint8_t key_buf[4];     // ascii keys when overlay is on, non-ze
 
 extern void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2);
 extern int16_t get_core_id(void);
+// Same, but waits only timeout_ms for the reply (MODE polls use a short
+// timeout so a sub-second reload still shows several misses).
+extern int16_t get_core_id_timeout(uint32_t timeout_ms);
 extern uint32_t get_core_config(void);
 extern void set_core_config(uint32_t config);
 extern void forget_core_config(void);     // a new bitstream: our copies (core_config, video_config) are 0 again

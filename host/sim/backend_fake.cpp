@@ -49,6 +49,9 @@ class FakeBackend : public FpgaBackend {
         core_file_ = path ? path : "";
         core_id_ = id_for_file(core_file_);
         program_tick_ = sim::now_ticks();
+        // A freshly programmed core is silent while it starts. The firmware
+        // must not mistake that for MODE (controls_reset/seen_answer).
+        silence_until_ = sim::now_ticks() + (uint64_t)250 * sim::TICKS_PER_MS;
     }
 
     int programmed_id() override {
@@ -180,6 +183,12 @@ class FakeBackend : public FpgaBackend {
         silence_until_ = sim::now_ticks() + (uint64_t)silence_ms * sim::TICKS_PER_MS;
     }
 
+    void drop_ids(int n) override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        if (n > 0)
+            drop_ids_ += n;
+    }
+
     bool overlay_visible() override {
         std::lock_guard<std::recursive_mutex> lk(m_);
         return overlay_visible_;
@@ -231,6 +240,7 @@ class FakeBackend : public FpgaBackend {
     std::string core_file_;
     uint64_t program_tick_ = 0;
     uint64_t silence_until_ = 0;
+    int drop_ids_ = 0;
     uint32_t config_ = 0;
     uint32_t video_config_ = 0;
     bool overlay_visible_ = true;
@@ -295,6 +305,12 @@ class FakeBackend : public FpgaBackend {
         // Caller holds m_.
         switch (type) {
         case 0x01: { // get core ID
+            if (drop_ids_ > 0) {
+                drop_ids_--;
+                if (verbose_.load())
+                    fprintf(stderr, "[fpga] 0x01 dropped (injected)\n");
+                break;
+            }
             if (silenced() || core_id_ < 0) {
                 if (verbose_.load())
                     fprintf(stderr, "[fpga] 0x01 dropped (id=%d)\n", core_id_);
@@ -530,6 +546,9 @@ void set_pads(uint16_t p1, uint16_t p2) {
 }
 void trigger_mode(int silence_ms) {
     g_active->trigger_mode(silence_ms);
+}
+void drop_ids(int n) {
+    g_active->drop_ids(n);
 }
 void set_churn(bool on) {
     g_active->set_churn(on);

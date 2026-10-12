@@ -31,6 +31,10 @@ bool combo_in_progress(uint16_t pad1, uint16_t pad2);
 // core is silent while it starts, which must not look like MODE).
 void controls_reset(void);
 
+// Longest silent gap (first miss to next answer) in ms, for the diagnostic
+// line, so reload times can be reported.
+uint16_t mode_silence_ms(void);
+
 // A game (or a core from Cores) is loaded behind the menus. In main.cpp.
 bool game_loaded(void);
 

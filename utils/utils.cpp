@@ -182,6 +182,10 @@ void suppress_held_buttons(void)
 // query over UART to return if the correct core is loaded
 // return >= 0 if request is successful, -1 if timeout (200ms)
 int16_t get_core_id(void) {
+    return get_core_id_timeout(200);
+}
+
+int16_t get_core_id_timeout(uint32_t timeout_ms) {
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
         core_id = -1;
         xSemaphoreGive(state_mutex);
@@ -194,7 +198,7 @@ int16_t get_core_id(void) {
 
     // TODO: use a queue for better performance
     uint64_t start = bflb_mtimer_get_time_ms();
-    while (bflb_mtimer_get_time_ms() - start < 200) {
+    while (bflb_mtimer_get_time_ms() - start < timeout_ms) {
         if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
             int16_t res = core_id;
             if (res >= 0) {
@@ -203,7 +207,7 @@ int16_t get_core_id(void) {
             }
             xSemaphoreGive(state_mutex);
         }
-        delay(10);
+        delay(5);
     }
     return -1;
 }

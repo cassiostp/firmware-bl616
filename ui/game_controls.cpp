@@ -31,10 +31,12 @@ volatile GameAction pending_action = ACTION_NONE;
 #define MENU_HOLD_MS      100     // menu combo: held this long (debounce)
 #define RESET_HOLD_MS     250     // reset combo: held this long resets the game
 #define POLL_MS_GAME      250     // how often to ask the FPGA for its core ID
-#define POLL_MS_MENU      500
+#define POLL_MS_MENU      50      // menus: two misses fit in a ~150ms reload
 #define POLL_MS_SILENT_CORE 2000  // a core that never answered: don't stall input
-#define MODE_SILENT_MS    600     // FPGA silent this long, then back: MODE was pressed
-#define MODE_MISSES       3       // ...and at least this many polls in a row unanswered
+#define MODE_MISSES       2       // ...and at least this many polls in a row unanswered
+#define MODE_SILENT_MS    80      // ...spanning this long: one dropped reply isn't MODE
+#define MODE_TIMEOUT_MENU 30      // menu polls wait this long: replies arrive in
+                                  // well under 1ms, behind a 515-byte frame ~2.6ms
 #define POLL_GAP_MS       1500    // polls further apart than this don't count as in a row
 
 static uint16_t combo_held;         // which combo is being held (0 = none)
@@ -45,6 +47,13 @@ static bool seen_answer;            // the FPGA answered since the last reset
 static int16_t last_id;             // the last core ID it answered
 static int misses;                  // polls in a row without an answer
 static uint64_t silent_since;       // start of the first unanswered poll (0 = answering)
+static uint16_t mode_max_silence_ms;  // longest silent gap seen (diagnostic line)
+
+// Longest silent gap (first miss to next answer) in ms, for the diagnostic
+// line, so reload times can be reported. Stays 0 until a gap ends.
+uint16_t mode_silence_ms(void) {
+    return mode_max_silence_ms;
+}
 
 void controls_reset(void) {
     combo_held = 0;
@@ -55,6 +64,7 @@ void controls_reset(void) {
     last_id = -1;
     misses = 0;
     silent_since = 0;
+    mode_max_silence_ms = 0;
 }
 
 static bool pressed(uint16_t pad1, uint16_t pad2, uint16_t combo) {
@@ -120,9 +130,11 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
 // MODE is wired to the FPGA's RECONFIG_N, so firmware can't see the button.
 // What it can see: the FPGA stops answering while it reloads from flash, then
 // answers again, as the flash bitstream (core ID 0). Single replies get
-// dropped (while the FPGA sends a joypad or disk frame), so it takes several
-// misses in a row, over a real stretch of time. MODE then restarts
-// everything, like a power cycle.
+// dropped (while the FPGA sends a joypad frame), so it takes two misses in a
+// row to count. In menus the polls run every 50ms with a 30ms timeout, so a
+// 150-300ms reload shows several misses; in game (or whenever a game core
+// answered last) core 0 after the game's ID is MODE at once, with no silence
+// needed. MODE then restarts everything, like a power cycle.
 // A game core that hasn't answered yet (it was just programmed) can't show
 // that silence, but it never answers as the flash bitstream: core 0 there
 // means MODE was pressed before the core's first answer.
@@ -138,7 +150,8 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         silent_since = 0;
     }
 
-    int16_t id = get_core_id();     // up to 200ms when the FPGA is silent
+    uint32_t timeout = in_game ? 200 : MODE_TIMEOUT_MENU;
+    int16_t id = get_core_id_timeout(timeout);
     if (id < 0) {
         if (seen_answer) {
             if (!misses)
@@ -148,15 +161,23 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         return;
     }
     uint64_t now = bflb_mtimer_get_time_ms();
-    bool reloaded = misses >= MODE_MISSES && now - silent_since >= MODE_SILENT_MS;
+    uint64_t silent_ms = (seen_answer && misses && silent_since) ? now - silent_since : 0;
+    if (silent_ms > mode_max_silence_ms)
+        mode_max_silence_ms = silent_ms > 9999 ? 9999 : (uint16_t)silent_ms;
+    bool reloaded = misses >= MODE_MISSES && silent_ms >= MODE_SILENT_MS;
     // a game core that comes back as itself only dropped replies (e.g. the
     // NES core resets its serial link on Select+Down)
     if (reloaded && last_id > 0 && id == last_id)
         reloaded = false;
+    // a game core answering as the flash bitstream is MODE, however short
+    // the silence (covers in-game reloads and menus with a game behind)
+    if (seen_answer && last_id > 0 && id == 0)
+        reloaded = true;
     if (!seen_answer && id == 0 && game_loaded)
         reloaded = true;
     if (reloaded) {
-        dprint("FPGA back as core %d: MODE pressed, restarting", id);
+        dprint("FPGA back as core %d after %lums silent: MODE pressed, restarting",
+               id, (unsigned long)silent_ms);
         overlay(1);
         overlay_status("Restarting...");
         delay(50);

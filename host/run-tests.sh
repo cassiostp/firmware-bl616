@@ -250,6 +250,10 @@ run_test j-video-persist sms:cgame.sms
 run_test k-video-grid sms:cgame.sms sms:game.gg
 run_test l-video-grid-gba gba
 run_test o-video-smoothing nes:game.nes
+run_test p-mode-game-short sms:cgame.sms
+run_test q-mode-menu-short
+run_test u-mode-drop-once sms:cgame.sms
+run_test v-mode-fresh-silent sms:cgame.sms
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

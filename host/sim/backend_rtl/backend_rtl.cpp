@@ -295,6 +295,10 @@ class RtlBackend : public FpgaBackend {
         drop_pending.store(true, std::memory_order_relaxed); // in-flight dies
         vlog("MODE: silent for " + std::to_string(silence_ms) + " ms");
     }
+    void drop_ids(int n) override {
+        if (n > 0)
+            drop_core_ids.fetch_add(n, std::memory_order_relaxed);
+    }
     bool overlay_visible() override {
         return overlay_cached.load(std::memory_order_relaxed);
     }
@@ -379,6 +383,7 @@ class RtlBackend : public FpgaBackend {
     std::atomic<bool> silence_active{false};
     std::atomic<uint64_t> silence_until{0};
     std::atomic<uint64_t> reset_until{0};
+    std::atomic<int> drop_core_ids{0};
 
     void vlog(const std::string &s) {
         if (verbose.load(std::memory_order_relaxed))
@@ -554,6 +559,14 @@ class RtlBackend : public FpgaBackend {
     }
 
     void frame_done() {
+        if (ftype == 0x01 && drop_core_ids.load(std::memory_order_relaxed) > 0) {
+            drop_core_ids.fetch_sub(1, std::memory_order_relaxed);
+            if (verbose.load(std::memory_order_relaxed))
+                vlog("rx frame type=0x01 dropped (injected)");
+            fpos = 0;
+            frame_pending.clear();
+            return;
+        }
         std::lock_guard<std::mutex> lk(rx_m);
         rx_queue.push_back(0xAA);
         rx_queue.push_back((uint8_t)(flen >> 8));

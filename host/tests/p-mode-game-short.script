@@ -1,0 +1,18 @@
+# Short reload in game: the FPGA answers as core 0 right after the game
+# core with little or no silence, and the firmware must still restart.
+# `mode` waits past the new core's first poll, so this exercises the
+# game-core-to-0 rule rather than the first-answer rule in g-mode-early.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+mode 0
+expect-screen "TangCore"
+expect-core monitor

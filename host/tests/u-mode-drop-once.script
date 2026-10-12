@@ -1,0 +1,24 @@
+# One dropped core-ID reply in the menu must not restart: it takes two
+# misses in a row. Uses a loaded game so a spurious restart (back to
+# monitor) fails the expectations.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+# Game menu over the running game.
+hold select+start+l 400ms
+expect-screen "Close game"
+# Let the firmware poll the new core once it answers.
+wait 3s
+drop-id 1
+wait 2s
+expect-screen "Close game"
+expect-core smstang
+expect-overlay on

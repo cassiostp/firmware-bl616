@@ -1,0 +1,17 @@
+# A freshly programmed core is silent while it starts: that silence must
+# not restart. The fake FPGA stays silent for 250ms after each programming.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+wait 3s
+expect-overlay off
+expect-core smstang
+expect-alive 2s
