@@ -42,6 +42,15 @@ open(sys.argv[1], 'wb').write(bytes(d))
 EOF
 }
 
+add_nes_plain() {
+    # $1 = dir, $2 = name: the same ROM WITHOUT the battery bit (a game whose
+    # $6000 RAM is scratch, e.g. an MMC3 cart's work RAM).
+    local dir="$1" name="$2"
+    mkdir -p "$dir/nes"
+    printf 'NES\x1a\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > "$dir/nes/$name"
+    head -c 24560 /dev/zero >> "$dir/nes/$name"
+}
+
 add_snes() {
     # $1 = dir, $2 = name: 32 KB SNES ROM with a valid LoROM header at 0x7FC0
     # (core/snes.cpp's rules): ASCII title, map_ctrl 0, ROM size 5 (32 KB),
@@ -98,7 +107,7 @@ EOF
 
 if [ -n "$RTL_CORE" ]; then
     case "$RTL_CORE" in
-        nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; } ;;
+        nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; add_nes_plain "$1" plain.nes; } ;;
         snes) SUITE=n; add_rom() { add_snes "$1" game.smc; } ;;
         md)   SUITE=m; add_rom() { add_md "$1" game.md; } ;;
         gba)  SUITE=g-rtl; add_rom() { add_gba_sram "$1" game.gba; } ;;
@@ -260,6 +269,9 @@ run_test j-video-persist sms:cgame.sms
 run_test k-video-grid sms:cgame.sms sms:game.gg
 run_test l-video-grid-gba gba
 run_test o-video-smoothing nes:game.nes
+run_test p-save-fail sms:game.sms
+run_test q-save-status sms:game.sms
+run_test q-save-timing sms:game.sms
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

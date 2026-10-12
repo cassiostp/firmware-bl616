@@ -1,0 +1,15 @@
+# SNES: the dump starts about 1 s after the game's first write (the debounce used
+# to be 2 s), through the real iosys, the save/BSRAM bridge and SDRAM. A player
+# who saves and presses MODE a second or two later keeps the save. (Sim time
+# stretches the dump itself, so the test times its start and then waits for the file.)
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+wram-burst 0x000 512 0xA5
+wait-dump 1300ms
+expect-file saves/snes/game.sav size 8192

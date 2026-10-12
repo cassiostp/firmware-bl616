@@ -10,13 +10,24 @@
 // ever dumped or written back.
 //
 // WHEN WE SAVE
-//   - 2 s after the game's last save-RAM write (the 0x0B notice, debounced by a
-//     FreeRTOS task). This covers a burst of writes with one SD write.
+//   - 1 s after the FPGA's 0x0B notice (4 s if the game was dumped less than
+//     10 s ago: a game that scribbles save RAM as work RAM gets a dump every
+//     few seconds, not a card write every second). The FPGA sends one 0x0B per
+//     clean-to-dirty change, so the delay runs from the first write, and one
+//     dump covers a burst of writes.
 //   - when a menu opens over the running game, and before a different ROM/core
 //     loads or the game closes/resets: saves_settle() flushes synchronously.
 //   - never during a game switch: the old game's pending save is flushed first,
 //     under the old file's name, then dropped with it. The new game's RAM can
 //     never be dumped under the old name.
+//   - a dump that fails (a block never arrives, the card refuses the file) is
+//     retried every 3 s, up to 5 times.
+// MODE is the one way to lose a save: it reloads the FPGA, which drops the
+// MCU's UART and restarts the firmware with no chance to flush. A write made
+// less than the delay above (1 s + the dump, ~0.1-0.3 s) before MODE is lost.
+// saves_status_text() says what happened to the last save, so the game menu
+// can show "Saved 12s ago" before anyone presses MODE.
+//
 // The file is written as <name>.sav.tmp, f_sync'd, then the old .sav is unlinked
 // and the .tmp renamed up, so a power cut mid-write leaves the previous save.
 // A dump identical to the file's contents writes nothing (no card wear; a save
@@ -42,11 +53,13 @@ extern "C" {
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+#include "bflb_mtimer.h"
 }
 #include <string.h>
 #include <stdio.h>
 
 #include "utils.h"
+#include "uart_rx.h"
 #include "overlay.h"
 #include "settings.h"
 
@@ -140,6 +153,29 @@ static volatile bool sv_battery = true;
 // loads settle it first. See the FatFs note above.
 static volatile bool sv_live = false;
 
+// What happened to this game's saves, for saves_status_text(). The counters
+// run since boot.
+enum { SV_NEVER, SV_WROTE, SV_SAME, SV_FAILED };
+static volatile uint8_t sv_last = SV_NEVER;     // result of the last dump of this game
+static const char *volatile sv_why = "";        // why it failed (static string)
+static volatile uint32_t sv_last_ms;            // when sv_last was set
+static uint32_t sv_last_dump_ms;                // when the last dump (any game) started
+static uint32_t sv_n_wrote, sv_n_same, sv_n_failed, sv_n_noreply, sv_n_badframe;
+// The core has answered or announced on the save channel (a 0x0A block or a
+// 0x0B notice) since this core was last programmed. Only then does a menu
+// opening verify the card against the RAM without a notice: an old bitstream
+// without the channel would cost a 1 s timeout every time.
+static volatile bool sv_chan_seen = false;
+static uint16_t sv_chan_core = 0xFFFF;          // the core it was seen on
+
+#define SV_DEBOUNCE_MS 1000         // from the first write to the dump
+#define SV_BUSY_DEBOUNCE_MS 4000    // ... when the last dump was less than SV_BUSY_MS ago
+#define SV_BUSY_MS 10000
+#define SV_RETRY_MS 3000
+#define SV_RETRIES 5
+#define SV_TASK_STACK 1536          // words; FatFs puts its 255-char name buffers (exFAT: ~1.1 KB per call) on the stack
+#define SV_VERIFY_MAX_BLOCKS 32     // a menu opening verifies a game this small against the card
+
 // ---- RX task hooks (must stay cheap: no SD I/O here) ----
 void saves_rx_byte(uint16_t blk, uint16_t off, uint8_t b) {
     if (off < SV_BLK)
@@ -147,13 +183,18 @@ void saves_rx_byte(uint16_t blk, uint16_t off, uint8_t b) {
     (void)blk;                              // one save channel; block checked at done
 }
 void saves_rx_block_done(uint16_t blk) {
+    sv_chan_seen = true;
     sv_rx_blk = blk;
     if (sv_blk_sem) xSemaphoreGive(sv_blk_sem);
 }
 void saves_rx_dirty(void) {
+    sv_chan_seen = true;
     sv_dirty = true;
     if (sv_live && sv_task)                 // menu up: the settle flushes it instead
         xTaskNotifyGive(sv_task);
+}
+void saves_rx_bad_frame(void) {
+    sv_n_badframe++;                        // a block frame that was cut short or mis-sized
 }
 
 // ---- FPGA side ----
@@ -169,15 +210,21 @@ static void sv_send_block(uint16_t blk, const uint8_t *data) {      // 0x11
 }
 
 // Read one block back from the FPGA into sv_rx. False if it doesn't answer.
-static bool sv_fetch_block(uint16_t blk) {                          // 0x12 -> sv_rx
+// quiet: no failure bookkeeping (the caller expects old bitstreams not to answer).
+static bool sv_fetch_block(uint16_t blk, uint32_t timeout_ms = 1000, bool quiet = false) {  // 0x12 -> sv_rx
     xSemaphoreTake(sv_blk_sem, 0);                                  // drop a stale give
     taskENTER_CRITICAL();
     fpga_tx_header(0x12, 3);
     fpga_tx_byte(blk >> 8);
     fpga_tx_byte(blk & 0xff);
     taskEXIT_CRITICAL();
-    if (xSemaphoreTake(sv_blk_sem, pdMS_TO_TICKS(1000)) != pdTRUE || sv_rx_blk != blk) {
-        dprint("saves: block %u timed out, save NOT written", blk);
+    if (xSemaphoreTake(sv_blk_sem, pdMS_TO_TICKS(timeout_ms)) != pdTRUE || sv_rx_blk != blk) {
+        if (!quiet) {
+            sv_n_noreply++;
+            sv_why = "no reply";
+            dprint("saves: block %u timed out (frames bad %u, rx overflow %d), save NOT written",
+                   blk, (unsigned)sv_n_badframe, (int)uart_rx_fifo_overflowed());
+        }
         return false;
     }
     heartbeat_bump();                       // a whole dump takes a while
@@ -185,25 +232,34 @@ static bool sv_fetch_block(uint16_t blk) {                          // 0x12 -> s
 }
 
 // ---- flush: dump the core's RAM to sv_path. Called with sv_mutex held ----
-static void sv_dump_and_write(void);
+static bool sv_dump_and_write(void);
 
-static void sv_flush_locked(void) {
-    if (!sv_geom || !sv_path[0]) return;
+// Records the result for saves_status_text(). Returns true if the dump
+// succeeded (written, or identical to the file).
+static bool sv_flush_locked(void) {
+    if (!sv_geom || !sv_path[0]) return true;
     if (!sv_battery) {                      // volatile scratch: never make a file
         sv_dirty = false;
-        return;
+        return true;
     }
     // Pause a game that shares the save RAM's port, so the dump can't delay or
     // disturb its accesses. Afterwards recompute the bits rather than restore
     // them: a menu may have opened (and paused the game) meanwhile.
     if (sv_geom->pause_dump)
         set_core_config(get_core_config() | CORE_CFG_MENU_PAUSE);
-    sv_dump_and_write();
+    sv_last_dump_ms = (uint32_t)bflb_mtimer_get_time_ms();
+    bool ok = sv_dump_and_write();
     if (sv_geom->pause_dump)
         apply_core_config();
+    sv_last_ms = (uint32_t)bflb_mtimer_get_time_ms();
+    if (!ok) {
+        sv_last = SV_FAILED;
+        sv_n_failed++;
+    }
+    return ok;
 }
 
-static void sv_dump_and_write(void) {
+static bool sv_dump_and_write(void) {
     // Clear BEFORE the dump: the FPGA clears its flag when block 0 is requested,
     // and a write that lands during the dump sends a fresh 0x0B that sets this
     // again, so a save can lag but cannot be silently lost.
@@ -227,35 +283,57 @@ static void sv_dump_and_write(void) {
             changed = true;
     }
     if (opened) f_close(&fsave);
-    if (!ok) { sv_dirty = true; return; }                           // try again later
-    if (!changed) return;                                           // no SD write
+    if (!ok) { sv_dirty = true; return false; }                     // try again later
+    if (!changed) {
+        sv_last = SV_SAME;
+        sv_n_same++;
+        return true;                                                // no SD write
+    }
 
     // Pass 2: dump again straight into <file>.sav.tmp (the RAM may even have
     // changed since pass 1; that only re-dirties us).
-    f_mkdir(sv_root);                                               // FR_EXIST is fine
-    f_mkdir(sv_dir);
+    FRESULT fr = f_mkdir(sv_root);                                  // FR_EXIST is fine
+    if (fr != FR_OK && fr != FR_EXIST) {
+        dprint("saves: mkdir %s failed (%d)", sv_root, (int)fr);
+        sv_why = "mkdir"; sv_dirty = true; return false;
+    }
+    fr = f_mkdir(sv_dir);
+    if (fr != FR_OK && fr != FR_EXIST) {
+        dprint("saves: mkdir %s failed (%d)", sv_dir, (int)fr);
+        sv_why = "mkdir"; sv_dirty = true; return false;
+    }
     char tmp[270]; snprintf(tmp, sizeof tmp, "%s.tmp", sv_path);
     UINT bw = 0;
-    if (f_open(&fsave, tmp, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
-        dprint("saves: cannot create %s", tmp);
-        sv_dirty = true;
-        return;
+    fr = f_open(&fsave, tmp, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr != FR_OK) {
+        dprint("saves: cannot create %s (%d)", tmp, (int)fr);
+        sv_why = "create file"; sv_dirty = true; return false;
     }
     for (uint16_t blk = 0; blk < sv_blocks && ok; blk++) {
         if (!sv_fetch_block(blk)) { ok = false; break; }
-        if (f_write(&fsave, sv_rx, SV_BLK, &bw) != FR_OK || bw != SV_BLK) ok = false;
+        if (f_write(&fsave, sv_rx, SV_BLK, &bw) != FR_OK || bw != SV_BLK) {
+            sv_why = "card write";
+            ok = false;
+        }
     }
-    f_sync(&fsave);
-    if (f_close(&fsave) != FR_OK) ok = false;
+    bool synced = (f_sync(&fsave) == FR_OK);
+    bool closed = (f_close(&fsave) == FR_OK);
+    if (ok && !(synced && closed)) { sv_why = "card sync"; ok = false; }
     if (ok) {
         f_unlink(sv_path);                    // FatFs rename refuses an existing target
-        if (f_rename(tmp, sv_path) != FR_OK) {
-            dprint("saves: rename to %s failed", sv_path);
+        fr = f_rename(tmp, sv_path);
+        if (fr != FR_OK) {
+            dprint("saves: rename to %s failed (%d)", sv_path, (int)fr);
+            sv_why = "rename";
             ok = false;
-        } else
+        } else {
             dprint("saves: wrote %s", sv_path);
+            sv_last = SV_WROTE;
+            sv_n_wrote++;
+        }
     }
     if (!ok) sv_dirty = true;                                       // retry next time
+    return ok;
 }
 
 // ---- API ----
@@ -292,7 +370,12 @@ void saves_set_game(const char *fname, uint16_t core_id) {
     }
     sv_dirty = false;                       // the old game's pending state dies here
     sv_live = false;
-    ulTaskNotifyTake(pdTRUE, 0);            // drop a notify it may have sent
+    sv_last = SV_NEVER;                     // nothing has happened to this game's save yet
+    sv_why = "";
+    if (core_id != sv_chan_core) {          // another core: its channel is unknown again
+        sv_chan_seen = false;
+        sv_chan_core = core_id;
+    }
     xSemaphoreGive(sv_mutex);
 }
 
@@ -327,6 +410,15 @@ void saves_restore(void) {
         sv_send_block(blk, sv_io);
     }
     if (opened) f_close(&fsave);
+    // The FPGA announces a write (0x0B) only when its dirty flag goes from
+    // clean to dirty, and clears the flag only when block 0 is requested. A
+    // notice we dropped for the previous game (a ROM without battery RAM, or a
+    // write between set_game and now) left the flag set, and this game's writes
+    // would never be announced. Reading block 0 -- the core is still held, so
+    // nothing is dirty but us -- makes the flag match our "clean". An old
+    // bitstream does not answer: a short wait.
+    if (sv_blocks && sv_fetch_block(0, 150, true))
+        sv_chan_seen = true;
     sv_dirty = false;
     sv_live = false;
     xSemaphoreGive(sv_mutex);
@@ -348,9 +440,14 @@ void saves_settle(void) {
     if (!sv_mutex) return;
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
     sv_live = false;                        // no new dumps after this point
-    if (sv_dirty)
+    // A notice can be lost (or never sent, if the FPGA thought it had already
+    // told us), so a small save is checked against the card even when nothing
+    // is marked dirty: it costs ~16 blocks of UART and writes nothing if the
+    // card is current. The status line then says "up to date".
+    bool verify = sv_chan_seen && sv_geom && sv_path[0] && sv_battery &&
+                  sv_blocks && sv_blocks <= SV_VERIFY_MAX_BLOCKS;
+    if (sv_dirty || verify)
         sv_flush_locked();
-    ulTaskNotifyTake(pdTRUE, 0);            // drop a notify we owe nothing for
     xSemaphoreGive(sv_mutex);
 }
 
@@ -374,19 +471,77 @@ void saves_rearm(void) {
 static void saves_task(void *pvParameters) {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);                    // the game wrote save RAM
-        // Debounce: wait until it has been quiet for 2 s, so one save covers a burst.
-        while (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000)) > 0) {}
-        if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) continue;
-        if (sv_live && sv_dirty)            // a settle may have flushed it meanwhile
-            sv_flush_locked();
-        xSemaphoreGive(sv_mutex);
+        // Debounce: wait out the burst, so one save covers it. A game that was
+        // dumped moments ago is writing continuously (save RAM as work RAM):
+        // wait longer, so the card is not rewritten every second.
+        uint32_t since = (uint32_t)bflb_mtimer_get_time_ms() - sv_last_dump_ms;
+        uint32_t wait = (sv_last_dump_ms && since < SV_BUSY_MS) ? SV_BUSY_DEBOUNCE_MS : SV_DEBOUNCE_MS;
+        while (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait)) > 0) {}
+        for (unsigned attempt = 0;; attempt++) {
+            bool ok = true;
+            if (xSemaphoreTake(sv_mutex, portMAX_DELAY) == pdTRUE) {
+                if (sv_live && sv_dirty)    // a settle may have flushed it meanwhile
+                    ok = sv_flush_locked();
+                xSemaphoreGive(sv_mutex);
+            }
+            if (ok || attempt >= SV_RETRIES)
+                break;
+            vTaskDelay(pdMS_TO_TICKS(SV_RETRY_MS));                 // then try again
+        }
     }
+}
+
+// One line for the game menu (<= 30 columns), or "" if this core has no
+// battery saves. Reads state without the mutex: a stale word on screen is
+// harmless, and a dump in flight must not block the menu.
+void saves_status_text(char *buf, size_t n) {
+    buf[0] = '\0';
+    if (!sv_geom || !sv_path[0])
+        return;
+    if (!sv_battery) {
+        snprintf(buf, n, "No battery save in this ROM");
+        return;
+    }
+    if (!sv_blocks) {
+        snprintf(buf, n, "No save RAM in this ROM");
+        return;
+    }
+    uint32_t age = ((uint32_t)bflb_mtimer_get_time_ms() - sv_last_ms) / 1000;
+    char ago[12];
+    if (age < 100)
+        snprintf(ago, sizeof ago, "%us", (unsigned)age);
+    else if (age < 6000)
+        snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
+    else
+        snprintf(ago, sizeof ago, "%uh", (unsigned)(age / 3600));
+    if (sv_last == SV_FAILED)
+        snprintf(buf, n, "Save FAILED: %s", sv_why);
+    else if (sv_dirty && sv_last != SV_NEVER)
+        snprintf(buf, n, "Save: waiting to write");
+    else if (sv_last == SV_WROTE)
+        snprintf(buf, n, "Saved to card %s ago", ago);
+    else if (sv_last == SV_SAME)
+        snprintf(buf, n, "Save on card is current");
+    else if (sv_dirty)
+        snprintf(buf, n, "Save: waiting to write");
+    else
+        snprintf(buf, n, "Save: none written yet");
+}
+
+// Counters for the diagnostic line (<= 32 columns): dumps written, found
+// current, failed; blocks the FPGA never answered; block frames that arrived
+// cut short; an "O" if the UART hardware FIFO ever overflowed.
+void saves_diag_text(char *buf, size_t n) {
+    snprintf(buf, n, "SV w%u s%u f%u n%u b%u %s%s",
+             (unsigned)sv_n_wrote, (unsigned)sv_n_same, (unsigned)sv_n_failed,
+             (unsigned)sv_n_noreply, (unsigned)sv_n_badframe,
+             uart_rx_fifo_overflowed() ? "O" : "-", sv_chan_seen ? "C" : "-");
 }
 
 void saves_init(void) {
     sv_mutex = xSemaphoreCreateMutex();
     sv_blk_sem = xSemaphoreCreateBinary();
-    if (xTaskCreate(saves_task, "saves", 1024, NULL, 1, &sv_task) != pdPASS) {
+    if (xTaskCreate(saves_task, "saves", SV_TASK_STACK, NULL, 1, &sv_task) != pdPASS) {
         sv_task = NULL;                 // no async dumps; menu/load flushes still work
         dprint("saves: task not created (heap?), async saving OFF");
     }

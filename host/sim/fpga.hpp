@@ -61,6 +61,7 @@ void trigger_mode(int silence_ms);
 
 // Continuous game WRAM writes (RTL only; fake ignores).
 void set_churn(bool on);
+void set_save_channel(bool on);
 // Save-block requests received so far (wait-dump watches for a new one).
 uint64_t save_requests();
 

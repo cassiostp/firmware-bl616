@@ -1,0 +1,34 @@
+# NES: a ROM without a battery bit (plain.nes) writes its $6000 RAM, which the
+# core announces like any save-RAM write; the firmware drops the notice, but the
+# core's dirty flag stays set and it announces nothing more. The next game on
+# the same core (game.nes, with a battery) must still be saved: loading a game
+# re-syncs the core's flag.
+expect-screen "TangCore"
+press b
+expect-screen "plain.nes"
+press down
+press down
+press a
+expect-overlay off
+expect-core nestang
+wram-burst 0x000 16 0x11
+wait 3s
+expect-no-file saves/nes/plain.sav
+hold select+start+l 500ms
+expect-screen "Resume"
+press down
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Game menu"
+press down
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+wram-burst 0x000 512 0xA5
+expect-file saves/nes/game.sav size 8192

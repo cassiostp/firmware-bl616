@@ -62,6 +62,9 @@ class FpgaBackend : public sim::Backend {
     // Continuous game WRAM writes (combo-during-dump tests). The fake has no
     // game model and ignores it; the RTL traffic generator scribbles WRAM.
     virtual void set_churn(bool on) = 0;
+    // The save channel answers 0x12 requests (default) or stays mute, like a
+    // core whose bitstream lacks it. Fake backend only; the RTL model ignores it.
+    virtual void set_save_channel(bool on) = 0;
     // Number of 0x12 save-block requests received (wait-dump watches it).
     virtual uint64_t save_requests() = 0;
 

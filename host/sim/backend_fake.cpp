@@ -164,6 +164,7 @@ class FakeBackend : public FpgaBackend {
     }
 
     void set_churn(bool) override {} // no game model on the fake
+    void set_save_channel(bool on) override { save_channel_ = on; }
 
     uint64_t save_requests() override {
         return save_reqs_.load(std::memory_order_relaxed);
@@ -237,6 +238,7 @@ class FakeBackend : public FpgaBackend {
     uint64_t rom_bytes_ = 0;
     uint16_t pad1_ = 0, pad2_ = 0;
     std::vector<uint8_t> save_ram_;
+    bool save_channel_ = true;
     std::atomic<uint64_t> save_reqs_{0};
     std::atomic<bool> verbose_{false};
     std::vector<std::string> log_;
@@ -361,7 +363,7 @@ class FakeBackend : public FpgaBackend {
         }
         case 0x12: { // save request: answer with a 0x0A block
             save_reqs_.fetch_add(1, std::memory_order_relaxed);
-            if (p.size() < 2 || silenced())
+            if (p.size() < 2 || silenced() || !save_channel_)
                 break;
             uint16_t blk = ((uint16_t)p[0] << 8) | p[1];
             size_t off = (size_t)blk * 512;
@@ -547,6 +549,9 @@ void trigger_mode(int silence_ms) {
 }
 void set_churn(bool on) {
     g_active->set_churn(on);
+}
+void set_save_channel(bool on) {
+    g_active->set_save_channel(on);
 }
 uint64_t save_requests() {
     return g_active->save_requests();

@@ -339,6 +339,11 @@ static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
     overlay_printf("J%04x%04x H%04x%04x a%d%d c%-2d #%03lu", joy1, joy2, hid1, hid2,
                    (int)pending_action, combo_in_progress(joy1 | hid1, joy2 | hid2) ? 1 : 0,
                    active_core, (unsigned long)(beat++ % 1000));
+    // row 1: battery-save counters (core/saves.cpp), 32 columns
+    char sv[40];
+    saves_diag_text(sv, sizeof sv);
+    overlay_cursor(0, 1);
+    overlay_printf("%-32s", sv);
 }
 
 // // (R L X A RT LT DN UP START SELECT Y B)
@@ -450,8 +455,11 @@ static void uart1_rx_task(void *pvParameters)
             // a frame's bytes arrive back to back at 2 Mbaud. A long gap means
             // the rest was lost (e.g. the FPGA was reconfigured): resync. The
             // margin covers this task being starved while ROM data is sent.
-            if (pos != 0 && now - last_byte > 50)
+            if (pos != 0 && now - last_byte > 50) {
+                if (type == 0x0A && pos >= 4)
+                    saves_rx_bad_frame();       // a save block cut short
                 pos = 0;
+            }
             last_byte = now;
             
             if (pos == 0) {          // expecting 0xAA
@@ -540,6 +548,8 @@ static void uart1_rx_task(void *pvParameters)
 
             } else if (type == 0x0A) {           // save-RAM block: blk[15:0] + 512 bytes
                 uint16_t k = pos - 4;            // no SD I/O here: buffer and signal
+                if (k == 0 && len != 1 + 2 + 512)
+                    saves_rx_bad_frame();
                 if (k == 0)
                     sv_blk = (uint16_t)ch << 8;
                 else if (k == 1)
@@ -651,6 +661,12 @@ struct GameMenu: Menu {
         if (!message.empty()) {
             overlay_cursor(2, 21);
             overlay_printf("%s", message.c_str());
+        }
+        char save[40];
+        saves_status_text(save, sizeof save);       // what happened to this game's save
+        if (save[0]) {
+            overlay_cursor(2, 23);
+            overlay_printf("%s", save);
         }
     }
 

@@ -281,6 +281,7 @@ class RtlBackend : public FpgaBackend {
         joy1.store(p1, std::memory_order_relaxed);
         joy2.store(p2, std::memory_order_relaxed);
     }
+    void set_save_channel(bool) override {} // the real core always answers
     void set_churn(bool on) override {
         churn.store(on, std::memory_order_relaxed);
     }
