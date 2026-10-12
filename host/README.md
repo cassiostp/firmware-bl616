@@ -201,6 +201,8 @@ linked model's `name()`. Adding a core means a `model_<core>.cpp`, one
 - `r-save-status` — the game menu reports "Saved to card", then (the menu
   verifies a small save against the core's RAM each time it opens) "Save on
   card is current".
+- `r-chatty-save` — a game that scribbles its battery RAM continuously (work
+  RAM, like Zelda 1) is still saved, and dumped again a few seconds later.
 - `r-stale-dirty` — a ROM without a battery bit writes its $6000 RAM, then a
   battery ROM on the same core must still be saved (loading a game re-syncs
   the core's dirty flag).
@@ -239,8 +241,8 @@ with the dump's reads in the real arbiter (SNES first, save bytes slip in
 between). snestang's save bridge lives in `snestang_top.v`, so its
 `cosim_top.sv` carries a copy of that logic: keep the two in step.
 
-`n-save-timing` and `n-save-status` repeat the NES timing and menu-status
-tests on the SNES.
+`n-save-timing`, `n-save-status` and `n-chatty-save` repeat the NES timing,
+menu-status and continuous-writer tests on the SNES.
 
 ### Master System
 
