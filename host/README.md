@@ -15,10 +15,16 @@ cmake --build host/build -j
 ```
 
 This builds a Console 138K layout (`BOARD_NAME=console138k`). The build
-compiles the firmware with `-DTANGCORE_HOST=1`, which guards the only two
+compiles the firmware with `-DTANGCORE_HOST=1`, which guards the only three
 host-only spots in firmware sources: the `strcasestr` declaration in
-`utils/utils.h`, and the USB register writes in `ui/game_controls.cpp`
-(skipped on the host, which has no SoC registers).
+`utils/utils.h`, the USB register writes in `ui/game_controls.cpp` (skipped on
+the host, which has no SoC registers), and the UART FIFO overflow flag read in
+`utils/uart_rx.cpp`.
+
+The UART receive interrupt is modelled: the backends call `fpga::rx_notify()`
+when they queue bytes for the MCU, and the hook installed by `bflb_irq_enable`
+runs the firmware's registered handler, so the firmware reads its frames
+through the same interrupt-fed ring buffer as on the chip.
 
 ## Run interactively
 

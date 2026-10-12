@@ -237,6 +237,16 @@ run_test() {
     fi
 }
 
+echo "=== test uart-rx-model ==="
+if "$BUILD_DIR/uart-rx-model"; then
+    echo "--- PASS uart-rx-model"
+    PASS=$((PASS + 1))
+else
+    echo "--- FAIL uart-rx-model"
+    FAIL=$((FAIL + 1))
+    FAILED_NAMES+=("uart-rx-model")
+fi
+
 run_test a-menu nes:test.nes
 run_test b-hidden-message-mode gba
 run_test c-pause sms:cgame.sms

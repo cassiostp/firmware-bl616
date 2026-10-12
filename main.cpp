@@ -36,6 +36,7 @@ extern "C" {
 #include "init.h"
 #include "menu_manager.h"
 #include "settings.h"
+#include "uart_rx.h"
 #include "game_controls.h"
 
 // Uncomment this to enable UART console (use with caution. it may interfere with MCU-FPGA communication)
@@ -440,9 +441,11 @@ static void uart1_rx_task(void *pvParameters)
     while (1) {
         // drain everything waiting before sleeping: one byte per 1 ms tick
         // capped replies at ~1 KB/s and overflowed the UART FIFO on 515-byte
-        // floppy frames
-        while (bflb_uart_rxavailable(uart1_dev)) {
-            uint8_t ch = bflb_uart_getchar(uart1_dev);
+        // floppy frames. The bytes come from uart_rx.cpp's ring buffer, filled
+        // by the UART interrupt: this task's 1 ms sleep is ~200 bytes of
+        // stream, and the hardware FIFO behind the interrupt holds only 32.
+        uint8_t ch;
+        while (uart_rx_get(&ch)) {
             uint64_t now = bflb_mtimer_get_time_ms();
             // a frame's bytes arrive back to back at 2 Mbaud. A long gap means
             // the rest was lost (e.g. the FPGA was reconfigured): resync. The

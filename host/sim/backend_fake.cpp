@@ -259,13 +259,16 @@ class FakeBackend : public FpgaBackend {
     void rx_push_frame(uint8_t type, const uint8_t *payload, size_t n) {
         // Frame: AA lenH lenL type payload[len-1]. len counts type+payload.
         uint16_t len = (uint16_t)(n + 1);
-        std::lock_guard<std::mutex> lk(rx_m_);
-        rx_.push_back(0xAA);
-        rx_.push_back((uint8_t)(len >> 8));
-        rx_.push_back((uint8_t)(len & 0xff));
-        rx_.push_back(type);
-        for (size_t i = 0; i < n; i++)
-            rx_.push_back(payload[i]);
+        {
+            std::lock_guard<std::mutex> lk(rx_m_);
+            rx_.push_back(0xAA);
+            rx_.push_back((uint8_t)(len >> 8));
+            rx_.push_back((uint8_t)(len & 0xff));
+            rx_.push_back(type);
+            for (size_t i = 0; i < n; i++)
+                rx_.push_back(payload[i]);
+        }
+        fpga::rx_notify();
     }
 
     bool silenced() {
@@ -463,6 +466,10 @@ void fpga_select(FpgaBackend *b) {
     sim::set_backend(g_active);
 }
 
+namespace {
+void (*g_rx_hook)() = nullptr;
+} // namespace
+
 namespace fpga {
 
 void start() {
@@ -471,6 +478,13 @@ void start() {
 
 void tx_push(uint8_t b) {
     g_active->tx_push(b);
+}
+void set_rx_hook(void (*fn)()) {
+    g_rx_hook = fn;
+}
+void rx_notify() {
+    if (g_rx_hook)
+        g_rx_hook();
 }
 bool rx_available() {
     return g_active->rx_available();

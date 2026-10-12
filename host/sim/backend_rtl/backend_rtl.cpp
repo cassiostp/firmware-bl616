@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "backend.hpp"
+#include "fpga.hpp"
 #include "rtl_model.hpp"
 
 // The core model: exactly one model_<core>.cpp is linked per build (see
@@ -554,22 +555,25 @@ class RtlBackend : public FpgaBackend {
     }
 
     void frame_done() {
-        std::lock_guard<std::mutex> lk(rx_m);
-        rx_queue.push_back(0xAA);
-        rx_queue.push_back((uint8_t)(flen >> 8));
-        rx_queue.push_back((uint8_t)(flen & 0xff));
-        rx_queue.push_back(ftype);
-        for (uint8_t b : frame_pending)
-            rx_queue.push_back(b);
-        if (verbose.load(std::memory_order_relaxed)) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "rx frame type=0x%02x len=%u", ftype, flen);
-            // NOTE: vlog takes log_m; called with rx_m held -- both are leaf
-            // locks, never held across stepping or each other elsewhere, so
-            // no cycle. (Verbose path only.)
-            vlog(msg);
+        {
+            std::lock_guard<std::mutex> lk(rx_m);
+            rx_queue.push_back(0xAA);
+            rx_queue.push_back((uint8_t)(flen >> 8));
+            rx_queue.push_back((uint8_t)(flen & 0xff));
+            rx_queue.push_back(ftype);
+            for (uint8_t b : frame_pending)
+                rx_queue.push_back(b);
+            if (verbose.load(std::memory_order_relaxed)) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "rx frame type=0x%02x len=%u", ftype, flen);
+                // NOTE: vlog takes log_m; called with rx_m held -- both are leaf
+                // locks, never held across stepping or each other elsewhere, so
+                // no cycle. (Verbose path only.)
+                vlog(msg);
+            }
         }
         fpos = 0;
+        fpga::rx_notify();      // the UART interrupt: the firmware's handler drains the queue
     }
 
     void drop_traffic(uint64_t now) {

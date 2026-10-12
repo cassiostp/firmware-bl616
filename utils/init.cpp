@@ -5,6 +5,7 @@ extern "C" {
 
 #include "utils.h"
 #include "init.h"
+#include "uart_rx.h"
 
 extern "C" void bflb_uart_set_console(struct bflb_device_s *dev);
 
@@ -72,6 +73,7 @@ void init_gpio_and_uart() {
     uart1_dev = bflb_device_get_by_name("uart1");
     /* Initialize UART1 with the config */
     bflb_uart_init(uart1_dev, &uart1_cfg);
+    uart_rx_init();                         // the FIFO is only 32 bytes: an interrupt drains it
 
     bflb_uart_set_console(uart1_dev);       // for debug
 

@@ -23,6 +23,11 @@ void start();
 void tx_push(uint8_t b); // MCU -> FPGA
 bool rx_available();     // FPGA -> MCU
 uint8_t rx_pop();
+// The UART receive interrupt: the backends call rx_notify() whenever they have
+// put bytes in the FPGA -> MCU queue (after releasing their own locks); the
+// firmware's interrupt handler is installed as the hook by bflb_irq_enable.
+void set_rx_hook(void (*fn)());
+void rx_notify();
 
 // File the "programmer" stub "loaded", and the core ID it reports.
 void set_programmed(const char *path);

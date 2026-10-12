@@ -21,6 +21,7 @@ set(FW_SOURCES
     ${FIRMWARE_DIR}/ui/menu_manager.cpp
     ${FIRMWARE_DIR}/ui/overlay.cpp
     ${FIRMWARE_DIR}/utils/settings.cpp
+    ${FIRMWARE_DIR}/utils/uart_rx.cpp
     ${FIRMWARE_DIR}/utils/utils.cpp
     ${FIRMWARE_DIR}/core/cores.cpp
     ${FIRMWARE_DIR}/core/gba.cpp
@@ -115,3 +116,16 @@ set_source_files_properties(${FIRMWARE_DIR}/main.cpp PROPERTIES
 
 target_compile_options(tangcore-sim PRIVATE -Wall -Wextra -Wno-unused-parameter -g)
 target_link_libraries(tangcore-sim PRIVATE pthread)
+
+# Unit test: the UART receive ring and interrupt handler (utils/uart_rx.cpp)
+# against a modelled 32-byte FIFO. Run by run-tests.sh.
+add_executable(uart-rx-model
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/uart_rx_model.cpp
+    ${FIRMWARE_DIR}/utils/uart_rx.cpp)
+target_include_directories(uart-rx-model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/shim
+    ${FIRMWARE_DIR}/utils
+    ${FIRMWARE_DIR}/ui
+    ${FIRMWARE_DIR}/core)
+target_compile_definitions(uart-rx-model PRIVATE TANG_CONSOLE138K TANGCORE_HOST=1)
+target_compile_options(uart-rx-model PRIVATE -Wall -Wextra -Wno-unused-parameter -g)
