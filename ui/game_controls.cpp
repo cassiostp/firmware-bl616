@@ -31,10 +31,10 @@ volatile GameAction pending_action = ACTION_NONE;
 #define MENU_HOLD_MS      100     // menu combo: held this long (debounce)
 #define RESET_HOLD_MS     250     // reset combo: held this long resets the game
 #define POLL_MS_GAME      250     // how often to ask the FPGA for its core ID
-#define POLL_MS_MENU      50      // menus: two misses fit in a ~150ms reload
+#define POLL_MS_MENU      50      // menus: three misses fit in a ~200ms reload
 #define POLL_MS_SILENT_CORE 2000  // a core that never answered: don't stall input
-#define MODE_MISSES       2       // ...and at least this many polls in a row unanswered
-#define MODE_SILENT_MS    80      // ...spanning this long: one dropped reply isn't MODE
+#define MODE_MISSES       3       // ...and at least this many polls in a row unanswered
+#define MODE_SILENT_MS    80      // ...spanning this long: one or two dropped replies aren't MODE
 #define MODE_TIMEOUT_MENU 30      // menu polls wait this long: replies arrive in
                                   // well under 1ms, behind a 515-byte frame ~2.6ms
 #define POLL_GAP_MS       1500    // polls further apart than this don't count as in a row
@@ -130,9 +130,9 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
 // MODE is wired to the FPGA's RECONFIG_N, so firmware can't see the button.
 // What it can see: the FPGA stops answering while it reloads from flash, then
 // answers again, as the flash bitstream (core ID 0). Single replies get
-// dropped (while the FPGA sends a joypad frame), so it takes two misses in a
-// row to count. In menus the polls run every 50ms with a 30ms timeout, so a
-// 150-300ms reload shows several misses; in game (or whenever a game core
+// dropped (while the FPGA sends a joypad frame), so it takes three misses in
+// a row to count. In menus the polls run every 50ms with a 30ms timeout, so
+// a 200-300ms reload shows several misses; in game (or whenever a game core
 // answered last) core 0 after the game's ID is MODE at once, with no silence
 // needed. MODE then restarts everything, like a power cycle.
 // A game core that hasn't answered yet (it was just programmed) can't show
