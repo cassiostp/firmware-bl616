@@ -1,0 +1,14 @@
+# SNES ST018 synthetic header: the loader pops up "not supported yet" and does
+# not load (the overlay stays on); dismissing the box returns to the menu.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-screen "ST018 cartridge"
+expect-screen "not supported yet"
+expect-overlay on
+press a
+expect-screen "TangCore"
+expect-overlay on

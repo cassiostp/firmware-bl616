@@ -168,6 +168,10 @@ bitstreams), and runs `host/tests/*.script`:
 - `q-save-status` — the game menu's save line: nothing written yet, then
   "Saved to card" after a flush.
 - `q-save-timing` — the dump starts about 1 s after the game's first write.
+- `t-snes-*` — SNES loader header handling with synthetic ROM headers:
+  LoROM, HiROM, ExHiROM and Super FX (GSU chipset bytes) load, while SA-1,
+  S-DD1, SPC7110, CX4, ST018 and BS-X get a "not supported yet" pop-up and
+  no load, and an all-zero file is "Not a SNES ROM file".
 
 `uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
 firmware's real UART receive ring and interrupt handler against a modelled
