@@ -15,6 +15,7 @@
 #include <exception>
 #include <mutex>
 #include <pthread.h>
+#include <string>
 #include <thread>
 
 #include "FreeRTOS.h"
@@ -25,6 +26,7 @@
 namespace {
 
 struct TaskControlImpl {
+    std::string name; // set at creation, read-only after (pcTaskGetName)
     std::thread thr;
     std::mutex m;
     std::condition_variable cv;
@@ -68,10 +70,10 @@ extern "C" {
 BaseType_t xTaskCreate(TaskFunction_t pxTaskCode, const char *const pcName,
                        uint16_t usStackDepth, void *pvParameters,
                        UBaseType_t uxPriority, TaskHandle_t *pxCreatedTask) {
-    (void)pcName;
     (void)usStackDepth;
     (void)uxPriority;
     TaskControl *tc = new TaskControl();
+    tc->impl.name = pcName ? pcName : "";
     tc->impl.thr = std::thread([tc, pxTaskCode, pvParameters]() {
         tls_task = &tc->impl;
         pxTaskCode(pvParameters);
@@ -121,6 +123,11 @@ eTaskState eTaskGetState(TaskHandle_t xTask) {
     if (!xTask)
         return eInvalid;
     return xTask->impl.alive.load() ? eRunning : eDeleted;
+}
+
+char *pcTaskGetName(TaskHandle_t xTaskToQuery) {
+    TaskControlImpl *impl = xTaskToQuery ? &xTaskToQuery->impl : tls_task;
+    return impl ? (char *)impl->name.c_str() : (char *)"";
 }
 
 namespace {

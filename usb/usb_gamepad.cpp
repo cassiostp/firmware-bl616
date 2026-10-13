@@ -509,8 +509,13 @@ static void usbh_hid_thread(void *argument) {
                         usb->hid_info[i].report.report_size + (usb->hid_info[i].report.report_id_present ? 1:0),
                         0, usbh_hid_callback, &usb->hid_info[i]);     
 
-                xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
-                        &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle );
+                if (xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
+                        &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle ) != pdPASS) {
+                    INFO("HID %d: failed to create client task\n", i);
+                    usb->hid_info[i].task_handle = NULL;
+                    usb->hid_info[i].state = STATE_FAILED;
+                    hid_release_joystick(usb->hid_info[i].hid_state.joystick.js_index);
+                }
             }
         }
 
@@ -525,8 +530,13 @@ static void usbh_hid_thread(void *argument) {
                 usb->xbox_info[i].js_index = hid_allocate_joystick();
                 DEBUG("  -> joystick %d", usb->xbox_info[i].js_index);
 
-                xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
-                        &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle );
+                if (xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
+                        &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle ) != pdPASS) {
+                    INFO("Xinput %d: failed to create client task\n", i);
+                    usb->xbox_info[i].task_handle = NULL;
+                    usb->xbox_info[i].state = STATE_FAILED;
+                    hid_release_joystick(usb->xbox_info[i].js_index);
+                }
             }
         }
 
@@ -564,5 +574,6 @@ void usb_gamepad_init(void) {
         usb_config.xbox_info[i].sem = xSemaphoreCreateBinary();
     }
 
-    xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle);
+    if (xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle) != pdPASS)
+        INFO("Failed to create USB host task\n");
 }

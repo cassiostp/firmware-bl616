@@ -330,7 +330,7 @@ static void send_hid_to_core(void) {
 // whether a combo is held (a), the core ID (c), the longest silent gap seen
 // (s, ms, capped at 999, for reporting reload times), and a counter that
 // stops if this loop stops running.
-static void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
+void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) {
     static uint64_t last_draw;
     static uint32_t beat;
     uint64_t now = bflb_mtimer_get_time_ms();
@@ -929,6 +929,29 @@ static void print_system_info(void) {
     // overlay_status("                                ");
 }
 
+/////////////////////////////////////////////////////////////////////////////////
+// FreeRTOS failure hooks (configCHECK_FOR_STACK_OVERFLOW=2,
+// configUSE_MALLOC_FAILED_HOOK=1). The SDK's versions are weak and only
+// printf to a UART nobody can read without an adapter, so a crash looks
+// exactly like a hang; these name the task on screen too, then spin like
+// the defaults (the heartbeat stops, so the watchdog resets the chip).
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+    (void)xTask;
+    const char *name = pcTaskName ? pcTaskName : "?";
+    printf("vApplicationStackOverflowHook %s\r\n", name);
+    overlay_status("Stack overflow: %s", name);
+    for (;;) {
+    }
+}
+
+extern "C" void vApplicationMallocFailedHook(void) {
+    const char *name = pcTaskGetName(NULL);     // the task that asked
+    printf("vApplicationMallocFailedHook (task %s)\r\n", name ? name : "?");
+    overlay_status("Malloc failed (task %s)", name ? name : "?");
+    for (;;) {
+    }
+}
+
 // Initialize things, then start main_task and uart1_rx_task to do actual work
 int main(void)
 {
@@ -971,10 +994,14 @@ int main(void)
 
     saves_init();           // battery saves: core/saves.cpp
     overlay_status("Creating tasks...");
-    // Create the tasks
-    xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle);
-    xTaskCreate(uart1_rx_task, "uart1_rx_task", UART1_RX_TASK_STACK_SIZE, NULL, UART1_RX_TASK_PRIORITY, &uart1_rx_task_handle);
-    xTaskCreate(watchdog_task, "watchdog", WATCHDOG_TASK_STACK_SIZE, NULL, WATCHDOG_TASK_PRIORITY, NULL);
+    // Create the tasks. A silent failure here (no heap) looks exactly like
+    // a hang, so say so on screen.
+    if (xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle) != pdPASS)
+        overlay_status("Failed to create main_task");
+    if (xTaskCreate(uart1_rx_task, "uart1_rx_task", UART1_RX_TASK_STACK_SIZE, NULL, UART1_RX_TASK_PRIORITY, &uart1_rx_task_handle) != pdPASS)
+        overlay_status("Failed to create uart1_rx_task");
+    if (xTaskCreate(watchdog_task, "watchdog", WATCHDOG_TASK_STACK_SIZE, NULL, WATCHDOG_TASK_PRIORITY, NULL) != pdPASS)
+        overlay_status("Failed to create watchdog task");
     
     vTaskStartScheduler();
 
