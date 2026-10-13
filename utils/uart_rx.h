@@ -11,6 +11,8 @@ bool uart_rx_get(uint8_t *ch);
 // The 32-byte hardware FIFO overflowed at some point since boot (the
 // interrupt could not keep up: it was blocked for longer than 160 us).
 bool uart_rx_fifo_overflowed(void);
+// " P" in the A/B build that polls the FIFO (UART_RX_POLL), else "".
+const char *uart_rx_mode_tag(void);
 
 // The ring and the interrupt handler's body, split from the hardware access so
 // the host tests can run them against a modelled FIFO.

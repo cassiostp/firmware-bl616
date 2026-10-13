@@ -19,6 +19,11 @@ extern "C" {
 #include "bflb_irq.h"
 }
 
+// UART_RX_POLL: A/B test build only. The task reads the hardware FIFO
+// directly, as before the interrupt existed, so the save counters show what
+// the old receive path loses on hardware.
+#define UART_RX_POLL 1
+
 #define RING_SIZE 2048                  // power of two
 #define RING_MASK (RING_SIZE - 1)
 
@@ -57,7 +62,18 @@ uint32_t uart_rx_ring_dropped(void) {
 }
 
 bool uart_rx_get(uint8_t *ch) {
+#if UART_RX_POLL && !defined(TANGCORE_HOST)
+    if (!bflb_uart_rxavailable(uart1_dev))
+        return false;
+    *ch = (uint8_t)bflb_uart_getchar(uart1_dev);
+    return true;
+#else
     return uart_rx_ring_get(ch);
+#endif
+}
+
+const char *uart_rx_mode_tag(void) {
+    return UART_RX_POLL ? " P" : "";
 }
 
 // UART_FIFO_CONFIG_0 (0x80) bit 6: the receive FIFO overflowed since it was
@@ -84,6 +100,9 @@ extern "C" void uart_rx_isr(int irq, void *arg) {
 
 void uart_rx_init(void) {
     uart_rx_ring_reset();
+#if UART_RX_POLL && !defined(TANGCORE_HOST)
+    return;
+#endif
     bflb_uart_rxint_mask(uart1_dev, false);      // unmask the FIFO and timeout interrupts
     bflb_irq_attach(uart1_dev->irq_num, uart_rx_isr, NULL);
     bflb_irq_enable(uart1_dev->irq_num);

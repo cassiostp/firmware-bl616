@@ -532,10 +532,11 @@ void saves_status_text(char *buf, size_t n) {
 // current, failed; blocks the FPGA never answered; block frames that arrived
 // cut short; an "O" if the UART hardware FIFO ever overflowed.
 void saves_diag_text(char *buf, size_t n) {
-    snprintf(buf, n, "SV w%u s%u f%u n%u b%u %s%s",
+    snprintf(buf, n, "SV w%u s%u f%u n%u b%u %s%s%s",
              (unsigned)sv_n_wrote, (unsigned)sv_n_same, (unsigned)sv_n_failed,
              (unsigned)sv_n_noreply, (unsigned)sv_n_badframe,
-             uart_rx_fifo_overflowed() ? "O" : "-", sv_chan_seen ? "C" : "-");
+             uart_rx_fifo_overflowed() ? "O" : "-", sv_chan_seen ? "C" : "-",
+             uart_rx_mode_tag());
 }
 
 void saves_init(void) {
