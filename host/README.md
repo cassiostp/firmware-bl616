@@ -178,6 +178,8 @@ bitstreams), and runs `host/tests/*.script`:
   not restart the firmware.
 - `y-diag-game-menu` — with Diagnostics on, the diag rows show in the
   game and Video menus, not only in the main menu.
+- `z-capture-stuck` — combo capture cancels 10 s from entry even with a
+  stuck button held, and MODE restarts out of a capture in progress.
 
 `uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
 firmware's real UART receive ring and interrupt handler against a modelled

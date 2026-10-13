@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 
+#include "game_controls.h"
 #include "overlay.h"
 
 // a simple console, mostly for debugging
@@ -60,6 +61,13 @@ struct console_s {
                 caret = false;
             }
             heartbeat_bump();            // waiting for typing is alive (watchdog)
+            // Watch the pads like every other input loop: MODE must recover
+            // this console (it restarts outright), and a combo action hands
+            // back to the menu loop instead of being ignored here forever.
+            uint16_t joy1, joy2, hid1, hid2;
+            get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+            if (controls_poll(joy1 | hid1, joy2 | hid2, false, game_loaded()))
+                return line;
             uint8_t key = key_input();
             if (key > 0) {
                 if (key == '\b') {
@@ -114,6 +122,8 @@ struct console_s {
 
         while (1) {
             std::string line = trim(input_line());
+            if (pending_action != ACTION_NONE)
+                break;                  // the menu loop handles the action
             command_print('>'+line);
             if (line == "exit")
                 break;

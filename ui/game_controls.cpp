@@ -241,7 +241,8 @@ bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded)
 // Options screen
 
 // Show a prompt and record the next combo of exactly COMBO_BUTTONS buttons held
-// steady for a second. Returns 0 if cancelled (nothing held for 10 seconds).
+// steady for a second. Returns 0 if cancelled (10 seconds pass, from entry,
+// without one). MODE is polled throughout, so it still recovers this screen.
 static uint16_t capture_combo(const char *what) {
     overlay_clear();
     overlay_cursor(0, 10);
@@ -265,6 +266,7 @@ static uint16_t capture_combo(const char *what) {
         uint64_t now = bflb_mtimer_get_time_ms();
         uint16_t joy1, joy2, hid1, hid2;
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        check_mode_button(false, game_loaded());    // MODE restarts from here too
         uint16_t p1 = (joy1 | hid1) & 0xfff, p2 = (joy2 | hid2) & 0xfff;
         uint16_t cur = combo_count(p1) >= combo_count(p2) ? p1 : p2;
 
@@ -274,8 +276,8 @@ static uint16_t capture_combo(const char *what) {
             overlay_cursor(0, 18);
             overlay_printf("  %-28s", cur ? combo_to_string(cur, true).c_str() : "");
         }
-        if (cur)
-            start = now;            // any input restarts the cancel timeout
+        // The cancel deadline is absolute from entry: restarting it on any
+        // input let one stuck button hold this screen forever.
         if (combo_count(cur) == COMBO_BUTTONS && now - steady_since >= 1000) {
             overlay_cursor(0, 18);
             overlay_printf("  %-28s", (combo_to_string(cur, true) + " - got it").c_str());
