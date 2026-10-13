@@ -174,6 +174,8 @@ bitstreams), and runs `host/tests/*.script`:
 - `t-wedge-main` — a pad state stuck with 2 of 3 combo buttons stops
   blocking main-menu navigation after ~1.5 s, while still stuck.
 - `w-wedge-scanlines` — the same stuck state in Video > Scanlines.
+- `x-monitor-cores` — loading `monitor.bin` (core ID 0) from Cores does
+  not restart the firmware.
 
 `uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
 firmware's real UART receive ring and interrupt handler against a modelled

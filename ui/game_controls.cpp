@@ -73,6 +73,21 @@ void controls_reset(void) {
     gate_since = 0;
 }
 
+// A load-wait already saw the newly programmed core answer with this ID:
+// record it, so the MODE detector doesn't take that first answer for a
+// flash reload (a legitimately ID-0 bitstream like monitor.bin would
+// otherwise restart the firmware once). The early-MODE rule still applies
+// when nothing has answered yet (id < 0 primes nothing).
+void controls_prime_core_id(int16_t id) {
+    if (id < 0)
+        return;
+    seen_answer = true;
+    last_id = id;
+    misses = 0;
+    silent_since = 0;
+    last_poll = bflb_mtimer_get_time_ms();
+}
+
 static bool pressed(uint16_t pad1, uint16_t pad2, uint16_t combo) {
     return combo && (((pad1 & combo) == combo) || ((pad2 & combo) == combo));
 }

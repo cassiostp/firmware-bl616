@@ -278,6 +278,7 @@ run_test q-save-status sms:game.sms
 run_test q-save-timing sms:game.sms
 run_test t-wedge-main
 run_test w-wedge-scanlines sms:cgame.sms
+run_test x-monitor-cores
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

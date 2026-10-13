@@ -201,6 +201,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
             }
         }
     }
+    controls_prime_core_id(active_core);    // it answered: not a MODE reload
 
     if (active_core == core->id) {
         overlay_status("Loading ROM: %s\n", rom.c_str());
@@ -271,6 +272,7 @@ static int menu_loadrom(const char *dir) {
             if (active_core >= 0)
                 break;
         }
+        controls_prime_core_id(active_core);    // it answered: not MODE
         apply_core_config();
         return 0;       // return to main menu
     } 
@@ -616,6 +618,7 @@ static void reset_game(void) {
             forget_game();
             last_core_file = fname;
             active_core = get_core_id();
+            controls_prime_core_id(active_core);
             apply_core_config();       // the new bitstream starts with 0
         }
         return;
