@@ -74,7 +74,7 @@ unsupported_chips[] = {
     {0x32, 0x43, "S-DD1"}, {0x32, 0x45, "S-DD1"},
     {0x3a, 0xf5, "SPC7110"}, {0x3a, 0xf9, "SPC7110"},
     {0x20, 0xf3, "CX4"},
-    {0x30, 0xf5, "ST018"},	// smc_parser.v runs this as an ST01x DSP
+    {0x30, 0xf5, "ST018"},	// no smc_parser.v case (ST01x is 0xf6): plain-LoROM fallback
 };
 
 // BS-X (Satellaview) has no (map_ctrl, chipset) pair and no detection in
