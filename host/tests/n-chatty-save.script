@@ -1,0 +1,17 @@
+# SNES: a game that scribbles its battery RAM continuously is still saved, and
+# keeps being saved: the first dump follows the first write, and the core's next
+# notice (it re-announces as soon as a dump clears its flag) earns a second dump
+# a few seconds later.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+churn on
+wram-burst 0x000 512 0xA5
+expect-file saves/snes/game.sav size 8192
+wait-dump 12s
+churn off

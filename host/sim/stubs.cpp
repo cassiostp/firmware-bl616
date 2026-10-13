@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <thread>
 
 #include "board.h"
@@ -24,12 +25,18 @@
 #include "fatfs_diskio_register.h"
 #include "programmer.h"
 #include "usb_gamepad.h"
+#include "uart_rx.h"
 
 #include "fpga.hpp"
 #include "host.h"
 #include "sim_time.hpp"
 
 namespace {
+std::atomic<bool> g_uart_rxint_masked{true};
+std::mutex g_isr_m;
+int g_irq_num = 0;
+irq_callback g_irq_isr = nullptr;
+void *g_irq_arg = nullptr;
 std::atomic<uint64_t> g_wdg_feeds{0};
 std::atomic<uint64_t> g_wdg_last_ms{0};
 uint8_t g_hbn_boot = 0;
@@ -116,6 +123,18 @@ int bflb_uart_rxavailable(struct bflb_device_s *dev) {
     (void)dev;
     return fpga::rx_available() ? 1 : 0;
 }
+void bflb_uart_rxint_mask(struct bflb_device_s *dev, bool mask) {
+    (void)dev;
+    g_uart_rxint_masked.store(mask);
+}
+uint32_t bflb_uart_get_intstatus(struct bflb_device_s *dev) {
+    (void)dev;
+    return fpga::rx_available() ? UART_INTSTS_RX_FIFO : 0;
+}
+void bflb_uart_int_clear(struct bflb_device_s *dev, uint32_t int_clear) {
+    (void)dev;
+    (void)int_clear;
+}
 
 // ---- timers/clocks: the virtual simulation clock ----
 uint64_t bflb_mtimer_get_time_ms(void) {
@@ -151,6 +170,27 @@ void bflb_wdg_reset_countervalue(struct bflb_device_s *dev) {
 }
 
 // ---- misc SoC ----
+// The interrupt controller, for the one interrupt the firmware uses here (the
+// UART1 receive interrupt, utils/uart_rx.cpp). The backends call
+// fpga::rx_notify() when they queue bytes for the MCU; the hook runs the
+// registered handler, which drains them into the firmware's ring buffer exactly
+// as on the chip, in the same sim step the bytes arrived (the handler is
+// serialized, like one interrupt line).
+void run_uart_isr() {
+    std::lock_guard<std::mutex> lk(g_isr_m);
+    if (!g_uart_rxint_masked.load() && g_irq_isr)
+        g_irq_isr(g_irq_num, g_irq_arg);
+}
+void bflb_irq_attach(int irq, irq_callback isr, void *arg) {
+    g_irq_num = irq;
+    g_irq_isr = isr;
+    g_irq_arg = arg;
+}
+void bflb_irq_enable(int irq) {
+    (void)irq;
+    fpga::set_rx_hook(run_uart_isr);
+    run_uart_isr();                     // bytes that arrived before it was enabled
+}
 void bflb_irq_disable(int irq) {
     (void)irq;
 }
@@ -182,6 +222,7 @@ void usbh_initialize(void) {}
 void init_gpio_and_uart() {
     extern struct bflb_device_s *uart1_dev;
     uart1_dev = bflb_device_get_by_name("uart1");
+    uart_rx_init();
 }
 
 // ---- USB gamepads: none attached; pads are driven by the sim ----

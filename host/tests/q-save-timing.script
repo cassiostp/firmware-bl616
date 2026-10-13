@@ -1,0 +1,18 @@
+# The dump starts about 1 s after the game's first write, not 2 s: a player who
+# saves and presses MODE a second or two later (which restarts the console with
+# no chance to flush) keeps the save. (The fake core's blocks cost far more sim
+# time than the wire's; the RTL suites time the whole save.)
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+poke-save 0x10 0x42
+wait-dump 1500ms
+expect-file saves/sms/game.sav size 32768

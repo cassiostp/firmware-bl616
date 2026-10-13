@@ -1,0 +1,22 @@
+# SNES: the game menu reports the save. A write still inside the debounce is
+# flushed by opening the menu ("Saved to card"); opening it again finds the card
+# current, which the menu verifies against the core's RAM ("Save on card is
+# current") even though nothing marked it dirty.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+wram-burst 0x000 512 0xA5
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-screen "Saved to card"
+expect-file saves/snes/game.sav size 8192
+press a
+expect-overlay off
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-screen "Save on card is current"

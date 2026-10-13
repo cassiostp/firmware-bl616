@@ -629,6 +629,11 @@ int run_script() {
                 script_fail(lineno, "usage: churn <on|off>");
             printf("[%d] churn %s\n", lineno, t[1].c_str());
             fpga::set_churn(t[1] == "on");
+        } else if (cmd == "save-channel") {
+            if (t.size() != 2 || (t[1] != "on" && t[1] != "off"))
+                script_fail(lineno, "usage: save-channel <on|off>");
+            printf("[%d] save-channel %s\n", lineno, t[1].c_str());
+            fpga::set_save_channel(t[1] == "on");
         } else if (cmd == "wait-dump") {
             // Returns once the core asks for (or is asked for) a new save
             // block: a dump is in progress, so combos held now race it.

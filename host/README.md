@@ -15,10 +15,16 @@ cmake --build host/build -j
 ```
 
 This builds a Console 138K layout (`BOARD_NAME=console138k`). The build
-compiles the firmware with `-DTANGCORE_HOST=1`, which guards the only two
+compiles the firmware with `-DTANGCORE_HOST=1`, which guards the only three
 host-only spots in firmware sources: the `strcasestr` declaration in
-`utils/utils.h`, and the USB register writes in `ui/game_controls.cpp`
-(skipped on the host, which has no SoC registers).
+`utils/utils.h`, the USB register writes in `ui/game_controls.cpp` (skipped on
+the host, which has no SoC registers), and the UART FIFO overflow flag read in
+`utils/uart_rx.cpp`.
+
+The UART receive interrupt is modelled: the backends call `fpga::rx_notify()`
+when they queue bytes for the MCU, and the hook installed by `bflb_irq_enable`
+runs the firmware's registered handler, so the firmware reads its frames
+through the same interrupt-fed ring buffer as on the chip.
 
 ## Run interactively
 
@@ -90,6 +96,9 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   frames after a reload; on RTL reads the SDRAM model).
 - `churn on|off` — the "game" continuously scribbles WRAM (RTL only; the
   fake has no game model and ignores it). For combo/reset-during-dump tests.
+- `save-channel on|off` — the fake core answers save-block requests (`0x12`)
+  or stays mute, like a bitstream without the save channel. The RTL model
+  ignores it.
 - `wait-dump [timeout]` — returns once a save-block request (`0x12`) is
   seen, i.e. a dump is in progress, so a held combo races it.
 - `expect-alive 5s` — the watchdog heartbeat keeps moving.
@@ -153,6 +162,18 @@ bitstreams), and runs `host/tests/*.script`:
   restart.
 - `v-mode-fresh-silent` — a freshly programmed (still silent) core does not
   restart.
+- `p-save-fail` — a save whose block requests go unanswered is reported in the
+  game menu ("Save FAILED: no reply"), stays pending, and is written once the
+  core answers.
+- `q-save-status` — the game menu's save line: nothing written yet, then
+  "Saved to card" after a flush.
+- `q-save-timing` — the dump starts about 1 s after the game's first write.
+
+`uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
+firmware's real UART receive ring and interrupt handler against a modelled
+32-byte hardware FIFO at 2 Mbaud. It shows that a task that polls and sleeps
+a tick never receives a whole 515-byte save block, and that the interrupt-fed
+ring does, with up to ~110 us of interrupt latency.
 
 ## RTL backend (core co-simulation)
 
@@ -186,6 +207,15 @@ linked model's `name()`. Adding a core means a `model_<core>.cpp`, one
 - `r-config` — Video > Scanlines screen drives the real `core_config` register;
   Resume clears the pause bit.
 - `r-mode` — MODE reloads the FPGA from flash, firmware reboots to the menu.
+- `r-save-timing` — the dump starts about 1 s after the first write.
+- `r-save-status` — the game menu reports "Saved to card", then (the menu
+  verifies a small save against the core's RAM each time it opens) "Save on
+  card is current".
+- `r-chatty-save` — a game that scribbles its battery RAM continuously (work
+  RAM, like Zelda 1) is still saved, and dumped again a few seconds later.
+- `r-stale-dirty` — a ROM without a battery bit writes its $6000 RAM, then a
+  battery ROM on the same core must still be saved (loading a game re-syncs
+  the core's dirty flag).
 - `m-save-roundtrip` — MegaDrive battery round trip (cart-SRAM burst →
   16384-byte `.sav` from the header's `RA` range → power cycle → restore).
 - `m-combo-save` / `m-reset-save` — the same combos racing a dump with the
@@ -220,6 +250,9 @@ BSRAM port: `wram-*` writes go through the SNES cartridge bus and contend
 with the dump's reads in the real arbiter (SNES first, save bytes slip in
 between). snestang's save bridge lives in `snestang_top.v`, so its
 `cosim_top.sv` carries a copy of that logic: keep the two in step.
+
+`n-save-timing`, `n-save-status` and `n-chatty-save` repeat the NES timing,
+menu-status and continuous-writer tests on the SNES.
 
 ### Master System
 

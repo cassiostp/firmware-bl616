@@ -1,6 +1,7 @@
 // Battery saves: the cores' save RAM <-> SD card. See saves.cpp.
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 void saves_init(void);              // create the save task; call once at boot
@@ -23,7 +24,15 @@ void saves_settle(void);
 void saves_off(void);
 void saves_rearm(void);             // the game runs again: dirty notices matter again
 
+// What happened to the running game's save, for the game menu: one line of up
+// to ~30 columns ("Saved to card 12s ago", "Save FAILED: no reply", ...), or ""
+// if the core has no battery saves. saves_diag_text is the counters, <= 32
+// columns, for the diagnostic line.
+void saves_status_text(char *buf, size_t n);
+void saves_diag_text(char *buf, size_t n);
+
 // Called from uart1_rx_task only.
 void saves_rx_byte(uint16_t blk, uint16_t off, uint8_t b);
 void saves_rx_block_done(uint16_t blk);
 void saves_rx_dirty(void);
+void saves_rx_bad_frame(void);      // a 0x0A block frame arrived cut short or mis-sized

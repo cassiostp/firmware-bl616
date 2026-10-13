@@ -11,7 +11,9 @@
 Settings settings;
 
 #define SETTINGS_FILE "tangcore.cfg"
-#define SETTINGS_BUF_SIZE 1024
+// The file is ~1010 bytes with the default combos and grows with longer ones
+// (each combo is up to 44 characters); 1 KB made settings_save() fail.
+#define SETTINGS_BUF_SIZE 2048
 
 // FatFs objects used for USB drives must not be cached (see fbuf in main.cpp)
 USB_NOCACHE_RAM_SECTION static FIL fcfg;
@@ -232,7 +234,7 @@ bool settings_save() {
         "reset_combo=%s\n"
         "reset_enabled=%d\n"
         "close_hold_ms=%lu\n"
-        "# 1 shows a diagnostic line at the top of menus.\n"
+        "# 1 shows two diagnostic lines at the top of menus (pads and battery saves).\n"
         "diag=%d\n"
         "# Scanlines: 1 = on; darkness 25, 50, 75 or 100 (%%); thick 1 = thick lines;\n"
         "# full 1 = full-size picture (0 = integer scale, evenly spaced lines).\n"
