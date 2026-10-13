@@ -14,6 +14,10 @@ extern std::atomic<bool> g_reset_requested;
 
 uint64_t sim_uptime_ms();
 
+// HBN RTC counter across re-exec: a firmware-requested reset (MODE) keeps
+// it counting, a power cycle restarts it at 0. Called by reboot_resume().
+void sim_hbn_preserve(bool keep);
+
 // Watchdog feed introspection.
 uint64_t sim_wdg_feeds();
 uint64_t sim_wdg_last_ms();

@@ -211,6 +211,31 @@ add_gba() {
     head -c 1024 /dev/zero > "$dir/gba/gba_bios.bin"
 }
 
+add_gba_rtc() {
+    # $1 = dir, $2 = game code, $3 = backup ID string: 16 KB GBA ROM whose
+    # game code at 0xAC marks it as an RTC (and maybe solar) cart, plus BIOS.
+    local dir="$1"
+    mkdir -p "$dir/gba"
+    python3 - "$dir/gba/game.gba" "$2" "$3" <<'EOF'
+import sys
+d = bytearray(16384)
+d[0xAC:0xB0] = sys.argv[2].encode()
+d[0xC0:0xC0 + len(sys.argv[3])] = sys.argv[3].encode()
+open(sys.argv[1], 'wb').write(bytes(d))
+EOF
+    head -c 1024 /dev/zero > "$dir/gba/gba_bios.bin"
+}
+
+seed_clock() {
+    # $1 = dir: tangcore.cfg with the wall clock set to 2026-10-13 12:34 UTC.
+    local dir="$1"
+    python3 - "$dir/tangcore.cfg" <<'EOF'
+import calendar, sys
+u = calendar.timegm((2026, 10, 13, 12, 34, 0, 0, 0, 0))
+open(sys.argv[1], 'w').write("clock_unix=%d\nclock_hbn=0\nsolar_pct=50\n" % u)
+EOF
+}
+
 # (add_md is defined up with the RTL fixtures: both suites use it.)
 
 PASS=0
@@ -229,7 +254,11 @@ run_test() {
         case "$spec" in
             nes:*) add_nes "$sd" "${spec#nes:}" ;;
             sms:*) add_sms "$sd" "${spec#sms:}" ;;
+            snes:*) add_snes "$sd" "${spec#snes:}" ;;
             gba) add_gba "$sd" ;;
+            gba-rtc) add_gba_rtc "$sd" AXVE FLASH1M_V ;;
+            gba-solar) add_gba_rtc "$sd" U3IE EEPROM_V ;;
+            cfg-clock) seed_clock "$sd" ;;
             md:*) add_md "$sd" "${spec#md:}" ;;
             *) echo "bad fixture: $spec"; exit 2 ;;
         esac
@@ -276,6 +305,11 @@ run_test v-mode-fresh-silent sms:cgame.sms
 run_test p-save-fail sms:game.sms
 run_test q-save-status sms:game.sms
 run_test q-save-timing sms:game.sms
+run_test w-clock-set
+run_test x-clock-mode sms:cgame.sms
+run_test y-clock-gba cfg-clock gba-rtc
+run_test y-clock-snes cfg-clock snes:game.smc
+run_test z-clock-solar cfg-clock gba-solar
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

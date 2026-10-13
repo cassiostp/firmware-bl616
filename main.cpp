@@ -36,6 +36,7 @@ extern "C" {
 #include "init.h"
 #include "menu_manager.h"
 #include "settings.h"
+#include "clock.h"
 #include "uart_rx.h"
 #include "game_controls.h"
 
@@ -211,6 +212,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
         // defaults every core_config bit to 0, and the low 16 bits stay as
         // they are (core specific).
         apply_core_config();
+        clock_send_to_core(core->id == 3 ? gba_current_gpio_flags() : 0);
         last_core = core;
         last_rom = loading;
         saves_rearm();                  // the game starts: dirty notices matter again
@@ -298,8 +300,15 @@ static int menu_loadrom(const char *dir) {
 static void send_hid_to_core(void) {
     uint16_t hid1_old = 0, hid2_old = 0;
     bool first = true;
+    uint64_t last_clock_send = bflb_mtimer_get_time_ms();
     dprint("Start sending HID to core...");
     while (1) {
+        // The cores count seconds themselves; resync the wall clock every
+        // 10 s so drift and Options clock changes reach a running game.
+        if (bflb_mtimer_get_time_ms() - last_clock_send >= 10000) {
+            last_clock_send = bflb_mtimer_get_time_ms();
+            clock_send_to_core(active_core == 3 ? gba_current_gpio_flags() : 0);
+        }
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
         if (first || hid1 != hid1_old || hid2 != hid2_old) {    // send HID if changed
@@ -621,6 +630,7 @@ static void reset_game(void) {
     if (last_core->id == 3)
         gba_resend_backup_type();
     set_loading_state(0);
+    clock_send_to_core(last_core->id == 3 ? gba_current_gpio_flags() : 0);
     overlay(0);
     saves_rearm();                      // the same game runs again
 }
@@ -630,13 +640,18 @@ static void reset_game(void) {
 struct GameMenu: Menu {
     std::string message;
     bool pcxt;
+    bool solar;
     std::vector<int> rows;
 
     GameMenu() {
         core_info *core = loaded_core();
         pcxt = core && core->id == 6;
-        rows = pcxt ? std::vector<int>{9, 10, 11, 12, 13, 14, 16, 18}
-                    : std::vector<int>{9, 10, 11, 12, 13, 16, 18};
+        solar = core && core->id == 3 && gba_uses_solar();
+        rows = {9, 10, 11, 12, 13};
+        if (pcxt) rows.push_back(14);
+        if (solar) rows.push_back(15);
+        rows.push_back(16);
+        rows.push_back(18);
     }
 
     void render() override {
@@ -658,6 +673,10 @@ struct GameMenu: Menu {
         if (pcxt) {
             overlay_cursor(2, 14);
             overlay_printf("Floppy drives...");
+        }
+        if (solar) {
+            overlay_cursor(2, 15);
+            overlay_printf("Solar: %d%%", settings.solar_pct);
         }
         overlay_cursor(2, 16);
         overlay_printf("Close game");
@@ -698,6 +717,15 @@ struct GameMenu: Menu {
             core_info *core = loaded_core();
             string dir = string(drv).append(core->rom_dir);
             push_menu(std::unique_ptr<Menu>(create_pcxt_menu(dir.c_str())));
+            return false;
+        } else if (row == 15) {
+            // Boktai's light level: +10% per press, wraps to 0. The menu
+            // opening already settled saves, so the card is free to write.
+            settings.solar_pct = settings.solar_pct >= 100 ? 0
+                                 : (uint8_t)(settings.solar_pct + 10);
+            clock_send_to_core(gba_current_gpio_flags());
+            settings_save();
+            do_redraw();
             return false;
         } else if (row == 16) {
             pending_action = ACTION_CLOSE;
@@ -787,6 +815,7 @@ static void main_task(void *pvParameters)
     }
 
     settings_load();
+    clock_init();
 
     // load monitor core at startup
     string fname;
@@ -798,6 +827,7 @@ static void main_task(void *pvParameters)
 
     controls_reset();
 
+    uint32_t last_clock_persist = (uint32_t)bflb_mtimer_get_time_ms();
     while (1) {
         bool redraw = true;
         int choice = 0;
@@ -806,6 +836,14 @@ static void main_task(void *pvParameters)
         int line_start = 0;
         for (;;) {
             uint32_t now = bflb_mtimer_get_time_ms();
+            // Checkpoint the wall clock every 5 minutes idle in the menu,
+            // so a power cycle loses at most that much time. Settled first:
+            // never inside FatFs at the same time as a save dump.
+            if (now - last_clock_persist >= 5u * 60u * 1000u) {
+                last_clock_persist = now;
+                saves_settle();
+                settings_save();
+            }
             if (active_core == -1) {
                 active_core = get_core_id();            // 200ms timeout
                 overlay_status("core_id=%d", active_core);

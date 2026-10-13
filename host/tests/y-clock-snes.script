@@ -1,0 +1,10 @@
+# SNES load also gets the clock frame (for the S-RTC game; flags just "set").
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+expect-clock "2026-10-13 12:34" flags 4

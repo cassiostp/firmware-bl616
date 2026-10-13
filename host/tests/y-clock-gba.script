@@ -1,0 +1,15 @@
+# GBA RTC game (AXVE + FLASH1M): the load sends frame 0x14 with the RTC flag
+# and the seeded wall clock, and a save dump grows the .sav by the RTC sector.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+expect-clock "2026-10-13 12:34" flags 5
+poke-save 0x10 0x42
+wait-dump
+expect-file saves/gba/game.sav size 131584

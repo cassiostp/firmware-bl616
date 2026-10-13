@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -15,6 +16,7 @@
 #include "bflb_gpio.h"
 #include "bflb_uart.h"
 #include "bflb_mtimer.h"
+#include "bflb_rtc.h"
 #include "bflb_wdg.h"
 #include "bflb_irq.h"
 #include "bflb_clock.h"
@@ -211,6 +213,26 @@ void HBN_Set_User_Boot_Config(uint8_t cfg) {
     g_hbn_boot = cfg;
 }
 
+// ---- HBN RTC counter: 32 kHz ticks since "power-on". The base survives a
+// re-exec only when sim_hbn_preserve(true) exported it (MODE reset); a
+// power cycle starts again from 0, like the chip.
+static uint64_t hbn_base_ticks(void) {
+    static uint64_t base = [] {
+        const char *e = getenv("TANGCORE_SIM_HBN_TICKS");
+        return e ? strtoull(e, nullptr, 10) : 0;
+    }();
+    return base;
+}
+void bflb_rtc_init(struct bflb_device_s *dev, enum bflb_rtc_32k_clk_type clk_type) {
+    (void)dev;                          // like the SDK: never clears the counter
+    (void)clk_type;
+    (void)hbn_base_ticks();
+}
+uint64_t bflb_rtc_get_time(struct bflb_device_s *dev) {
+    (void)dev;
+    return hbn_base_ticks() + sim::now_ms() * 32768ull / 1000ull;
+}
+
 // ---- storage/USB registration: no-ops (ff.h is host-backed) ----
 void fatfs_sdh_driver_register(void) {}
 void fatfs_usbh_driver_register(void) {}
@@ -237,6 +259,17 @@ bool fpga_program(const char *fname) {
 }
 
 } // extern "C"
+
+void sim_hbn_preserve(bool keep) {
+    if (keep) {
+        char buf[32];
+        snprintf(buf, sizeof buf, "%llu",
+                 (unsigned long long)bflb_rtc_get_time(nullptr));
+        setenv("TANGCORE_SIM_HBN_TICKS", buf, 1);
+    } else {
+        unsetenv("TANGCORE_SIM_HBN_TICKS");
+    }
+}
 
 // Raw JTAG register pointers the firmware declares (programmer excluded, init
 // stubbed): point them at dummy storage so the link always resolves.

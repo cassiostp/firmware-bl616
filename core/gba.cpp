@@ -5,11 +5,45 @@
 #include "cores.h"
 #include "overlay.h"
 #include "saves.h"
+#include "settings.h"
 
 // Core specific state
 bool gba_bios_loaded;
 bool gba_missing_bios_warned;
 static uint8_t gba_backup_type;         // config code sent for the loaded game, 0 = none
+static uint8_t gba_gpio_flags;          // bit0: cart RTC, bit1: solar sensor (loader byte 1)
+
+// Cartridge GPIO devices are announced by the 4-char game code at ROM offset
+// 0xAC (first 3 chars identify the game, the 4th is the region). The tables
+// in GBA_MiSTer (GBA.sv gpio_quirk/solar_quirk) and mGBA (overrides.c) agree
+// on these; gyro/rumble/tilt carts are deliberately not listed.
+static const struct { char code[4]; uint8_t flags; } gba_gpio_ids[] = {
+    {"AXV", 1},     // Pokemon Ruby
+    {"AXP", 1},     // Pokemon Sapphire
+    {"BPE", 1},     // Pokemon Emerald
+    {"BKA", 1},     // Sennen Kazoku
+    {"BR4", 1},     // Rockman EXE 4.5
+    {"BLJ", 1},     // mGBA HW_RTC entries BLJJ/BLJK
+    {"BLV", 1},     // mGBA HW_RTC entry BLVJ
+    {"U3I", 3},     // Boktai: The Sun is in Your Hand (RTC + solar)
+    {"U32", 3},     // Boktai 2: Solar Boy Django
+    {"U33", 3},     // Boktai 3 (JP)
+};
+
+uint8_t gba_gpio_flags_for(const char *game_code) {
+    for (unsigned i = 0; i < sizeof gba_gpio_ids / sizeof gba_gpio_ids[0]; i++)
+        if (memcmp(game_code, gba_gpio_ids[i].code, 3) == 0)
+            return gba_gpio_ids[i].flags;
+    return 0;
+}
+
+bool gba_uses_solar(void) {
+    return (gba_gpio_flags & 2) != 0;
+}
+
+uint8_t gba_current_gpio_flags(void) {
+    return gba_gpio_flags;
+}
 
 // Cart backup chips announce themselves in the ROM with an ID string. These
 // are the ones GBA games ship; the byte is the core's config code (gba_memory
@@ -102,7 +136,9 @@ int loadgba(const char *fname) {
     unsigned int off = 0, br, total = 0;
     uint8_t tail[9];                    // backup ID scan: prev chunk's tail
     uint32_t tlen = 0, bhits = 0;       // (declared before the gotos below)
-    uint8_t btype = 0, bblocks = 64;    // the detected backup chip
+    uint8_t btype = 0;                  // the detected backup chip
+    uint16_t bblocks = 64;              // its save size in blocks (256 does not fit in uint8_t)
+    char game_code[4] = {0, 0, 0, 0};   // ROM offset 0xAC, from the first chunk
     memset(tail, 0, sizeof tail);
 
     // load actual ROM
@@ -119,6 +155,8 @@ int loadgba(const char *fname) {
             break;
 
         bhits |= gba_scan_backup(fbuf, br, tail, &tlen);
+        if (total == 0 && br > 0xB0)    // game code at 0xAC is in chunk 0
+            memcpy(game_code, fbuf + 0xAC, 4);
         send_fbuf_data(br);
 
         total += br;
@@ -140,15 +178,24 @@ int loadgba(const char *fname) {
     for (unsigned i = 0; btype == 0 && i < sizeof gba_backup_ids / sizeof gba_backup_ids[0]; i++)
         if (bhits & (1u << i)) { btype = gba_backup_ids[i].type; bblocks = btype == 2 ? 256 : btype == 1 ? 128 : btype == 4 ? 16 : 64; }
     gba_backup_type = btype;
-    if (btype) {
-        fbuf[0] = btype;
-        set_loading_state(3);
-        send_fbuf_data(1);
-    } else
+    gba_gpio_flags = gba_gpio_flags_for(game_code);
+    // Loader region 3 config, in order: backup type, GPIO flags, solar %.
+    // Always send all three: the core zeroes them at loading==1, and an old
+    // bitstream simply ignores the extra bytes.
+    fbuf[0] = btype;
+    fbuf[1] = gba_gpio_flags;
+    fbuf[2] = settings.solar_pct;
+    set_loading_state(3);
+    send_fbuf_data(3);
+    if (!btype)
         saves_set_battery(false);
     saves_set_blocks(bblocks);      // 64 (blank wipe only) if there is no battery
+    // RTC games keep their clock in one extra .sav sector (the core's
+    // MiSTer-format "RT" block), restored and dumped with the save RAM.
+    saves_set_extra_blocks((gba_gpio_flags & 1) ? 1 : 0);
     saves_restore();
-    DEBUG("loadgba: backup type %d, %d blocks\n", btype, bblocks);
+    DEBUG("loadgba: backup type %d, %d blocks, gpio %d (code %.4s)\n",
+          btype, bblocks, gba_gpio_flags, game_code);
 
     overlay_status("Success");
     core_running = true;
@@ -161,12 +208,14 @@ loadgba_close:
     return r;
 }
 
-// gba_memory clears the backup type whenever loading goes to 1, which a game
-// reset does too. Call between set_loading_state(1) and set_loading_state(0)
-// of a reset so the restarted game still finds its save chip.
+// gba_memory clears the loader config whenever loading goes to 1, which a
+// game reset does too. Call between set_loading_state(1) and
+// set_loading_state(0) of a reset so the restarted game still finds its
+// save chip and its GPIO devices.
 void gba_resend_backup_type(void) {
-    if (!gba_backup_type) return;
     fbuf[0] = gba_backup_type;
+    fbuf[1] = gba_gpio_flags;
+    fbuf[2] = settings.solar_pct;
     set_loading_state(3);
-    send_fbuf_data(1);
+    send_fbuf_data(3);
 }

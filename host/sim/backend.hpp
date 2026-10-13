@@ -36,6 +36,9 @@ class FpgaBackend : public sim::Backend {
 
     virtual uint32_t last_config() = 0; // last core_config word (MCU -> core)
     virtual uint32_t last_video_config() = 0; // last video_config word (0x13)
+    // Last clock frame payload (0x14, 13 bytes), empty if none seen. The
+    // fake records it; RTL models leave the default.
+    virtual std::vector<uint8_t> last_clock_frame() { return {}; }
 
     virtual BackendOsd osd_snapshot() = 0;
     virtual uint64_t osd_hash() = 0;

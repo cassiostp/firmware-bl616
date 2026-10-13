@@ -83,6 +83,11 @@ class FakeBackend : public FpgaBackend {
         return video_config_;
     }
 
+    std::vector<uint8_t> last_clock_frame() override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        return clock_frame_;
+    }
+
     BackendOsd osd_snapshot() override {
         std::lock_guard<std::recursive_mutex> lk(m_);
         BackendOsd s;
@@ -221,7 +226,7 @@ class FakeBackend : public FpgaBackend {
         osd_.cursor_col = 0;
         osd_.cursor_row = 0;
         if (save_ram_.empty())
-            save_ram_.assign(256 * 512, 0xFF);
+            save_ram_.assign(512 * 512, 0xFF);  // incl. a GBA RTC extra sector
     }
 
   private:
@@ -244,6 +249,7 @@ class FakeBackend : public FpgaBackend {
     int drop_ids_ = 0;
     uint32_t config_ = 0;
     uint32_t video_config_ = 0;
+    std::vector<uint8_t> clock_frame_;
     bool overlay_visible_ = true;
     uint64_t rom_bytes_ = 0;
     uint16_t pad1_ = 0, pad2_ = 0;
@@ -334,6 +340,9 @@ class FakeBackend : public FpgaBackend {
             if (p.size() >= 4)
                 video_config_ = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
                                 ((uint32_t)p[2] << 8) | p[3];
+            break;
+        case 0x14: // clock frame: record for expect-clock
+            clock_frame_ = p;
             break;
         case 0x04: // overlay cursor
             if (p.size() >= 2) {
@@ -527,6 +536,9 @@ uint32_t last_config() {
 }
 uint32_t last_video_config() {
     return g_active->last_video_config();
+}
+std::vector<uint8_t> last_clock_frame() {
+    return g_active->last_clock_frame();
 }
 OsdSnapshot osd_snapshot() {
     BackendOsd s = g_active->osd_snapshot();
