@@ -13,6 +13,10 @@ extern "C" {
 #include "menu_manager.h"
 #include "overlay.h"
 #include "utils.h"
+#include "dbg_log.h"
+#include "dbg_console.h"
+#include "usb_console.h"
+#include "saves.h"
 
 // Before a deliberate restart: the watchdog mustn't fire in whatever runs
 // next (the ROM flashing loader in flash mode).
@@ -175,13 +179,25 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         reloaded = true;
     if (!seen_answer && id == 0 && game_loaded)
         reloaded = true;
+    if (silent_ms >= 600)
+        dbg_log("link: fpga silent %lums, back as core %d%s",
+                (unsigned long)silent_ms, id, reloaded ? " (MODE)" : "");
     if (reloaded) {
         dprint("FPGA back as core %d after %lums silent: MODE pressed, restarting",
                id, (unsigned long)silent_ms);
-        overlay(1);
-        overlay_status("Restarting...");
-        delay(50);
-        restart_mcu(false);
+        if (usb_console_enabled()) {
+            // A reset here would kill the USB console and, with a PC on
+            // the BL616 port, land in Sipeed's debug mode. Keep the MCU
+            // (and the log's audience) alive: the main loop reprograms
+            // the menu core and redraws instead.
+            dbg_log("MODE with usb console on: reload without MCU reset");
+            pending_action = ACTION_MODE_RELOAD;
+        } else {
+            overlay(1);
+            overlay_status("Restarting...");
+            delay(50);
+            restart_mcu(false);
+        }
     }
     seen_answer = true;
     last_id = id;
@@ -318,6 +334,7 @@ static void reboot_to_flash_mode(void) {
 // (the screen keeps whatever the FPGA last showed). The ROM's loader likewise
 // never shows up on the PC.
 static void restart_mcu(bool flash_mode) {
+    dbg_log("restart_mcu(flash=%d)", flash_mode ? 1 : 0);
     taskENTER_CRITICAL();
     usb_back_to_power_on_state();
     arch_delay_ms(100);             // long enough for the other end to see a detach
@@ -325,6 +342,10 @@ static void restart_mcu(bool flash_mode) {
         HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
     stop_watchdog();
     GLB_SW_System_Reset();
+}
+
+void tc_restart_mcu(bool flash_mode) {
+    restart_mcu(flash_mode);
 }
 
 struct FlashModeMenu: Menu {
@@ -386,19 +407,23 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 15);
         overlay_printf("Flash mode...");
         overlay_cursor(2, 16);
-        overlay_printf("Save");
+        overlay_printf("USB debug console: %s", usb_console_enabled() ? "ON" : "OFF");
         overlay_cursor(2, 17);
+        overlay_printf("Save debug log");
+        overlay_cursor(2, 18);
+        overlay_printf("Save");
+        overlay_cursor(2, 19);
         overlay_printf("<< Back");
-        overlay_cursor(2, 20);
+        overlay_cursor(2, 21);
         //                01234567890123456789012345678901
         overlay_printf("In game:");
-        overlay_cursor(2, 21);
-        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 22);
-        overlay_printf(" Reset combo: reset the game,");
+        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 23);
-        overlay_printf(" keep holding: close the game");
+        overlay_printf(" Reset combo: reset the game,");
         overlay_cursor(2, 24);
+        overlay_printf(" keep holding: close the game");
+        overlay_cursor(2, 25);
         overlay_printf("Video: in the game menu");
         if (!message.empty()) {
             overlay_cursor(2, 26);
@@ -407,7 +432,7 @@ struct OptionsMenu: Menu {
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 15, 16, 17};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -449,7 +474,31 @@ struct OptionsMenu: Menu {
         case 6:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 7:
+        case 7:                     // USB debug console on/off
+            if (usb_console_enabled()) {
+                usb_console_set_enabled(false);
+                message = "USB console OFF; host back";
+            } else if (usb_console_set_enabled(true)) {
+                message = "USB console ON: BL616 pads off";
+            } else {
+                message = "Needs the SD card (drive is USB)";
+            }
+            break;
+        case 8: {                   // Save debug log
+            if (saves_busy()) {
+                message = "Save in progress, retry";
+                break;
+            }
+            std::string dir = std::string(drv) + "tangcore";
+            f_mkdir(dir.c_str());   // FR_EXIST is fine
+            dir += "/";
+            message = dbg_log_save(dir.c_str())
+                          ? "Wrote tangcore/debuglog.txt"
+                          : "Could not write the log";
+            dbg_log("options: save debug log -> %s", message.c_str());
+            break;
+        }
+        case 9:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away

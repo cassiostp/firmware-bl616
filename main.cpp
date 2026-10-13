@@ -38,6 +38,9 @@ extern "C" {
 #include "settings.h"
 #include "uart_rx.h"
 #include "game_controls.h"
+#include "dbg_log.h"
+#include "dbg_console.h"
+#include "usb_console.h"
 
 // Uncomment this to enable UART console (use with caution. it may interfere with MCU-FPGA communication)
 #define UART_CONSOLE
@@ -126,7 +129,9 @@ static void clear_pad_states(void);
 // by the FPGA restart from nothing, so reset what tracks them (and the
 // core_config copy, so one core's specific bits don't reach the next).
 static bool program_fpga(const char *fname) {
+    dbg_log("core load start: %s", fname);
     bool r = fpga_program(fname);
+    dbg_log("core load %s: %s", r ? "ok" : "FAILED", fname);
     forget_core_config();               // the new core starts with core_config = 0
     clear_pad_states();
     controls_reset();
@@ -203,10 +208,14 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
     }
 
     if (active_core == core->id) {
+        dbg_log("rom load start: %s on %s", rom.c_str(), core->display_name);
         overlay_status("Loading ROM: %s\n", rom.c_str());
         string loading = rom;               // rom may be last_rom itself
-        if (core->load_rom(loading.c_str()) != 0)
+        if (core->load_rom(loading.c_str()) != 0) {
+            dbg_log("rom load FAILED: %s", loading.c_str());
             return -1;                      // the loader showed the error
+        }
+        dbg_log("rom load ok: %s", loading.c_str());
         // Drive the video options now that the core runs. A fresh core
         // defaults every core_config bit to 0, and the low 16 bits stay as
         // they are (core specific).
@@ -427,12 +436,21 @@ static void watchdog_task(void *pvParameters)
 {
     uint32_t last_beat = heartbeat;
     uint64_t last_beat_time = bflb_mtimer_get_time_ms();
+    bool stall_logged = false;
     while (1) {
         if (heartbeat != last_beat) {
             last_beat = heartbeat;
             last_beat_time = bflb_mtimer_get_time_ms();
+            stall_logged = false;
         }
-        if (bflb_mtimer_get_time_ms() - last_beat_time < HEARTBEAT_STALL_MS)
+        uint64_t stale = bflb_mtimer_get_time_ms() - last_beat_time;
+        if (stale >= 5000 && !stall_logged) {
+            stall_logged = true;
+            dbg_log("watchdog: heartbeat stalled %lus (beat %lu)%s",
+                    (unsigned long)(stale / 1000), (unsigned long)last_beat,
+                    dbg_wdtest_stall ? " [wdtest]" : "");
+        }
+        if (stale < HEARTBEAT_STALL_MS && !dbg_wdtest_stall)
             bflb_wdg_reset_countervalue(wdg_dev);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
@@ -478,6 +496,7 @@ static void uart1_rx_task(void *pvParameters)
                 pos++;
             } else if (pos == 3) {   // command type
                 type = ch;
+                dbg_sniff_note_rx(type);
                 pos++;
 
             ////// pos >= 4 //////
@@ -708,6 +727,7 @@ struct GameMenu: Menu {
 };
 
 static void show_game_menu(void) {
+    dbg_log("game menu open");
     overlay(1);
     suppress_held_buttons();            // the button that opened it isn't a choice
     saves_settle();                     // flush the running game's save before the menu
@@ -729,6 +749,22 @@ static bool handle_game_action(void) {
         case ACTION_GAME_MENU:
             show_game_menu();           // may set another action
             break;
+        case ACTION_MODE_RELOAD: {
+            // MODE with the debug console on (see check_mode_button):
+            // the FPGA is back on its flash bitstream. Reprogram the
+            // menu core and redraw, keeping the MCU and USB alive.
+            menu_clear();
+            overlay(1);
+            saves_off();
+            overlay_status("MODE: reloading menu...");
+            string fname;
+            if (find_core_for_board(fname, "monitor.bin"))
+                program_fpga(fname.c_str());
+            forget_game();
+            active_core = get_core_id();
+            dbg_log("MODE reload done, core_id=%d", active_core);
+            break;
+        }
         case ACTION_RESUME:
             menu_clear();
             if (game_loaded()) {
@@ -737,10 +773,12 @@ static bool handle_game_action(void) {
             }
             break;
         case ACTION_RESET:
+            dbg_log("game action: reset");
             menu_clear();
             reset_game();
             break;
         case ACTION_CLOSE:
+            dbg_log("game action: close");
             menu_clear();
             close_game();
             break;
@@ -787,6 +825,18 @@ static void main_task(void *pvParameters)
     }
 
     settings_load();
+
+    // A previous boot's log survived the reset (MODE, watchdog): keep it
+    // on the card before this boot's lines overwrite it. No save can be
+    // in flight yet, but check anyway.
+    if (res == FR_OK && dbg_log_have_previous() && !saves_busy()) {
+        string dir = string(drv) + "tangcore";
+        f_mkdir(dir.c_str());
+        dir += "/";
+        bool ok = dbg_log_dump_postmortem(dir.c_str());
+        dbg_log("postmortem: previous log %s to %slastlog.txt",
+                ok ? "written" : "WRITE FAILED", dir.c_str());
+    }
 
     // load monitor core at startup
     string fname;
@@ -926,6 +976,18 @@ int main(void)
 {
     /* Board init */
     board_init();
+    dbg_log_init();
+    {
+        GLB_RESET_RECORD_Type rr = {};
+        GLB_Get_Reset_Reason(&rr);
+        dbg_log("boot: TangCore %s board %s reset pow%d ext%d pds%d wdt%d cpu%d sys%d req%d, prev log %s",
+                __DATE__, BOARD_NAME,
+                (int)rr.reset_recorder_ana_powb, (int)rr.reset_recorder_ext_rst_n,
+                (int)rr.reset_recorder_pds_reset, (int)rr.reset_recorder_wdt_rst_n,
+                (int)rr.reset_recorder_cpu_porst_n, (int)rr.reset_recorder_sys_reset_n,
+                (int)rr.reset_recorder_cpu_sys_rstreq_n,
+                dbg_log_have_previous() ? "kept" : "none");
+    }
     // a "Flash mode" request has done its job once this firmware runs again
     if (HBN_Get_User_Boot_Config() == 1)
         HBN_Set_User_Boot_Config(0);
@@ -962,6 +1024,7 @@ int main(void)
     bflb_wdg_start(wdg_dev);
 
     saves_init();           // battery saves: core/saves.cpp
+    usb_console_init();     // debug console task (USB device stays off until Options)
     overlay_status("Creating tasks...");
     // Create the tasks
     xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle);
