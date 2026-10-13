@@ -26,6 +26,8 @@
 #include "programmer.h"
 #include "usb_gamepad.h"
 #include "uart_rx.h"
+#include "usb_console.h"
+#include "dbg_console.h"
 
 #include "fpga.hpp"
 #include "host.h"
@@ -245,3 +247,36 @@ volatile uint32_t *reg_gpio_tms = &g_sim_gpio_dummy;
 volatile uint32_t *reg_gpio_tck = &g_sim_gpio_dummy;
 volatile uint32_t *reg_gpio_tdo = &g_sim_gpio_dummy;
 volatile uint32_t *reg_gpio_tdi = &g_sim_gpio_dummy;
+
+// ---- USB debug console: no USB device in the sim; the on/off flag and the
+// command core are real, so the Options toggle and MODE path run as on HW.
+namespace {
+bool g_usb_console_on = false;
+bool sim_console_write(const char *, size_t n) { return true; (void)n; }
+} // namespace
+
+void usb_console_init(void) {
+    dbg_console_init(nullptr);
+    dbg_console_set_transport(sim_console_write);
+}
+
+bool usb_console_set_enabled(bool on) {
+    extern const char *drv;
+    if (on && drv && !strcmp(drv, "usb:"))
+        return false;
+    g_usb_console_on = on;
+    dbg_console_set_active(on);
+    return true;
+}
+
+bool usb_console_enabled(void) {
+    return g_usb_console_on;
+}
+
+extern "C" int GLB_Get_Reset_Reason(GLB_RESET_RECORD_Type *reason) {
+    if (reason) {
+        memset(reason, 0, sizeof *reason);
+        reason->reset_recorder_ana_powb = 1;
+    }
+    return 0;
+}
