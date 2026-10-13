@@ -1,6 +1,8 @@
 #include "utils.h"
+#include "dbg_console.h"
 
 void fpga_tx_header(int cmd, int len) {
+    dbg_sniff_note_tx((uint8_t)cmd);
     bflb_uart_putchar(uart1_dev, 0xAA);
     bflb_uart_putchar(uart1_dev, len >> 8);
     bflb_uart_putchar(uart1_dev, len & 0xFF);
@@ -139,12 +141,13 @@ volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
 volatile uint32_t heartbeat;                // last activity tick (watchdog)
+volatile bool dbg_wdtest_stall;             // console wdtest: stop feeding the watchdog
 
 // Count a beat, and feed the watchdog here too: some bump sites run inside
 // critical sections, where the watchdog task can't.
 void heartbeat_bump(void) {
     heartbeat++;
-    if (wdg_dev)                    // NULL until main() sets the watchdog up
+    if (wdg_dev && !dbg_wdtest_stall)   // NULL until main() sets the watchdog up
         bflb_wdg_reset_countervalue(wdg_dev);
 }
 
