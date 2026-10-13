@@ -223,10 +223,9 @@ static uint64_t hbn_base_ticks(void) {
     }();
     return base;
 }
-void bflb_rtc_init(struct bflb_device_s *dev, enum bflb_rtc_32k_clk_type clk_type) {
-    (void)dev;                          // like the SDK: never clears the counter
-    (void)clk_type;
-    (void)hbn_base_ticks();
+int HBN_Enable_RTC_Counter(void) {
+    (void)hbn_base_ticks();             // enable bit only: the counter keeps running
+    return 0;
 }
 uint64_t bflb_rtc_get_time(struct bflb_device_s *dev) {
     (void)dev;

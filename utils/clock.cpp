@@ -1,8 +1,9 @@
 // System wall clock: see clock.h for the design. Time source, in order:
 //   1. the BL616 HBN RTC counter (32 kHz, HBN power domain). It keeps
 //      counting across the GLB software reset that a MODE press ends in
-//      (bflb_rtc_init only sets the enable bit; it never clears the
-//      counter), so the clock survives MODE like the user's decision asks.
+//      (clock_init only sets the HBN enable bit via HBN_Enable_RTC_Counter,
+//      which never clears the counter), so the clock survives MODE like the
+//      user's decision asks.
 //   2. the mtimer uptime, anchored at the time persisted in tangcore.cfg.
 // After a power cycle the HBN counter restarts from 0, which the anchor
 // check in clock_init() detects (negative or absurd jump) and ignores:
@@ -13,6 +14,7 @@
 extern "C" {
 #include "bflb_mtimer.h"
 #include "bflb_rtc.h"
+#include "bl616_hbn.h"
 }
 #include <stdio.h>
 
@@ -65,7 +67,8 @@ static void rebase(uint32_t unix_s) {
 void clock_init(void) {
     rtc_dev = bflb_device_get_by_name("rtc");
     if (rtc_dev)
-        bflb_rtc_init(rtc_dev, BFLB_RTC_32K_CLK_RC);
+        HBN_Enable_RTC_Counter();   // set the enable bit only: never clears
+                                    // the counter, so it survives MODE
 
     uint32_t saved = settings.clock_unix;
     clk_set = saved != 0;
