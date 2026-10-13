@@ -500,11 +500,16 @@ static void uart1_rx_task(void *pvParameters)
                     // Combine bytes into 16-bit values
                     uint16_t joy1 = (buffer[0] << 8) | buffer[1];
                     uint16_t joy2 = (buffer[2] << 8) | buffer[3];
-                    
+
+                    // Drop implausible words (a garbled frame, e.g. 0x0f0f):
+                    // no hand holds more than 6 of these buttons at once,
+                    // and accepting one can stick combo bits held forever.
                     // Update global state with mutex protection
                     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-                        joy1_state = joy1;
-                        joy2_state = joy2;
+                        if (combo_count(joy1) <= 6)
+                            joy1_state = joy1;
+                        if (combo_count(joy2) <= 6)
+                            joy2_state = joy2;
                         xSemaphoreGive(state_mutex);
                     }
                     pos = 0; // Reset for next packet

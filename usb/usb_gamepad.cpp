@@ -100,6 +100,26 @@ void hid_release_joystick(uint8_t idx) {
     DEBUG("Release joystick %d (map=%02x)\n", idx, joystick_map);
 }
 
+// A pad that goes away must not leave its last buttons held forever (pads
+// only report changes); zero its slot under state_mutex, the same lock the
+// client threads write with. Only slots 0/1 are reported to the firmware.
+static void clear_hid_slot(int idx) {
+    if (idx < 0 || idx > 1)
+        return;
+    xSemaphoreTake(state_mutex, portMAX_DELAY);
+    if (idx == 0)
+        hid1_state = 0;
+    else
+        hid2_state = 0;
+    xSemaphoreGive(state_mutex);
+}
+
+// No hand holds more than 6 of these buttons at once; a report claiming
+// more is garbled, and accepting it can stick combo bits held forever.
+static bool pad_plausible(uint16_t s) {
+    return __builtin_popcount(s & 0xfff) <= 6;
+}
+
 uint8_t byteScaleAnalog(int16_t xbox_val)
 {
     // Scale the xbox value from [-32768, 32767] to [1, 255]
@@ -190,7 +210,10 @@ static void usbh_update(struct usb_config *usb) {
 
             if(usb->hid_info[i].report.type == REPORT_TYPE_JOYSTICK) {
                 DEBUG("Joystick %d gone", usb->hid_info[i].hid_state.joystick.js_index);
+                clear_hid_slot(usb->hid_info[i].hid_state.joystick.js_index);
                 hid_release_joystick(usb->hid_info[i].hid_state.joystick.js_index);
+            } else if(usb->hid_info[i].report.type == REPORT_TYPE_KEYBOARD) {
+                clear_hid_slot(0);      // a keyboard doubles as pad 1
             }
         }
     }
@@ -221,6 +244,7 @@ static void usbh_update(struct usb_config *usb) {
             usb->xbox_info[i].state = STATE_NONE;
 
             DEBUG("Joystick %d is gone", usb->xbox_info[i].js_index);
+            clear_hid_slot(usb->xbox_info[i].js_index);
             hid_release_joystick(usb->xbox_info[i].js_index);
         }
     }
@@ -334,13 +358,17 @@ static void usbh_hid_client_thread(void *arg) {
                         // SNES: R  L  X A RT LT DN UP ST SE Y  B
                         // HID:            Y  B  A  X  UP DN LT RT                     
                         // EXTRA:                ST SE       R  L
-                        *snes = (hid_state & 1) << 7 | (hid_state & 2) << 5 | (hid_state & 4) << 3 | (hid_state & 8) << 1 |
+                        uint16_t v = (hid_state & 1) << 7 | (hid_state & 2) << 5 | (hid_state & 4) << 3 | (hid_state & 8) << 1 |
                                 (hid_state & 0x10) << 5 | (hid_state & 0x20) << 3| (hid_state & 0x40) >> 6 | (hid_state & 0x80) >> 6 |
                                 (hid_extra & 0x01) << 10 | (hid_extra & 0x02) << 10 | (hid_extra & 0x10) >> 2 | (hid_extra & 0x20) >> 2;
+                        if (pad_plausible(v))
+                            *snes = v;
                         xSemaphoreGive(state_mutex);
                     } else if (hid->report.type == REPORT_TYPE_KEYBOARD) {
                         // allow keyboard to double as a gamepad
-                        hid1_state = kbd_to_joy(hid->buffer, hid->nbytes);
+                        uint16_t v = kbd_to_joy(hid->buffer, hid->nbytes);
+                        if (pad_plausible(v))
+                            hid1_state = v;
                     }
                 }
             }
@@ -418,9 +446,11 @@ static void usbh_xbox_client_thread(void *arg) {
                     // SNES: R  L  X A RT LT DN UP ST SE Y  B
                     // XBOX:           X  Y  A  B  UP DN LT RT
                     // EXTRA:                ST SE       R  L
-                    *snes = (state & 1) << 7 | (state & 2) << 5 | (state & 4) << 3 | (state & 8) << 1 |
+                    uint16_t v = (state & 1) << 7 | (state & 2) << 5 | (state & 4) << 3 | (state & 8) << 1 |
                             (state & 0x10) >> 4 | (state & 0x20) << 3| (state & 0x40) >> 5 | (state & 0x80) << 2 |
                             (state_extra & 0x01) << 10 | (state_extra & 0x02) << 10 | (state_extra & 0x10) >> 2 | (state_extra & 0x20) >> 2;
+                    if (pad_plausible(v))
+                        *snes = v;
                     xSemaphoreGive(state_mutex);
                 }
             } else {

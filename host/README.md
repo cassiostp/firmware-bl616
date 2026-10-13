@@ -74,6 +74,9 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   released as soon as the OSD reacts, so navigation steps exactly once.
   Buttons: `up down left right a b x y l r start select` (`sel` = select).
 - `hold select+start+l 400ms` — hold for a sim-time duration (combos).
+- `stuck select+start` / `unstuck` — fault injection: buttons that stay
+  held in the firmware's pad state until `unstuck`, as when a release
+  frame is lost (FPGA pads only report changes).
 - `expect-screen "text"` / `expect-no-screen "text"` — OSD contains (or for
   the whole timeout, never contains) the substring.
 - `expect-cursor-row 9` — the `>` cursor is on that OSD row.
@@ -168,6 +171,9 @@ bitstreams), and runs `host/tests/*.script`:
 - `q-save-status` — the game menu's save line: nothing written yet, then
   "Saved to card" after a flush.
 - `q-save-timing` — the dump starts about 1 s after the game's first write.
+- `t-wedge-main` — a pad state stuck with 2 of 3 combo buttons stops
+  blocking main-menu navigation after ~1.5 s, while still stuck.
+- `w-wedge-scanlines` — the same stuck state in Video > Scanlines.
 
 `uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
 firmware's real UART receive ring and interrupt handler against a modelled

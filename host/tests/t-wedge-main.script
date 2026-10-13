@@ -1,0 +1,13 @@
+# A pad state stuck holding 2 of the 3 combo buttons (a lost release frame:
+# FPGA pads only report changes) must stop blocking main-menu navigation
+# after ~1.5s, while still stuck. The heartbeat keeps moving throughout, so
+# the watchdog alone would never rescue this (#29).
+expect-screen "TangCore"
+expect-cursor-row 9
+stuck select+start
+expect-alive 2s
+press down
+expect-cursor-row 10
+unstuck
+press down
+expect-cursor-row 11

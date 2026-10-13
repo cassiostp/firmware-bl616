@@ -316,6 +316,24 @@ void cmd_hold(uint16_t bits, uint64_t ms) {
     msleep(150);
 }
 
+// Fault injection: buttons that stay held in the firmware's pad state, as
+// when a release frame is lost on the wire (FPGA pads only report changes).
+// `unstuck` releases them again (the next change frame reaches the firmware).
+uint16_t g_stuck_bits = 0;
+
+void cmd_stuck(uint16_t bits) {
+    msleep(100);
+    g_stuck_bits |= bits;
+    pads_add(bits);
+    msleep(150);
+}
+
+void cmd_unstuck() {
+    pads_remove(g_stuck_bits);
+    g_stuck_bits = 0;
+    msleep(150);
+}
+
 // ---- reboot: re-exec ourselves, resuming the script after `line` ----
 [[noreturn]] void reboot_resume(long line) {
     char pos[32];
@@ -457,6 +475,17 @@ int run_script() {
                 script_fail(lineno, "usage: hold <buttons> <dur>");
             printf("[%d] hold %s %s\n", lineno, t[1].c_str(), t[2].c_str());
             cmd_hold(bits, ms);
+        } else if (cmd == "stuck") {
+            uint16_t bits;
+            if (t.size() != 2 || !parse_btns(t[1], bits))
+                script_fail(lineno, "usage: stuck <buttons>");
+            printf("[%d] stuck %s (held until unstuck)\n", lineno, t[1].c_str());
+            cmd_stuck(bits);
+        } else if (cmd == "unstuck") {
+            if (t.size() != 1)
+                script_fail(lineno, "usage: unstuck");
+            printf("[%d] unstuck\n", lineno);
+            cmd_unstuck();
         } else if (cmd == "expect-screen" || cmd == "expect-no-screen") {
             bool neg = cmd == "expect-no-screen";
             uint64_t to = neg ? 2000 : 10000;

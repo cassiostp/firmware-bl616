@@ -24,7 +24,8 @@ extern volatile GameAction pending_action;
 bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded);
 
 // True while at least 2 buttons of a combo are held, so menus can ignore
-// navigation that's really the start of a combo.
+// navigation that's really the start of a combo. Time-boxed: a combo state
+// unchanged for ~1.5s (stuck pad bits) stops reporting true.
 bool combo_in_progress(uint16_t pad1, uint16_t pad2);
 
 // Forget combo and MODE state, e.g. after the FPGA was reprogrammed (a new

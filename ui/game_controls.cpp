@@ -38,6 +38,8 @@ volatile GameAction pending_action = ACTION_NONE;
 #define MODE_TIMEOUT_MENU 30      // menu polls wait this long: replies arrive in
                                   // well under 1ms, behind a 515-byte frame ~2.6ms
 #define POLL_GAP_MS       1500    // polls further apart than this don't count as in a row
+#define COMBO_GATE_MS     1500    // a combo state unchanged this long stops
+                                  // blocking menu navigation (stuck pad bits)
 
 static uint16_t combo_held;         // which combo is being held (0 = none)
 static uint64_t combo_since;        // when it started being held
@@ -47,6 +49,8 @@ static bool seen_answer;            // the FPGA answered since the last reset
 static int16_t last_id;             // the last core ID it answered
 static int misses;                  // polls in a row without an answer
 static uint64_t silent_since;       // start of the first unanswered poll (0 = answering)
+static uint32_t gate_sig;           // combo bits (both pads) doing the gating
+static uint64_t gate_since;         // when that gating state last changed
 static uint16_t mode_max_silence_ms;  // longest silent gap seen (diagnostic line)
 
 // Longest silent gap (first miss to next answer) in ms, for the diagnostic
@@ -65,6 +69,8 @@ void controls_reset(void) {
     misses = 0;
     silent_since = 0;
     mode_max_silence_ms = 0;
+    gate_sig = 0;
+    gate_since = 0;
 }
 
 static bool pressed(uint16_t pad1, uint16_t pad2, uint16_t combo) {
@@ -77,10 +83,28 @@ static uint16_t active_reset_combo(void) {
 
 bool combo_in_progress(uint16_t pad1, uint16_t pad2) {
     uint16_t combos[] = {settings.menu_combo, active_reset_combo()};
+    uint16_t bits = settings.menu_combo | active_reset_combo();
+    uint32_t sig = ((uint32_t)(pad1 & bits) << 16) | (pad2 & bits);
+    bool gating = false;
     for (uint16_t c : combos)
         if (c && (combo_count(pad1 & c) >= 2 || combo_count(pad2 & c) >= 2))
-            return true;
-    return false;
+            gating = true;
+    if (!gating) {
+        gate_sig = 0;
+        return false;
+    }
+    // Time-box the block: pads only report changes, so one lost release
+    // frame (or a USB pad unplugged mid-press) holds combo bits forever.
+    // A real combo completes within its short hold; a state that sits
+    // unchanged far longer is stuck, and navigation must come back. Only
+    // the combo bits count for "unchanged": other buttons still navigate.
+    uint64_t now = bflb_mtimer_get_time_ms();
+    if (sig != gate_sig) {
+        gate_sig = sig;
+        gate_since = now;
+        return true;
+    }
+    return now - gate_since < COMBO_GATE_MS;
 }
 
 static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
