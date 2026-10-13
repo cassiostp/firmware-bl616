@@ -59,8 +59,9 @@ std::atomic<int> g_current_line{0};
 std::chrono::steady_clock::time_point g_wall_t0;
 
 // Sim time (see sim_time.hpp): everything the firmware and the script do is
-// measured in it. Advancing yields wall-clock time between 5 ms chunks so the
-// firmware threads keep running while the script waits.
+// measured in it. The scheduler advances it in 5 ms chunks only while every
+// thread is blocked, so firmware threads always run at a frozen instant
+// while the script waits.
 uint64_t now_ms() {
     return sim::now_ms();
 }
@@ -277,33 +278,24 @@ bool poll_until(uint64_t timeout_ms, bool (*cond)(void *), void *arg) {
 // pass and then debounces ~100 ms, so releasing promptly after the first
 // visible reaction gives exactly one step.
 //
-// Two things make this deterministic (independent of host scheduling):
-//  - While waiting, the script never advances the clock itself: it only
-//    yields, so its observe-release window stays microseconds of wall time.
-//    The rate cap (yield_wall) stretches the firmware's 100 ms debounce to
-//    ~10 ms of wall time, which cannot elapse unseen in that window. A
-//    periodic tiny advance is only a backstop in case time ever stops
-//    flowing.
-//  - On release the pressed bits are cleared straight in the firmware's pad
-//    state (under state_mutex), as well as through the normal pad frame, so
-//    a menu pass sampling after the release can never see the level held.
+// Determinism comes from the sim scheduler (sim_time.hpp): the clock is
+// frozen while this thread is runnable, so the observe-release window
+// cannot be overrun by time advancing unseen. The loop steps time in
+// 5 ms chunks and re-checks the OSD after each chunk; once the firmware
+// has reacted and entered its 100 ms debounce, the release lands at a
+// frozen instant well inside that debounce, on any host. On release the
+// pressed bits are also cleared straight in the firmware's pad state
+// (under state_mutex), as well as through the normal pad frame, so a
+// menu pass sampling after the release can never see the level held.
 void cmd_press(uint16_t bits) {
     msleep(100); // let the previous screen settle
     auto rows0 = fpga::cursor_rows();
     uint64_t h0 = fpga::osd_hash();
     pads_add(bits);
     uint64_t t0 = now_ms();
-    int spin = 0;
-    for (;;) {
-        if (fpga::cursor_rows() != rows0 || fpga::osd_hash() != h0)
-            break;
-        if (now_ms() - t0 > 2000)
-            break; // no reaction (e.g. at list end): release anyway
-        if (++spin % 20000 == 0)
-            msleep(5); // backstop: keep time flowing no matter what
-        else
-            std::this_thread::yield();
-    }
+    while (fpga::cursor_rows() == rows0 && fpga::osd_hash() == h0 &&
+           now_ms() - t0 <= 2000)
+        msleep(5);
     pads_remove(bits);
     msleep(300);
 }
@@ -777,6 +769,10 @@ void pulse(uint16_t bits, uint64_t ms) {
 }
 
 int run_interactive() {
+    // Observer thread: it blocks in read() on stdin between sim waits, and
+    // that wall-blocking must not hold the sim clock (its msleeps still
+    // register personal deadlines; see sim::set_thread_inhibits).
+    sim::set_thread_inhibits(false);
     TermGuard term;
     term.raw();
     printf("booting firmware (SD: %s)...\n", g_sdroot.c_str());

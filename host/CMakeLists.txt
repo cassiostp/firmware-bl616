@@ -129,3 +129,14 @@ target_include_directories(uart-rx-model PRIVATE
     ${FIRMWARE_DIR}/core)
 target_compile_definitions(uart-rx-model PRIVATE TANG_CONSOLE138K TANGCORE_HOST=1)
 target_compile_options(uart-rx-model PRIVATE -Wall -Wextra -Wno-unused-parameter -g)
+
+# Unit test: the deterministic sim scheduler (sim_time.cpp) -- frozen clock
+# while runnable, deadline grace, spin progress, exact timeouts. Run by
+# run-tests.sh. Links the scheduler alone; no firmware sources.
+add_executable(sim-time-test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sim_time_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sim/sim_time.cpp)
+target_include_directories(sim-time-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sim)
+target_compile_options(sim-time-test PRIVATE -Wall -Wextra -Wno-unused-parameter -g)
+target_link_libraries(sim-time-test PRIVATE pthread)
