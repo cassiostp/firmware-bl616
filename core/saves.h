@@ -22,6 +22,9 @@ void saves_settle(void);
 // Settle, then forget the game entirely: call before closing a game or
 // programming a bitstream that replaces it, never after.
 void saves_off(void);
+// Forget the game WITHOUT flushing: the FPGA no longer holds its save RAM
+// (MODE reloaded it), so a flush would only time out block by block.
+void saves_discard(void);
 void saves_rearm(void);             // the game runs again: dirty notices matter again
 
 // What happened to the running game's save, for the game menu: one line of up

@@ -22,6 +22,7 @@ static size_t line_len;
 static bool sniff_on;
 static uint64_t sniff_last_ms;
 static uint64_t wdtest_asked_ms;        // 0 = not asked
+static bool last_feed_cr;               // previous feed ended on '\r'
 
 // Sniff counters, indexed by frame type (0..31 kept, the rest in bucket 31).
 static volatile uint32_t sniff_tx[32];
@@ -96,23 +97,17 @@ uint32_t dbg_console_dropped(void) {
 
 static bool dump_chunk(const char *data, size_t n, void *ctx) {
     (void)ctx;
-    // emit() would reformat; send ring text through the CRLF conversion by
-    // handing it over line-sized pieces.
+    // emit() handles the CRLF conversion; hand it buffer-sized pieces.
     size_t i = 0;
     while (i < n) {
-        size_t j = i;
-        while (j < n && data[j] != '\n')
-            j++;
-        if (j < n)
-            j++;                            // include the newline
         char piece[256];
-        size_t plen = j - i;
+        size_t plen = n - i;
         if (plen > sizeof piece - 1)
             plen = sizeof piece - 1;
         memcpy(piece, data + i, plen);
         piece[plen] = 0;
         emit("%s", piece);
-        i = j;
+        i += plen;
     }
     return true;
 }
@@ -151,8 +146,9 @@ static void run_command(char *cmd) {
         else
             emit("tasks unavailable\n");
     } else if (!strcmp(cmd, "log")) {
+        uint64_t end = dbg_log_total();     // lines after this still stream
         dbg_log_foreach(dump_chunk, NULL);
-        stream_cursor = dbg_log_total();
+        stream_cursor = end;
     } else if (!strcmp(cmd, "saves")) {
         if (platform && platform->cmd_saves)
             platform->cmd_saves(emit);
@@ -209,8 +205,11 @@ void dbg_console_feed(const char *data, size_t n) {
     for (size_t i = 0; i < n; i++) {
         char c = data[i];
         if (c == '\r' || c == '\n') {
-            if (c == '\n' && line_len == 0 && i > 0 && data[i - 1] == '\r')
+            bool was_cr = (i > 0 && data[i - 1] == '\r') || (i == 0 && last_feed_cr);
+            if (c == '\n' && line_len == 0 && was_cr) {
+                last_feed_cr = false;
                 continue;                   // second half of CRLF after Enter
+            }
             emit_raw("\r\n", 2);
             line[line_len] = 0;
             run_command(line);
@@ -221,12 +220,15 @@ void dbg_console_feed(const char *data, size_t n) {
                 emit_raw("\b \b", 3);
             }
         } else if (c >= ' ' && c < 0x7f) {
+            last_feed_cr = false;
             if (line_len < LINE_LEN - 1) {
                 line[line_len++] = c;
                 emit_raw(&c, 1);            // echo
             }
         }
     }
+    if (n)
+        last_feed_cr = data[n - 1] == '\r';
 }
 
 void dbg_console_poll(void) {

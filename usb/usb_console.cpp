@@ -13,6 +13,7 @@
 // DTR, and dbg_console counts the loss.
 #include <stdio.h>
 #include <string.h>
+#include <malloc.h>
 
 extern "C" {
 #include <FreeRTOS.h>
@@ -61,6 +62,8 @@ extern "C" {
 #define PDS_USB_IDDIG (1 << 5)
 
 extern int16_t active_core;             // main.cpp
+
+extern "C" __attribute__((weak)) struct mallinfo mallinfo(void);
 
 static const uint8_t cdc_descriptor[] = {
     USB_DEVICE_DESCRIPTOR_INIT(USB_2_0, 0xEF, 0x02, 0x01, USBD_VID, USBD_PID, 0x0100, 0x01),
@@ -192,10 +195,15 @@ static void pf_status(dbg_emit_fn emit) {
     emit("diag0: J%03x%03x H%03x%03x c%d\n", joy1 & 0xfff, joy2 & 0xfff,
          hid1 & 0xfff, hid2 & 0xfff, active_core);
     emit("diag1: %s\n", sv);
-    emit("heap: free %u, min-ever free %u (of %u)\n",
-         (unsigned)xPortGetFreeHeapSize(),
-         (unsigned)xPortGetMinimumEverFreeHeapSize(),
-         (unsigned)configTOTAL_HEAP_SIZE);
+    // The SDK builds FreeRTOS heap_3 (malloc-backed): no
+    // xPortGetFreeHeapSize. mallinfo may or may not exist in this
+    // newlib build, hence the weak reference.
+    if (&mallinfo) {
+        struct mallinfo mi = mallinfo();
+        emit("heap: arena %d, free %d, in use %d\n", mi.arena, mi.fordblks, mi.uordblks);
+    } else {
+        emit("heap: n/a (heap_3, no mallinfo in this libc)\n");
+    }
     emit("usb console: %s, configured %d, dtr %d, drive %s\n",
          usb_console_enabled() ? "on" : "off", configured ? 1 : 0,
          dtr_on ? 1 : 0, drv);
@@ -248,7 +256,14 @@ static void pf_link(dbg_emit_fn emit) {
 }
 
 static void pf_reboot(void) {
-    delay(300);                         // let the console task flush the note
+    // Runs on the console task, which is also the TX pump: flush the
+    // "rebooting" note out before resetting.
+    for (int i = 0; i < 25; i++) {
+        pump_tx();
+        if (!ep_tx_busy && tx_head == tx_tail)
+            break;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
     tc_restart_mcu(false);
 }
 
@@ -300,7 +315,8 @@ static void console_task(void *arg) {
 void usb_console_init(void) {
     dbg_console_init(&platform);
     dbg_console_set_transport(transport_write);
-    xTaskCreate(console_task, "usb_console", 1536, NULL, 2, NULL);
+    if (xTaskCreate(console_task, "usb_console", 1536, NULL, 2, NULL) != pdPASS)
+        dbg_log("usb console: task not created (heap?), console unavailable");
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -329,6 +345,7 @@ bool usb_console_set_enabled(bool on) {
         if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
             hid1_state = 0;
             hid2_state = 0;
+            memset((void *)key_buf, 0, sizeof key_buf);
             xSemaphoreGive(state_mutex);
         }
         usbh_deinitialize();
@@ -351,10 +368,23 @@ bool usb_console_set_enabled(bool on) {
         configured = false;
         dtr_on = false;
         ep_tx_busy = false;
-        enabled = true;
+        taskENTER_CRITICAL();           // no stale bytes from a prior session
+        tx_head = tx_tail = 0;
+        taskEXIT_CRITICAL();
+        __atomic_store_n(&rx_head, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&rx_tail, 0, __ATOMIC_RELEASE);
         int r = usbd_initialize();
+        if (r != 0) {
+            dbg_log("usb console: usbd_initialize failed (%d), restoring host", r);
+            bflb_irq_disable(USB_IRQ);
+            bflb_irq_detach(USB_IRQ);
+            usbh_initialize();
+            usb_gamepad_init();
+            return false;
+        }
+        enabled = true;
         dbg_console_set_active(true);
-        dbg_log("usb console: device up (usbd_initialize=%d), waiting for PC", r);
+        dbg_log("usb console: device up, waiting for PC");
         return true;
     }
 
@@ -366,6 +396,12 @@ bool usb_console_set_enabled(bool on) {
     bflb_irq_detach(USB_IRQ);
     configured = false;
     dtr_on = false;
+    ep_tx_busy = false;
+    taskENTER_CRITICAL();
+    tx_head = tx_tail = 0;
+    taskEXIT_CRITICAL();
+    __atomic_store_n(&rx_head, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&rx_tail, 0, __ATOMIC_RELEASE);
     // The FATFS USBH disk driver stays registered from boot; only the
     // host stack and the gamepad detector need restarting.
     int r = usbh_initialize();

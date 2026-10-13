@@ -755,7 +755,7 @@ static bool handle_game_action(void) {
             // menu core and redraw, keeping the MCU and USB alive.
             menu_clear();
             overlay(1);
-            saves_off();
+            saves_discard();    // the save RAM went with the reload; flushing would time out per block
             overlay_status("MODE: reloading menu...");
             string fname;
             if (find_core_for_board(fname, "monitor.bin"))

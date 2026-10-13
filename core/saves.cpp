@@ -463,6 +463,18 @@ void saves_settle(void) {
     xSemaphoreGive(sv_mutex);
 }
 
+void saves_discard(void) {
+    if (!sv_mutex) return;
+    if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
+    sv_live = false;
+    if (sv_dirty)
+        dbg_log("saves: pending save discarded (FPGA reloaded)");
+    sv_dirty = false;
+    sv_geom = NULL;
+    sv_path[0] = '\0';
+    xSemaphoreGive(sv_mutex);
+}
+
 void saves_off(void) {
     saves_settle();
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
