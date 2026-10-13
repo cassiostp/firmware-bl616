@@ -10,6 +10,7 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 #include "programmer.h"
 #include <FreeRTOS.h>
 #include "task.h"
@@ -718,6 +719,7 @@ bool pollFlag(uint32_t mask, uint32_t value)
 {
 	uint32_t status;
 	int timeout = 0;
+	uint64_t last_beat = bflb_mtimer_get_time_ms();
 	do {
 		status = readStatusReg();
 		if (timeout == 100000000){
@@ -725,6 +727,17 @@ bool pollFlag(uint32_t mask, uint32_t value)
 			return false;
 		}
 		timeout++;
+		// This busy loop can run far longer than the watchdog's heartbeat
+		// stall (15s) when the FPGA never sets the flag. Keep bumping so
+		// the timeout above reports the failure instead of the watchdog
+		// resetting the chip mid-program.
+		if ((timeout & 0x3ff) == 0) {
+			uint64_t now = bflb_mtimer_get_time_ms();
+			if (now - last_beat >= 500) {
+				last_beat = now;
+				heartbeat_bump();
+			}
+		}
 		// vTaskDelay(1);
 	} while ((status & mask) != value);
 
@@ -994,13 +1007,6 @@ bool fpga_program(const char *fname) {
         goto load_core_close;
     }
 
-    BYTE *fbuf_cached;
-    fbuf_cached = (BYTE*)malloc(BLOCK_SIZE);
-    if (!fbuf_cached) {
-        overlay_printf("Cannot malloc buffer\r\n");
-        goto load_core_close;
-    }
-
 #define JTAG_FAST
 
     extern uint64_t jtag_writetdi_time;
@@ -1020,11 +1026,21 @@ bool fpga_program(const char *fname) {
     jtag_exit_gpio_out_mode();
     if (!writeSRAM_end()) {
         overlay_status("Failed to program SRAM\n");
+        taskEXIT_CRITICAL();
         goto load_core_close;
     }
     taskEXIT_CRITICAL();
 
 #else
+    // Only this path uses the bit-reversed copy; allocating it for the
+    // JTAG_FAST path above leaked BLOCK_SIZE on every program.
+    BYTE *fbuf_cached;
+    fbuf_cached = (BYTE*)malloc(BLOCK_SIZE);
+    if (!fbuf_cached) {
+        overlay_printf("Cannot malloc buffer\r\n");
+        goto load_core_close;
+    }
+
     taskENTER_CRITICAL();
     for (;;) {
         uint64_t time_flash_start = bflb_mtimer_get_time_us();
@@ -1047,14 +1063,18 @@ bool fpga_program(const char *fname) {
         uint64_t time_jtag_start = bflb_mtimer_get_time_us();
         if (!writeSRAM_send(fbuf_cached, bytes*8, total >= len)) {
             overlay_status("Failed to send data to SRAM\n");
-            goto free_fbuf_cached;
+            taskEXIT_CRITICAL();
+            free(fbuf_cached);
+            goto load_core_close;
         }
         time_jtag += bflb_mtimer_get_time_us() - time_jtag_start;
         if (bytes < BLOCK_SIZE) break;
-    } 
+    }
     if (!writeSRAM_end()) {
         overlay_status("Failed to program SRAM\n");
-        goto free_fbuf_cached;
+        taskEXIT_CRITICAL();
+        free(fbuf_cached);
+        goto load_core_close;
     }
     taskEXIT_CRITICAL();
 
