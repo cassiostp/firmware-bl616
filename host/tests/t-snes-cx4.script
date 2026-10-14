@@ -1,14 +1,11 @@
-# SNES CX4 synthetic header: the loader pops up "not supported yet" and does
-# not load (the overlay stays on); dismissing the box returns to the menu.
+# SNES cx4 synthetic header loads: SNES is the second main-menu entry, the
+# game's own row is below the file browser's return entry, and a loaded
+# game turns the overlay off on the SNES core.
 expect-screen "TangCore"
 press down
 press b
 expect-screen "game.smc"
 press down
 press a
-expect-screen "CX4 cartridge"
-expect-screen "not supported yet"
-expect-overlay on
-press a
-expect-screen "TangCore"
-expect-overlay on
+expect-overlay off
+expect-core snestang
