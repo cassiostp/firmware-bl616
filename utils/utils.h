@@ -91,6 +91,9 @@ bool has_any_ext(const char *fname, const char *exts);
 // return false if timeout after 100ms
 bool get_core_status(void);
 extern int joy_choice(int start_line, int len, int *active);
+// Diagnostic rows 0-1 (pads/action/core/silence/heartbeat + save counters),
+// drawn when Diagnostics is on; self-throttling, call from any menu loop.
+extern void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2);
 // Ignore the buttons held right now until each is released, so a button that
 // triggered something doesn't also act on whatever comes next.
 extern void suppress_held_buttons(void);

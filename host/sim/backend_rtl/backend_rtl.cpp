@@ -22,8 +22,8 @@
 // real traffic (save dumps vs game accesses) is fully modeled. The
 // TX-pending gate matters: after a request is consumed the line is idle but
 // the reply has not started yet, and jumping then would skip it unsampled.
-// THREADS: the model object is touched only by run_until (always under the
-// sim scheduler lock: single stepper). Queues/records have their own small
+// THREADS: the model object is touched only by run_until (called only by
+// the sim scheduler thread: single stepper). Queues/records have their own small
 // mutexes, never held across stepping. Cross-thread inputs (pads, poke
 // requests, silence, reset, programmed ID) are atomics applied per batch;
 // frequently-read outputs are cached in atomics per batch. OSD/save-RAM
@@ -112,13 +112,13 @@ class RtlBackend : public FpgaBackend {
         // redraws every input-loop pass with no idle delay. Without a bound
         // the backlog grows without limit while sim time crawls, burying
         // later frames (pad presses) and eating gigabytes. Block like a full
-        // FIFO, pumping sim time while blocked so the block always drains
-        // (no deadlock even if this thread is the only driver).
+        // FIFO until sim time moves a little: while this thread is blocked
+        // the scheduler steps the model through the backlog, so the block
+        // always drains (no deadlock even if this is the only timed wait).
         while (backlog.load(std::memory_order_relaxed) > TX_LIMIT) {
             lk.unlock();
-            // Advance a little: steps the model through the backlog. No
-            // sim:: lock is held here (tx_m is dropped), so this nests
-            // safely with run_until on other threads.
+            // No lock is held here (tx_m is dropped), so the scheduler's
+            // run_until can take tx_m and drain the queue while we sleep.
             sim::advance_to(sim::now_ticks() + 5 * sim::TICKS_PER_MS);
             lk.lock();
         }

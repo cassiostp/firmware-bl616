@@ -256,6 +256,16 @@ else
     FAILED_NAMES+=("uart-rx-model")
 fi
 
+echo "=== test sim-time-test ==="
+if timeout 60 "$BUILD_DIR/sim-time-test"; then
+    echo "--- PASS sim-time-test"
+    PASS=$((PASS + 1))
+else
+    echo "--- FAIL sim-time-test"
+    FAIL=$((FAIL + 1))
+    FAILED_NAMES+=("sim-time-test")
+fi
+
 run_test a-menu nes:test.nes
 run_test b-hidden-message-mode gba
 run_test c-pause sms:cgame.sms
@@ -276,6 +286,11 @@ run_test v-mode-fresh-silent sms:cgame.sms
 run_test p-save-fail sms:game.sms
 run_test q-save-status sms:game.sms
 run_test q-save-timing sms:game.sms
+run_test t-wedge-main
+run_test w-wedge-scanlines sms:cgame.sms
+run_test x-monitor-cores
+run_test y-diag-game-menu sms:cgame.sms
+run_test z-capture-stuck
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

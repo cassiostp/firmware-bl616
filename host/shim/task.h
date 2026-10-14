@@ -24,6 +24,7 @@ void vTaskDelay(TickType_t xTicksToDelay);
 void vTaskDelete(TaskHandle_t xTaskToDelete);
 TickType_t xTaskGetTickCount(void);
 eTaskState eTaskGetState(TaskHandle_t xTask);
+char *pcTaskGetName(TaskHandle_t xTaskToQuery); // NULL = calling task
 
 void taskENTER_CRITICAL(void);
 void taskEXIT_CRITICAL(void);

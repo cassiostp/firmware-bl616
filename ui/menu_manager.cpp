@@ -43,8 +43,9 @@ void menu_input_loop() {
             menu_current()->redraw = false;
         }
 
-        uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
+        uint16_t joy1=0, joy2=0, hid1=0, hid2=0;
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        draw_diag_line(joy1, joy2, hid1, hid2);   // render() cleared rows 0-1
         joy1 |= hid1;
         joy2 |= hid2;
 

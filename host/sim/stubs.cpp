@@ -137,10 +137,15 @@ void bflb_uart_int_clear(struct bflb_device_s *dev, uint32_t int_clear) {
 }
 
 // ---- timers/clocks: the virtual simulation clock ----
+// spin_poll bounds firmware polling loops (the menu input loop reads the
+// clock every pass with no delay): after many reads without a sim block
+// it sleeps until the next scheduler chunk so time can advance.
 uint64_t bflb_mtimer_get_time_ms(void) {
+    sim::spin_poll();
     return sim::now_ms();
 }
 uint64_t bflb_mtimer_get_time_us(void) {
+    sim::spin_poll();
     return sim::now_us();
 }
 uint32_t bflb_clk_get_system_clock(int type) {
@@ -196,10 +201,10 @@ void bflb_irq_disable(int irq) {
 }
 void GLB_SW_System_Reset(void) {
     sim_request_reset();
-    // The firmware never returns from here; park this thread until the
-    // supervisor re-execs the process.
-    for (;;)
-        std::this_thread::sleep_for(std::chrono::hours(24));
+    // The firmware never returns from here; park this thread as blocked
+    // until the supervisor re-execs the process (a wall sleep would look
+    // runnable and freeze the sim clock the supervisor is waiting on).
+    sim::park();
 }
 void arch_delay_ms(uint32_t ms) {
     sim::advance_by((uint64_t)ms * sim::TICKS_PER_MS);

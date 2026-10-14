@@ -1,0 +1,29 @@
+# The same stuck combo state inside Game menu > Video > Scanlines (the
+# SMB3 scanlines hang shape): navigation must recover within ~2s while the
+# buttons are still stuck (#29).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+press a
+expect-screen "--- Scanlines ---"
+expect-cursor-row 9
+stuck select+start
+expect-alive 2s
+press down
+expect-cursor-row 10
+unstuck
+press down
+expect-cursor-row 11

@@ -2,19 +2,21 @@
 // milliseconds of the virtual simulation clock (see sim_time.hpp), and
 // mutexes/semaphores/notifies are STL primitives with FreeRTOS-shaped APIs.
 //
-// Blocking with a timeout drives the sim clock forward (sim::wait_until);
-// an infinite wait (portMAX_DELAY) only blocks for the event. Mutexes are
-// pure wall-clock: the firmware only ever takes them with portMAX_DELAY and
-// never holds one across a sim wait... except sv_mutex, which IS held across
-// save flushes that advance the clock. That is safe: the holder itself drives
-// the clock, so it always makes progress, and waiters wall-block until it
-// lets go.
+// Blocking registers a deadline with the sim scheduler (sim::wait_until /
+// advance_to); the scheduler moves the clock only once every task is
+// blocked (see sim_time.hpp). Mutexes are wall-clock OS mutexes, but a
+// waiter marks itself blocked (sim::mutex_wait_*), so a holder that waits
+// on sim time across the lock -- sv_mutex across save flushes, the
+// critical section across the MODE-restart delay -- still lets the clock
+// reach its deadline and always makes progress.
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
 #include <mutex>
 #include <pthread.h>
+#include <string>
 #include <thread>
 
 #include "FreeRTOS.h"
@@ -25,6 +27,7 @@
 namespace {
 
 struct TaskControlImpl {
+    std::string name; // set at creation, read-only after (pcTaskGetName)
     std::thread thr;
     std::mutex m;
     std::condition_variable cv;
@@ -68,12 +71,16 @@ extern "C" {
 BaseType_t xTaskCreate(TaskFunction_t pxTaskCode, const char *const pcName,
                        uint16_t usStackDepth, void *pvParameters,
                        UBaseType_t uxPriority, TaskHandle_t *pxCreatedTask) {
-    (void)pcName;
     (void)usStackDepth;
     (void)uxPriority;
+    // The creator participates too, so the clock stays frozen between
+    // task creations until each new task has attached itself.
+    sim::thread_attach();
     TaskControl *tc = new TaskControl();
+    tc->impl.name = pcName ? pcName : "";
     tc->impl.thr = std::thread([tc, pxTaskCode, pvParameters]() {
         tls_task = &tc->impl;
+        sim::thread_attach(); // scheduler participant from birth
         pxTaskCode(pvParameters);
         tc->impl.alive.store(false);
     });
@@ -84,9 +91,10 @@ BaseType_t xTaskCreate(TaskFunction_t pxTaskCode, const char *const pcName,
 }
 
 void vTaskStartScheduler(void) {
-    // Tasks already run as threads; park the firmware's main thread forever.
-    for (;;)
-        std::this_thread::sleep_for(std::chrono::hours(24));
+    // Tasks already run as threads; park the firmware's main thread as a
+    // blocked scheduler participant (a wall sleep would look runnable
+    // forever and freeze the sim clock).
+    sim::park();
 }
 
 void vTaskDelay(TickType_t xTicksToDelay) {
@@ -103,6 +111,7 @@ void vTaskDelete(TaskHandle_t xTaskToDelete) {
     if (!other || other == self) {
         if (self)
             self->alive.store(false);
+        sim::thread_detach(); // stop inhibiting the clock before vanishing
         // End this thread. Only used by stubbed-out USB code; still, exit
         // the calling thread rather than returning into nowhere.
         pthread_exit(nullptr);
@@ -123,12 +132,24 @@ eTaskState eTaskGetState(TaskHandle_t xTask) {
     return xTask->impl.alive.load() ? eRunning : eDeleted;
 }
 
+char *pcTaskGetName(TaskHandle_t xTaskToQuery) {
+    TaskControlImpl *impl = xTaskToQuery ? &xTaskToQuery->impl : tls_task;
+    return impl ? (char *)impl->name.c_str() : (char *)"";
+}
+
 namespace {
 std::recursive_mutex g_critical;
 }
 
 void taskENTER_CRITICAL(void) {
-    g_critical.lock();
+    // Mark contended waits blocked: restart_mcu holds the critical section
+    // across arch_delay_ms, so waiters must not look runnable or the clock
+    // could never reach the holder's deadline.
+    if (!g_critical.try_lock()) {
+        sim::mutex_wait_begin();
+        g_critical.lock();
+        sim::mutex_wait_end();
+    }
 }
 
 void taskEXIT_CRITICAL(void) {
@@ -195,22 +216,28 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t xSemaphore, TickType_t xTicksToWait)
     if (!xSemaphore)
         return pdFAIL;
     if (xSemaphore->is_mutex) {
-        // Wall-clock: holders never wait on sim time while holding it... but
-        // sv_mutex IS held across clock-advancing flushes. That still works:
-        // the holder drives the clock itself, so it always finishes.
+        // Wall-clock OS mutex, but contended waits mark the waiter blocked
+        // with the scheduler: sv_mutex IS held across sim-time flushes, so
+        // waiters must not look runnable or the holder's deadlines could
+        // never be reached.
         std::recursive_mutex &m = xSemaphore->mutex;
+        if (m.try_lock())
+            return pdTRUE;
         if (xTicksToWait == 0)
-            return m.try_lock() ? pdTRUE : pdFALSE;
+            return pdFALSE;
         if (xTicksToWait == portMAX_DELAY) {
+            sim::mutex_wait_begin();
             m.lock();
+            sim::mutex_wait_end();
             return pdTRUE;
         }
-        using namespace std::chrono;
-        auto until = steady_clock::now() + milliseconds(xTicksToWait);
+        // Finite timeout (no firmware path today): poll at chunk
+        // granularity in sim time.
+        uint64_t deadline = sim::now_ticks() + ms_to_ticks(xTicksToWait);
         while (!m.try_lock()) {
-            if (steady_clock::now() >= until)
+            if (sim::now_ticks() >= deadline)
                 return pdFALSE;
-            std::this_thread::yield();
+            sim::advance_to(std::min(deadline, sim::now_ticks() + sim::STEP_CHUNK));
         }
         return pdTRUE;
     }

@@ -38,6 +38,8 @@ volatile GameAction pending_action = ACTION_NONE;
 #define MODE_TIMEOUT_MENU 30      // menu polls wait this long: replies arrive in
                                   // well under 1ms, behind a 515-byte frame ~2.6ms
 #define POLL_GAP_MS       1500    // polls further apart than this don't count as in a row
+#define COMBO_GATE_MS     1500    // a combo state unchanged this long stops
+                                  // blocking menu navigation (stuck pad bits)
 
 static uint16_t combo_held;         // which combo is being held (0 = none)
 static uint64_t combo_since;        // when it started being held
@@ -47,6 +49,8 @@ static bool seen_answer;            // the FPGA answered since the last reset
 static int16_t last_id;             // the last core ID it answered
 static int misses;                  // polls in a row without an answer
 static uint64_t silent_since;       // start of the first unanswered poll (0 = answering)
+static uint32_t gate_sig;           // combo bits (both pads) doing the gating
+static uint64_t gate_since;         // when that gating state last changed
 static uint16_t mode_max_silence_ms;  // longest silent gap seen (diagnostic line)
 
 // Longest silent gap (first miss to next answer) in ms, for the diagnostic
@@ -65,6 +69,23 @@ void controls_reset(void) {
     misses = 0;
     silent_since = 0;
     mode_max_silence_ms = 0;
+    gate_sig = 0;
+    gate_since = 0;
+}
+
+// A load-wait already saw the newly programmed core answer with this ID:
+// record it, so the MODE detector doesn't take that first answer for a
+// flash reload (a legitimately ID-0 bitstream like monitor.bin would
+// otherwise restart the firmware once). The early-MODE rule still applies
+// when nothing has answered yet (id < 0 primes nothing).
+void controls_prime_core_id(int16_t id) {
+    if (id < 0)
+        return;
+    seen_answer = true;
+    last_id = id;
+    misses = 0;
+    silent_since = 0;
+    last_poll = bflb_mtimer_get_time_ms();
 }
 
 static bool pressed(uint16_t pad1, uint16_t pad2, uint16_t combo) {
@@ -77,10 +98,28 @@ static uint16_t active_reset_combo(void) {
 
 bool combo_in_progress(uint16_t pad1, uint16_t pad2) {
     uint16_t combos[] = {settings.menu_combo, active_reset_combo()};
+    uint16_t bits = settings.menu_combo | active_reset_combo();
+    uint32_t sig = ((uint32_t)(pad1 & bits) << 16) | (pad2 & bits);
+    bool gating = false;
     for (uint16_t c : combos)
         if (c && (combo_count(pad1 & c) >= 2 || combo_count(pad2 & c) >= 2))
-            return true;
-    return false;
+            gating = true;
+    if (!gating) {
+        gate_sig = 0;
+        return false;
+    }
+    // Time-box the block: pads only report changes, so one lost release
+    // frame (or a USB pad unplugged mid-press) holds combo bits forever.
+    // A real combo completes within its short hold; a state that sits
+    // unchanged far longer is stuck, and navigation must come back. Only
+    // the combo bits count for "unchanged": other buttons still navigate.
+    uint64_t now = bflb_mtimer_get_time_ms();
+    if (sig != gate_sig) {
+        gate_sig = sig;
+        gate_since = now;
+        return true;
+    }
+    return now - gate_since < COMBO_GATE_MS;
 }
 
 static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
@@ -202,7 +241,8 @@ bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded)
 // Options screen
 
 // Show a prompt and record the next combo of exactly COMBO_BUTTONS buttons held
-// steady for a second. Returns 0 if cancelled (nothing held for 10 seconds).
+// steady for a second. Returns 0 if cancelled (10 seconds pass, from entry,
+// without one). MODE is polled throughout, so it still recovers this screen.
 static uint16_t capture_combo(const char *what) {
     overlay_clear();
     overlay_cursor(0, 10);
@@ -226,6 +266,7 @@ static uint16_t capture_combo(const char *what) {
         uint64_t now = bflb_mtimer_get_time_ms();
         uint16_t joy1, joy2, hid1, hid2;
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        check_mode_button(false, game_loaded());    // MODE restarts from here too
         uint16_t p1 = (joy1 | hid1) & 0xfff, p2 = (joy2 | hid2) & 0xfff;
         uint16_t cur = combo_count(p1) >= combo_count(p2) ? p1 : p2;
 
@@ -235,8 +276,8 @@ static uint16_t capture_combo(const char *what) {
             overlay_cursor(0, 18);
             overlay_printf("  %-28s", cur ? combo_to_string(cur, true).c_str() : "");
         }
-        if (cur)
-            start = now;            // any input restarts the cancel timeout
+        // The cancel deadline is absolute from entry: restarting it on any
+        // input let one stuck button hold this screen forever.
         if (combo_count(cur) == COMBO_BUTTONS && now - steady_since >= 1000) {
             overlay_cursor(0, 18);
             overlay_printf("  %-28s", (combo_to_string(cur, true) + " - got it").c_str());

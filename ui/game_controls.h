@@ -24,12 +24,17 @@ extern volatile GameAction pending_action;
 bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded);
 
 // True while at least 2 buttons of a combo are held, so menus can ignore
-// navigation that's really the start of a combo.
+// navigation that's really the start of a combo. Time-boxed: a combo state
+// unchanged for ~1.5s (stuck pad bits) stops reporting true.
 bool combo_in_progress(uint16_t pad1, uint16_t pad2);
 
 // Forget combo and MODE state, e.g. after the FPGA was reprogrammed (a new
 // core is silent while it starts, which must not look like MODE).
 void controls_reset(void);
+
+// Record that a load-wait already saw the new core answer with this ID, so
+// the early-MODE rule only fires when nothing has answered yet.
+void controls_prime_core_id(int16_t id);
 
 // Longest silent gap (first miss to next answer) in ms, for the diagnostic
 // line, so reload times can be reported.

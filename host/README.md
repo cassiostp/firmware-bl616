@@ -74,6 +74,9 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   released as soon as the OSD reacts, so navigation steps exactly once.
   Buttons: `up down left right a b x y l r start select` (`sel` = select).
 - `hold select+start+l 400ms` — hold for a sim-time duration (combos).
+- `stuck select+start` / `unstuck` — fault injection: buttons that stay
+  held in the firmware's pad state until `unstuck`, as when a release
+  frame is lost (FPGA pads only report changes).
 - `expect-screen "text"` / `expect-no-screen "text"` — OSD contains (or for
   the whole timeout, never contains) the substring.
 - `expect-cursor-row 9` — the `>` cursor is on that OSD row.
@@ -168,6 +171,15 @@ bitstreams), and runs `host/tests/*.script`:
 - `q-save-status` — the game menu's save line: nothing written yet, then
   "Saved to card" after a flush.
 - `q-save-timing` — the dump starts about 1 s after the game's first write.
+- `t-wedge-main` — a pad state stuck with 2 of 3 combo buttons stops
+  blocking main-menu navigation after ~1.5 s, while still stuck.
+- `w-wedge-scanlines` — the same stuck state in Video > Scanlines.
+- `x-monitor-cores` — loading `monitor.bin` (core ID 0) from Cores does
+  not restart the firmware.
+- `y-diag-game-menu` — with Diagnostics on, the diag rows show in the
+  game and Video menus, not only in the main menu.
+- `z-capture-stuck` — combo capture cancels 10 s from entry even with a
+  stuck button held, and MODE restarts out of a capture in progress.
 
 `uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
 firmware's real UART receive ring and interrupt handler against a modelled
@@ -279,14 +291,19 @@ latches the backup type from the loader, which must be kept in step.
 Everything runs on a virtual clock (`host/sim/sim_time.*`): mtimer,
 `arch_delay_ms`, `vTaskDelay`, semaphore/notify timeouts and script
 waits/timeouts are sim milliseconds (1 tick = 1/21.492 MHz core clock).
-Threads waiting with a deadline drive the clock forward in 5 ms chunks;
-pure event waits (`portMAX_DELAY`) sleep until kicked. A FIFO ticket lock
-keeps chunk steps fair, clock reads are lock-free, and every chunk sleeps
-~2 ms of wall time (rate cap): uncapped, the sim runs 30–3000 sim-s per
-wall-s and firmware timeouts (the 1 s save-block fetch, the 2 s save
-debounce) land inside normal scheduling jitter and fail spuriously. The
-cap keeps them at ~100 ms of wall time each. Suite runs are deterministic
-(4/4 consecutive full passes, including once under load average 20).
+Scheduling is deterministic discrete-event: a scheduler thread advances
+the clock in chunks of at most 5 ms, and only while every participating
+thread is blocked (timed/event waits register deadlines; pure event
+waits sleep until kicked; mutex waiters and the firmware's clock-read
+spin loops count as blocked too -- see `sim_time.hpp`). While a thread
+is runnable the clock is frozen, so no task can be timed out by time
+advancing while the host has not scheduled it, and events landing
+exactly at a deadline are observed after one quiescence grace. Clock
+reads are lock-free. There is no wall-clock rate cap: on a slow or
+loaded host the same step sequence simply takes longer in wall time,
+so test outcomes do not depend on host speed or core count.
+`sim-time-test` (`host/tests/sim_time_test.cpp`, run by `run-tests.sh`)
+checks these scheduler properties directly.
 
 ## Current state and limits
 
