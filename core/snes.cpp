@@ -70,7 +70,6 @@ int parse_snes_header(FIL *fp, int pos, int file_size, int typ, unsigned char *h
 // be hardware-tested, so GSU ROMs must still load.
 static const struct { int map_ctrl; int chipset; const char *name; }
 unsupported_chips[] = {
-    {0x23, 0x32, "SA-1"}, {0x23, 0x34, "SA-1"}, {0x23, 0x35, "SA-1"},
     {0x32, 0x43, "S-DD1"}, {0x32, 0x45, "S-DD1"},
     {0x3a, 0xf5, "SPC7110"}, {0x3a, 0xf9, "SPC7110"},
     {0x30, 0xf5, "ST018"},	// no smc_parser.v case (ST01x is 0xf6): plain-LoROM fallback
