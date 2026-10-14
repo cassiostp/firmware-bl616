@@ -118,7 +118,9 @@ static const save_geom save_geoms[] = {
     // bytes $200000.. , 32K words = 128 x 512-byte blocks = 64 KB; and its
     // fresh SRAM is 0xFF (the load-time fill sram2_di = 16'hFFFF, cartridge.sv).
     // The block count is per game (saves_set_blocks): the ROM header's "RA"
-    // at $1B0 flags backup RAM, with its start/end addresses at $1B4/$1B8.
+    // at $1B0 flags backup RAM, with its start/end addresses at $1B4/$1B8;
+    // serial-EEPROM carts instead get their chip size (core/md.cpp), and the
+    // core steers those blocks at its EEPROM BRAM, same .sav layout.
     // MiSTer has no saves folder for the MegaDrive (the .sav lives beside the
     // ROM); this is our folder token for core 4, same word as cores.cpp's
     // rom_dir.
@@ -140,6 +142,7 @@ static const save_geom *sv_geom;            // geometry for sv_path
 static uint16_t sv_blocks;                  // its block count; per-game for SNES
 static uint16_t sv_extra;                   // extra blocks after the save RAM (GBA RTC sector)
 static uint16_t sv_total(void) { return (uint16_t)(sv_blocks + sv_extra); }
+static uint8_t sv_blank = 0xFF;             // blank byte; the geometry's, unless saves_set_blank overrode it
 static SemaphoreHandle_t sv_mutex, sv_blk_sem;
 static TaskHandle_t sv_task;
 static volatile uint16_t sv_rx_blk = 0xFFFF;
@@ -300,11 +303,11 @@ static bool sv_dump_and_write(void) {
         if (!sv_fetch_block(blk)) { ok = false; break; }
         if (opened) {
             if (f_read(&fsave, sv_io, SV_BLK, &br) != FR_OK || br != SV_BLK) {
-                memset(sv_io, sv_geom->blank, SV_BLK);              // short file: blank
+                memset(sv_io, sv_blank, SV_BLK);              // short file: blank
                 changed = true;
             }
         } else
-            memset(sv_io, sv_geom->blank, SV_BLK);
+            memset(sv_io, sv_blank, SV_BLK);
         if (memcmp(sv_io, sv_rx, SV_BLK) != 0)
             changed = true;
     }
@@ -375,6 +378,7 @@ void saves_set_game(const char *fname, uint16_t core_id) {
     }
     sv_blocks = sv_geom ? sv_geom->blocks : 0;  // SNES: the loader refines this
     sv_extra = 0;                               // GBA: the loader adds the RTC sector
+    sv_blank = sv_geom ? sv_geom->blank : 0xFF; // per-game override dies with the game
     if (sv_geom) {
         // Drive prefix from the path itself ("sd:" / "usb:"), else the mounted drive.
         const char *colon = strchr(fname, ':');
@@ -425,6 +429,10 @@ void saves_set_extra_blocks(uint16_t extra) {
     xSemaphoreGive(sv_mutex);
 }
 
+void saves_set_blank(uint8_t blank) {
+    sv_blank = blank;
+}
+
 void saves_restore(void) {
     if (!sv_mutex) return;
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
@@ -444,7 +452,7 @@ void saves_restore(void) {
     for (uint16_t blk = 0; blk < sv_total(); blk++) {
         UINT br = 0;
         if (!opened || f_read(&fsave, sv_io, SV_BLK, &br) != FR_OK || br != SV_BLK)
-            memset(sv_io, sv_geom->blank, SV_BLK);
+            memset(sv_io, sv_blank, SV_BLK);
         sv_send_block(blk, sv_io);
     }
     if (opened) f_close(&fsave);

@@ -1,0 +1,18 @@
+# A second table entry (Wonder Boy in Monster World, X24C01 type 2): only
+# quirk bit 1 is set, and the 128-byte chip still rides one 512-byte block.
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "wboy.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+expect-config-bit 0 0
+expect-config-bit 1 1
+expect-config-bit 2 0
+expect-config-bit 3 0
+poke-save 0x10 0x3C
+expect-file saves/genesis/wboy.sav size 512

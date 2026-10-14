@@ -1,0 +1,31 @@
+# Serial-EEPROM cart detection (NBA Jam TE header): the serial at $183 puts
+# EEPROM quirk 0xF in core_config bits 3:0 before the ROM stream, and the
+# 24C04's 512 bytes become a one-block .sav that round-trips.
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "jamte.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+expect-config-bit 0 1
+expect-config-bit 1 1
+expect-config-bit 2 1
+expect-config-bit 3 1
+expect-config-bit 6 0
+poke-save 0x20 0x7E
+expect-file saves/genesis/jamte.sav size 512
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "jamte.md"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x20 0x7E

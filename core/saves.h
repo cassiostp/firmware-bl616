@@ -19,6 +19,10 @@ void saves_set_blocks(uint16_t blocks);
 // exchanged with the core as blocks [blocks, blocks+extra). The GBA loader
 // asks for 1 on RTC games: the core's MiSTer-compatible "RT" RTC sector.
 void saves_set_extra_blocks(uint16_t extra);
+// Per-game blank byte, overriding the core geometry's (one Genesis homebrew
+// expects a fresh SRAM of 0x00, not 0xFF). Reset by saves_set_game; call
+// before saves_restore.
+void saves_set_blank(uint8_t blank);
 void saves_restore(void);           // send the save into the FPGA; the core must not run yet
 // Settle any pending dump, then stop async dumps until re-armed: call when a
 // menu opens over the running game, and before the FPGA stops running it.
