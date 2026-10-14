@@ -181,8 +181,8 @@ bitstreams), and runs `host/tests/*.script`:
 - `z-capture-stuck` — combo capture cancels 10 s from entry even with a
   stuck button held, and MODE restarts out of a capture in progress.
 - `t-snes-*` — SNES loader header handling with synthetic ROM headers:
-  LoROM, HiROM, ExHiROM and Super FX (GSU chipset bytes) load, while SA-1,
-  S-DD1, SPC7110, CX4, ST018 and BS-X get a "not supported yet" pop-up and
+  LoROM, HiROM, ExHiROM, Super FX (GSU chipset bytes) and CX4 load, while
+  SA-1, S-DD1, SPC7110, ST018 and BS-X get a "not supported yet" pop-up and
   no load, and an all-zero file is "Not a SNES ROM file".
 
 `uart-rx-model` (not a script, `host/tests/uart_rx_model.cpp`) runs the
