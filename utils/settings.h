@@ -41,6 +41,9 @@ struct Settings {
     uint8_t lcd_grid_strength;  // 0..3: the grid dims 1/8, 1/4, 3/8, 1/2 (video_config bits 17:16)
     uint8_t smoothing;          // 0..2: off, sharp, soft (video_config bits 19:18)
     bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
+    uint32_t clock_unix;        // wall clock anchor: unix seconds at the last save (0 = never set)
+    uint32_t clock_hbn;         // HBN RTC counter (seconds) at that same instant
+    uint8_t solar_pct;          // 0..100: Boktai solar sensor level (frame 0x14)
 };
 
 extern Settings settings;

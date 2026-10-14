@@ -40,6 +40,10 @@ uint32_t last_config();
 // Last video_config word received (MCU -> FPGA command 0x13).
 uint32_t last_video_config();
 
+// Last clock frame payload received (MCU -> FPGA command 0x14, 13 bytes:
+// unix BE32, BCD datetime[7], solar %, flags). Empty if none seen.
+std::vector<uint8_t> last_clock_frame();
+
 // OSD text buffer.
 OsdSnapshot osd_snapshot();
 uint64_t osd_hash();

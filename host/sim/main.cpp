@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <string>
 #include <sys/stat.h>
@@ -328,6 +329,9 @@ void cmd_unstuck() {
 
 // ---- reboot: re-exec ourselves, resuming the script after `line` ----
 [[noreturn]] void reboot_resume(long line) {
+    // A firmware-requested reset (MODE) keeps the HBN RTC counting; a
+    // scripted power-cycle restarts it, like the chip.
+    sim_hbn_preserve(g_reset_requested.load());
     char pos[32];
     snprintf(pos, sizeof(pos), "%ld", line);
     std::string self = g_argv0;
@@ -377,6 +381,14 @@ struct CondNoFile {
 struct CondSaveRam {
     long off, val;
 };
+struct CondFileText {
+    std::string path;
+    std::string text;
+};
+struct CondClock {
+    long unix_lo, unix_hi;      // accepted range for the frame's unix field
+    long byte_idx, byte_val;    // >= 0: also require payload[idx] == val
+};
 
 bool c_screen(void *a) {
     return fpga::screen_contains(*(const std::string *)a);
@@ -419,6 +431,44 @@ bool c_nofile(void *a) {
 bool c_saveram(void *a) {
     CondSaveRam *c = (CondSaveRam *)a;
     return fpga::save_ram_byte((uint16_t)c->off) == (uint8_t)c->val;
+}
+bool c_filetext(void *a) {
+    CondFileText *c = (CondFileText *)a;
+    std::string p = g_sdroot + "/" + c->path;
+    FILE *f = fopen(p.c_str(), "rb");
+    if (!f)
+        return false;
+    std::string all;
+    char b[4096];
+    size_t n;
+    while ((n = fread(b, 1, sizeof(b), f)) > 0)
+        all.append(b, n);
+    fclose(f);
+    return all.find(c->text) != std::string::npos;
+}
+bool c_clock(void *a) {
+    CondClock *c = (CondClock *)a;
+    std::vector<uint8_t> f = fpga::last_clock_frame();
+    if (f.size() != 13)
+        return false;
+    uint32_t u = ((uint32_t)f[0] << 24) | ((uint32_t)f[1] << 16) |
+                 ((uint32_t)f[2] << 8) | f[3];
+    if ((long)u < c->unix_lo || (long)u > c->unix_hi)
+        return false;
+    // The BCD bytes must be libc's reading of the same unix time: an oracle
+    // independent of the firmware's own conversion.
+    time_t tt = (time_t)u;
+    struct tm tmv;
+    gmtime_r(&tt, &tmv);
+    auto bcd = [](int v) { return (uint8_t)(((v / 10) << 4) | (v % 10)); };
+    if (f[4] != bcd(tmv.tm_year - 100) || f[5] != bcd(tmv.tm_mon + 1) ||
+        f[6] != bcd(tmv.tm_mday) || f[7] != bcd(tmv.tm_wday) ||
+        f[8] != bcd(tmv.tm_hour) || f[9] != bcd(tmv.tm_min) ||
+        f[10] != bcd(tmv.tm_sec))
+        return false;
+    if (c->byte_idx >= 0 && f[c->byte_idx] != (uint8_t)c->byte_val)
+        return false;
+    return true;
 }
 
 int run_script() {
@@ -604,6 +654,49 @@ int run_script() {
             }
             if (seen)
                 script_fail(lineno, "unexpected file appeared: " + t[1]);
+        } else if (cmd == "expect-file-contains") {
+            // expect-file-contains <rel> "text" [timeout]
+            uint64_t to = 15000;
+            if (t.size() < 3 || t.size() > 4)
+                script_fail(lineno, "usage: expect-file-contains <rel> \"text\" [timeout]");
+            if (t.size() == 4 && !parse_dur(t[3], to))
+                script_fail(lineno, "bad timeout");
+            CondFileText c{t[1], t[2]};
+            printf("[%d] expect-file-contains %s \"%s\"\n", lineno, t[1].c_str(), t[2].c_str());
+            if (!poll_until(to, c_filetext, &c))
+                script_fail(lineno, "file never contained text: " + t[1]);
+        } else if (cmd == "expect-clock") {
+            // expect-clock "YYYY-MM-DD HH:MM" [solar <n>|flags <n>] [timeout]
+            // The frame's unix must land in that minute + 120 s of slack
+            // (menu navigation runs on sim time), with matching BCD bytes.
+            uint64_t to = 15000;
+            if (t.size() < 2)
+                script_fail(lineno, "usage: expect-clock \"YYYY-MM-DD HH:MM\" [solar <n>|flags <n>] [timeout]");
+            int Y, Mo, D, H, Mi;
+            if (sscanf(t[1].c_str(), "%d-%d-%d %d:%d", &Y, &Mo, &D, &H, &Mi) != 5)
+                script_fail(lineno, "bad expect-clock datetime: " + t[1]);
+            struct tm tmv = {};
+            tmv.tm_year = Y - 1900;
+            tmv.tm_mon = Mo - 1;
+            tmv.tm_mday = D;
+            tmv.tm_hour = H;
+            tmv.tm_min = Mi;
+            long base = (long)timegm(&tmv);
+            CondClock c{base, base + 179, -1, 0};
+            size_t k = 2;
+            if (k + 1 < t.size() && (t[k] == "solar" || t[k] == "flags")) {
+                long v;
+                if (!parse_num(t[k + 1], v))
+                    script_fail(lineno, "bad expect-clock value");
+                c.byte_idx = t[k] == "solar" ? 11 : 12;
+                c.byte_val = v;
+                k += 2;
+            }
+            if (k < t.size() && !parse_dur(t[k], to))
+                script_fail(lineno, "bad timeout");
+            printf("[%d] expect-clock \"%s\"\n", lineno, t[1].c_str());
+            if (!poll_until(to, c_clock, &c))
+                script_fail(lineno, "clock frame never matched: " + t[1]);
         } else if (cmd == "expect-save-ram") {
             long off, val;
             uint64_t to = 10000;

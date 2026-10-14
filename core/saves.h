@@ -15,6 +15,10 @@ void saves_set_battery(bool battery);
 // The ROM loader: the game's own save RAM size, in 512-byte blocks (the SNES
 // header's SRAM size byte). 0 = no battery RAM. For per-game cores only.
 void saves_set_blocks(uint16_t blocks);
+// Extra 512-byte blocks stored after the save RAM in the same .sav file and
+// exchanged with the core as blocks [blocks, blocks+extra). The GBA loader
+// asks for 1 on RTC games: the core's MiSTer-compatible "RT" RTC sector.
+void saves_set_extra_blocks(uint16_t extra);
 void saves_restore(void);           // send the save into the FPGA; the core must not run yet
 // Settle any pending dump, then stop async dumps until re-armed: call when a
 // menu opens over the running game, and before the FPGA stops running it.

@@ -4,6 +4,7 @@
 #include <strings.h>
 
 #include "settings.h"
+#include "clock.h"
 #include "overlay.h"
 #include "utils.h"
 #include "overlay.h"
@@ -59,6 +60,9 @@ void settings_defaults(Settings &s) {
     s.lcd_grid_strength = 1;
     s.smoothing = 0;
     s.pause_in_menu = true;
+    s.clock_unix = 0;
+    s.clock_hbn = 0;
+    s.solar_pct = 50;
 }
 
 int combo_count(uint16_t combo) {
@@ -178,6 +182,13 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         if (v >= 0 && v <= 2) s.smoothing = (uint8_t)v;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
         s.pause_in_menu = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "clock_unix") == 0) {
+        s.clock_unix = (uint32_t)strtoul(val, NULL, 10);
+    } else if (strcasecmp(key, "clock_hbn") == 0) {
+        s.clock_hbn = (uint32_t)strtoul(val, NULL, 10);
+    } else if (strcasecmp(key, "solar_pct") == 0) {
+        long v = strtol(val, NULL, 10);
+        if (v >= 0 && v <= 100) s.solar_pct = (uint8_t)v;
     }
 }
 
@@ -223,6 +234,7 @@ void settings_load() {
 }
 
 bool settings_save() {
+    clock_checkpoint();             // every settings write checkpoints the clock
     std::string path = settings_path();
     std::string menu = combo_to_string(settings.menu_combo, false);
     std::string reset = combo_to_string(settings.reset_combo, false);
@@ -255,7 +267,12 @@ bool settings_save() {
         "lcd_grid_strength=%d\n"
         "smoothing=%d\n"
         "# 0 keeps the game running while a menu is shown over it.\n"
-        "pause_in_menu=%d\n",
+        "pause_in_menu=%d\n"
+        "# Wall clock anchor (Options -> Date & time): unix seconds and the\n"
+        "# HBN RTC counter at the last save. solar_pct is Boktai's light 0-100.\n"
+        "clock_unix=%lu\n"
+        "clock_hbn=%lu\n"
+        "solar_pct=%d\n",
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
         settings.scanlines ? 1 : 0, scanline_dark_percent(settings.scanline_dark),
@@ -263,7 +280,9 @@ bool settings_save() {
         settings.video_brightness, settings.video_contrast, settings.video_saturation,
         settings.video_gamma, settings.crt_mask, settings.crt_mask_strength,
         settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength, settings.smoothing,
-        settings.pause_in_menu ? 1 : 0);
+        settings.pause_in_menu ? 1 : 0,
+        (unsigned long)settings.clock_unix, (unsigned long)settings.clock_hbn,
+        settings.solar_pct);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
         return false;
 

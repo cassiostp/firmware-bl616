@@ -138,6 +138,8 @@ static char sv_dir[256];                    // "<drive>saves/<core dir>"
 static char sv_root[256];                   // "<drive>saves"
 static const save_geom *sv_geom;            // geometry for sv_path
 static uint16_t sv_blocks;                  // its block count; per-game for SNES
+static uint16_t sv_extra;                   // extra blocks after the save RAM (GBA RTC sector)
+static uint16_t sv_total(void) { return (uint16_t)(sv_blocks + sv_extra); }
 static SemaphoreHandle_t sv_mutex, sv_blk_sem;
 static TaskHandle_t sv_task;
 static volatile uint16_t sv_rx_blk = 0xFFFF;
@@ -267,7 +269,7 @@ static bool sv_flush_locked(void) {
         set_core_config(get_core_config() | CORE_CFG_MENU_PAUSE);
     sv_last_dump_ms = (uint32_t)bflb_mtimer_get_time_ms();
     sv_dumping = true;
-    dbg_log("saves: dump start %s (%u blocks)", sv_path, (unsigned)sv_blocks);
+    dbg_log("saves: dump start %s (%u blocks)", sv_path, (unsigned)sv_total());
     bool ok = sv_dump_and_write();
     sv_dumping = false;
     dbg_log("saves: dump %s (%s, %lums)", ok ? "done" : "FAILED",
@@ -294,7 +296,7 @@ static bool sv_dump_and_write(void) {
     bool opened = (f_open(&fsave, sv_path, FA_READ) == FR_OK);
     bool changed = !opened;                 // nothing to compare against: dump again
     bool ok = true;
-    for (uint16_t blk = 0; blk < sv_blocks && ok; blk++) {
+    for (uint16_t blk = 0; blk < sv_total() && ok; blk++) {
         if (!sv_fetch_block(blk)) { ok = false; break; }
         if (opened) {
             if (f_read(&fsave, sv_io, SV_BLK, &br) != FR_OK || br != SV_BLK) {
@@ -333,7 +335,7 @@ static bool sv_dump_and_write(void) {
         dprint("saves: cannot create %s (%d)", tmp, (int)fr);
         sv_why = "create file"; sv_dirty = true; return false;
     }
-    for (uint16_t blk = 0; blk < sv_blocks && ok; blk++) {
+    for (uint16_t blk = 0; blk < sv_total() && ok; blk++) {
         if (!sv_fetch_block(blk)) { ok = false; break; }
         if (f_write(&fsave, sv_rx, SV_BLK, &bw) != FR_OK || bw != SV_BLK) {
             sv_why = "card write";
@@ -372,6 +374,7 @@ void saves_set_game(const char *fname, uint16_t core_id) {
         if (save_geoms[i].core_id == core_id) { sv_geom = &save_geoms[i]; break; }
     }
     sv_blocks = sv_geom ? sv_geom->blocks : 0;  // SNES: the loader refines this
+    sv_extra = 0;                               // GBA: the loader adds the RTC sector
     if (sv_geom) {
         // Drive prefix from the path itself ("sd:" / "usb:"), else the mounted drive.
         const char *colon = strchr(fname, ':');
@@ -415,6 +418,13 @@ void saves_set_blocks(uint16_t blocks) {
     xSemaphoreGive(sv_mutex);
 }
 
+void saves_set_extra_blocks(uint16_t extra) {
+    if (!sv_mutex) return;
+    if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
+    if (sv_geom) sv_extra = extra;
+    xSemaphoreGive(sv_mutex);
+}
+
 void saves_restore(void) {
     if (!sv_mutex) return;
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
@@ -428,7 +438,10 @@ void saves_restore(void) {
     }
     // Always send SOMETHING, every block: the save RAM may still hold the
     // previous game's data if the bitstream was not reprogrammed between games.
-    for (uint16_t blk = 0; blk < sv_blocks; blk++) {
+    // An extra (RTC) block the file doesn't have yet goes out as the blank
+    // fill; the core only accepts it with its "RT" tag, so this is a no-op
+    // there beyond the wipe.
+    for (uint16_t blk = 0; blk < sv_total(); blk++) {
         UINT br = 0;
         if (!opened || f_read(&fsave, sv_io, SV_BLK, &br) != FR_OK || br != SV_BLK)
             memset(sv_io, sv_geom->blank, SV_BLK);
@@ -449,7 +462,7 @@ void saves_restore(void) {
     xSemaphoreGive(sv_mutex);
     dprint("saves: restored from %s", src);
     dbg_log("saves: restored %s from %s (%u blocks)", sv_path, src,
-            (unsigned)sv_blocks);
+            (unsigned)sv_total());
 }
 
 // Core loaders: does THIS ROM have battery-backed save RAM? NES calls it from
@@ -479,7 +492,7 @@ void saves_settle(void) {
     // is marked dirty: it costs ~16 blocks of UART and writes nothing if the
     // card is current. The status line then says "up to date".
     bool verify = sv_chan_seen && sv_geom && sv_path[0] && sv_battery &&
-                  sv_blocks && sv_blocks <= SV_VERIFY_MAX_BLOCKS;
+                  sv_blocks && sv_total() <= SV_VERIFY_MAX_BLOCKS;
     if (sv_dirty || verify)
         sv_flush_locked();
     xSemaphoreGive(sv_mutex);

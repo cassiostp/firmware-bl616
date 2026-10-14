@@ -20,6 +20,7 @@ set(FW_SOURCES
     ${FIRMWARE_DIR}/ui/game_controls.cpp
     ${FIRMWARE_DIR}/ui/menu_manager.cpp
     ${FIRMWARE_DIR}/ui/overlay.cpp
+    ${FIRMWARE_DIR}/utils/clock.cpp
     ${FIRMWARE_DIR}/utils/settings.cpp
     ${FIRMWARE_DIR}/utils/dbg_console.cpp
     ${FIRMWARE_DIR}/utils/dbg_log.cpp

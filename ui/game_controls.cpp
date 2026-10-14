@@ -10,6 +10,8 @@ extern "C" {
 
 #include "game_controls.h"
 #include "settings.h"
+#include "clock.h"
+#include "cores.h"
 #include "menu_manager.h"
 #include "overlay.h"
 #include "utils.h"
@@ -468,6 +470,92 @@ struct FlashModeMenu: Menu {
     }
 };
 
+// Pad-driven date/time editor, like capture_combo: its own input loop, so
+// Left/Right can adjust the field Up/Down selects. A saves (seconds restart
+// at 0), B cancels. Returns true if the clock was set.
+static bool edit_datetime(void) {
+    static const char *wday_names[] = {"Sun", "Mon", "Tue", "Wed",
+                                       "Thu", "Fri", "Sat"};
+    DateTime dt;
+    clock_now(dt);
+    dt.sec = 0;
+    int field = 0;                      // 0 year, 1 month, 2 day, 3 hour, 4 minute
+    suppress_held_buttons();            // the button that opened this screen
+
+    for (;;) {
+        datetime_clamp(dt);
+        overlay_clear();
+        overlay_cursor(0, 7);
+        //              01234567890123456789012345678901
+        overlay_printf("  --- Date & time ---");
+        overlay_cursor(2, 9);
+        overlay_printf("%s %04d-%02d-%02d %02d:%02d", wday_names[dt.wday],
+                       dt.year, dt.mon, dt.day, dt.hour, dt.min);
+        static const char *names[] = {"Year", "Month", "Day", "Hour", "Minute"};
+        int vals[] = {dt.year, dt.mon, dt.day, dt.hour, dt.min};
+        for (int i = 0; i < 5; i++) {
+            overlay_cursor(0, 11 + i);
+            overlay_printf("%s", i == field ? ">" : " ");
+            overlay_cursor(2, 11 + i);
+            overlay_printf("%s: %d", names[i], vals[i]);
+        }
+        overlay_cursor(2, 18);
+        overlay_printf("UP/DOWN field, LEFT/RIGHT set");
+        overlay_cursor(2, 19);
+        overlay_printf("A: save   B: cancel");
+        overlay_cursor(2, 21);
+        overlay_printf("Time stands still while off.");
+
+        bool acted = false;
+        while (!acted) {
+            uint16_t joy1, joy2, hid1, hid2;
+            get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+            uint16_t p = joy1 | hid1 | joy2 | hid2;
+            if (controls_poll(joy1 | hid1, joy2 | hid2, false, game_loaded()))
+                return false;           // the menu combo: abandon the edit
+            if (combo_in_progress(joy1 | hid1, joy2 | hid2)) {
+                delay(20);
+                continue;
+            }
+            if (p & BTN_A) {
+                clock_set(dt);
+                suppress_held_buttons();
+                return true;
+            }
+            if (p & BTN_B) {
+                suppress_held_buttons();
+                return false;
+            }
+            if (p & BTN_UP) {
+                if (field > 0) field--;
+                acted = true;
+            } else if (p & BTN_DOWN) {
+                if (field < 4) field++;
+                acted = true;
+            } else if (p & (BTN_LEFT | BTN_RIGHT)) {
+                int d = (p & BTN_RIGHT) ? 1 : -1;
+                switch (field) {
+                case 0: dt.year += d; if (dt.year < 2000) dt.year = 2099; if (dt.year > 2099) dt.year = 2000; break;
+                case 1: dt.mon += d; if (dt.mon < 1) dt.mon = 12; if (dt.mon > 12) dt.mon = 1; break;
+                case 2: dt.day += d; break;     // clamped/wrapped below
+                case 3: dt.hour = (dt.hour + d + 24) % 24; break;
+                case 4: dt.min = (dt.min + d + 60) % 60; break;
+                }
+                if (field == 2) {
+                    int dim = datetime_days_in_month(dt.year, dt.mon);
+                    if (dt.day < 1) dt.day = dim;
+                    if (dt.day > dim) dt.day = 1;
+                }
+                acted = true;
+            }
+            if (!acted)
+                delay(20);
+        }
+        suppress_held_buttons();        // one press, one step
+        delay(50);
+    }
+}
+
 struct OptionsMenu: Menu {
     Settings edit;
     std::string message;
@@ -492,34 +580,42 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 14);
         overlay_printf("Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF");
         overlay_cursor(2, 15);
-        overlay_printf("Flash mode...");
+        {
+            DateTime dt;
+            clock_now(dt);
+            char when[20];
+            clock_format_short(when, sizeof when, dt);
+            overlay_printf("Date & time: %s", when);
+        }
         overlay_cursor(2, 16);
-        overlay_printf("USB debug console: %s", usb_console_enabled() ? "ON" : "OFF");
+        overlay_printf("Flash mode...");
         overlay_cursor(2, 17);
-        overlay_printf("Save debug log");
+        overlay_printf("USB debug console: %s", usb_console_enabled() ? "ON" : "OFF");
         overlay_cursor(2, 18);
-        overlay_printf("Save");
+        overlay_printf("Save debug log");
         overlay_cursor(2, 19);
+        overlay_printf("Save");
+        overlay_cursor(2, 20);
         overlay_printf("<< Back");
-        overlay_cursor(2, 21);
+        overlay_cursor(2, 22);
         //                01234567890123456789012345678901
         overlay_printf("In game:");
-        overlay_cursor(2, 22);
-        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 23);
-        overlay_printf(" Reset combo: reset the game,");
+        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 24);
-        overlay_printf(" keep holding: close the game");
+        overlay_printf(" Reset combo: reset the game,");
         overlay_cursor(2, 25);
+        overlay_printf(" keep holding: close the game");
+        overlay_cursor(2, 26);
         overlay_printf("Video: in the game menu");
         if (!message.empty()) {
-            overlay_cursor(2, 26);
+            overlay_cursor(2, 27);
             overlay_printf("%s", message.c_str());
         }
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -559,9 +655,16 @@ struct OptionsMenu: Menu {
             edit.pause_in_menu = !edit.pause_in_menu;
             break;
         case 6:
+            if (edit_datetime()) {
+                extern int16_t active_core;
+                message = settings_save() ? "Clock set" : "Save failed. Read-only drive?";
+                clock_send_to_core(active_core == 3 ? gba_current_gpio_flags() : 0);
+            }
+            break;
+        case 7:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 7:                     // USB debug console on/off
+        case 8:                     // USB debug console on/off
             if (usb_console_enabled()) {
                 usb_console_set_enabled(false);
                 message = "USB console OFF; host back";
@@ -571,7 +674,7 @@ struct OptionsMenu: Menu {
                 message = "Needs the SD card (drive is USB)";
             }
             break;
-        case 8: {                   // Save debug log
+        case 9: {                   // Save debug log
             if (saves_busy()) {
                 message = "Save in progress, retry";
                 break;
@@ -585,7 +688,7 @@ struct OptionsMenu: Menu {
             dbg_log("options: save debug log -> %s", message.c_str());
             break;
         }
-        case 9:
+        case 10:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away

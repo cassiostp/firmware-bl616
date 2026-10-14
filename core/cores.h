@@ -29,6 +29,8 @@ extern int loadnes(const char *fname);
 extern int loadsnes(const char *fname);
 extern int loadgba(const char *fname);
 extern void gba_resend_backup_type(void);   // after a reset's set_loading_state(1)
+extern bool gba_uses_solar(void);           // the loaded GBA game has a solar sensor
+extern uint8_t gba_current_gpio_flags(void); // bit0 RTC, bit1 solar (frame 0x14)
 extern bool gba_bios_loaded;            // the BIOS is in the GBA bitstream's memory
 extern int loadmd(const char *fname);
 extern int loadsms(const char *fname);
