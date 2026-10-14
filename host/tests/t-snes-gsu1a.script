@@ -1,0 +1,11 @@
+# SNES gsu1a synthetic header loads: SNES is the second main-menu entry, the
+# game's own row is below the file browser's return entry, and a loaded
+# game turns the overlay off on the SNES core.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
