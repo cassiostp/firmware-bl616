@@ -12,6 +12,7 @@
 #include "hidparser.h"
 
 #include "overlay.h"
+#include "dbg_log.h"
 
 #include <string>
 
@@ -154,17 +155,19 @@ static void usbh_update(struct usb_config *usb) {
     // check status for tasks
     for (int i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; i++) {
         if (usb->hid_info[i].state != STATE_RUNNING) continue;
-        if (usb->hid_info[i].task_handle == NULL || 
+        if (usb->hid_info[i].task_handle == NULL ||
             eTaskGetState(usb->hid_info[i].task_handle) == eDeleted) {
             INFO("HID client #%d: task died unexpectedly\n", i);
+            dbg_log("usb host: HID client %d task died", i);
             usb->hid_info[i].state = STATE_NONE;
         }
     }
     for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
         if (usb->xbox_info[i].state != STATE_RUNNING) continue;
-        if (usb->xbox_info[i].task_handle == NULL || 
+        if (usb->xbox_info[i].task_handle == NULL ||
             eTaskGetState(usb->xbox_info[i].task_handle) == eDeleted) {
-            INFO("XBOX client #%d: task died unexpectedly\n", i);   
+            INFO("XBOX client #%d: task died unexpectedly\n", i);
+            dbg_log("usb host: Xinput client %d task died", i);
             usb->xbox_info[i].state = STATE_NONE;
         }
     }
@@ -181,6 +184,7 @@ static void usbh_update(struct usb_config *usb) {
         
         if(usb->hid_info[i].hid_class && usb->hid_info[i].state == STATE_NONE) {
             INFO("HID %d connected\n", i);
+            dbg_log("usb host: HID %d connected", i);
             print_usb_class_info(usb->hid_info[i].hid_class);
             bool skip = false;
             uint16_t vendor_id = usb->hid_info[i].hid_class->hport->device_desc.idVendor;
@@ -201,6 +205,7 @@ static void usbh_update(struct usb_config *usb) {
         
         else if(!usb->hid_info[i].hid_class && usb->hid_info[i].state != STATE_NONE) {
             INFO("HID %d disconnected\n", i);
+            dbg_log("usb host: HID %d disconnected", i);
             if (usb->hid_info[i].task_handle) {
                 vTaskDelete( usb->hid_info[i].task_handle );
                 usb->hid_info[i].task_handle = NULL;
@@ -230,12 +235,14 @@ static void usbh_update(struct usb_config *usb) {
         
         if(usb->xbox_info[i].hid_class && usb->xbox_info[i].state == STATE_NONE) {
             INFO("Xinput %d connected\n", i);
+            dbg_log("usb host: Xinput %d connected", i);
             print_usb_class_info(usb->xbox_info[i].hid_class);
             usb->xbox_info[i].state = STATE_DETECTED;
         }
         
         else if(!usb->xbox_info[i].hid_class && usb->xbox_info[i].state != STATE_NONE) {
             INFO("Xinput %d disconnected\n", i);
+            dbg_log("usb host: Xinput %d disconnected", i);
             if (usb->xbox_info[i].task_handle) {
                 vTaskDelete( usb->xbox_info[i].task_handle );
                 DEBUG("XBOX %d task deleted\n", i);
@@ -457,6 +464,7 @@ static void usbh_xbox_client_thread(void *arg) {
                 error++;
                 if (xbox->nbytes == -USB_ERR_TIMEOUT) {
                     INFO("XBOX client #%d: timeout, reinit\n", xbox->index);
+                    dbg_log("usb host: Xinput %d URB timeout, reinit", xbox->index);
                     usbh_kill_urb(&xbox->hid_class->intin_urb);
                     // reinit if we timeout (device could've gone asleep)
                     xbox_init(xbox);
@@ -512,6 +520,7 @@ static void usbh_hid_thread(void *argument) {
                 if (xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
                         &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle ) != pdPASS) {
                     INFO("HID %d: failed to create client task\n", i);
+                    dbg_log("usb host: HID client %d task not created (heap?)", i);
                     usb->hid_info[i].task_handle = NULL;
                     usb->hid_info[i].state = STATE_FAILED;
                     hid_release_joystick(usb->hid_info[i].hid_state.joystick.js_index);
@@ -533,6 +542,7 @@ static void usbh_hid_thread(void *argument) {
                 if (xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
                         &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle ) != pdPASS) {
                     INFO("Xinput %d: failed to create client task\n", i);
+                    dbg_log("usb host: Xinput client %d task not created (heap?)", i);
                     usb->xbox_info[i].task_handle = NULL;
                     usb->xbox_info[i].state = STATE_FAILED;
                     hid_release_joystick(usb->xbox_info[i].js_index);
@@ -563,7 +573,8 @@ void usb_gamepad_init(void) {
         usb_config.hid_info[i].state = 0;
         usb_config.hid_info[i].buffer = hid_buffer[i];
         usb_config.hid_info[i].usb = &usb_config;
-        usb_config.hid_info[i].sem = xSemaphoreCreateBinary();
+        if (!usb_config.hid_info[i].sem)      // re-init after the debug console
+            usb_config.hid_info[i].sem = xSemaphoreCreateBinary();
     }
 
     for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
@@ -571,9 +582,44 @@ void usb_gamepad_init(void) {
         usb_config.xbox_info[i].state = 0;
         usb_config.xbox_info[i].buffer = xbox_buffer[i];
         usb_config.xbox_info[i].usb = &usb_config;
-        usb_config.xbox_info[i].sem = xSemaphoreCreateBinary();
+        if (!usb_config.xbox_info[i].sem)
+            usb_config.xbox_info[i].sem = xSemaphoreCreateBinary();
     }
 
-    if (xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle) != pdPASS)
+    if (xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle) != pdPASS) {
         INFO("Failed to create USB host task\n");
+        dbg_log("usb host: detector task not created (heap?), USB pads off");
+    }
+}
+
+unsigned usb_host_stack_free(void) {
+    return usb_handle ? (unsigned)uxTaskGetStackHighWaterMark(usb_handle) : 0;
+}
+
+// The client tasks wait forever on their URB semaphores, so they can only
+// be deleted from here. Their URBs die with the host stack in
+// usbh_deinitialize(), which the caller runs next.
+void usb_gamepad_stop(void) {
+    for (int i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; i++) {
+        if (usb_config.hid_info[i].task_handle) {
+            vTaskDelete(usb_config.hid_info[i].task_handle);
+            usb_config.hid_info[i].task_handle = NULL;
+        }
+        usb_config.hid_info[i].state = STATE_NONE;
+        usb_config.hid_info[i].hid_class = NULL;
+    }
+    for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
+        if (usb_config.xbox_info[i].task_handle) {
+            vTaskDelete(usb_config.xbox_info[i].task_handle);
+            usb_config.xbox_info[i].task_handle = NULL;
+        }
+        usb_config.xbox_info[i].state = STATE_NONE;
+        usb_config.xbox_info[i].hid_class = NULL;
+    }
+    if (usb_handle) {
+        vTaskDelete(usb_handle);
+        usb_handle = NULL;
+    }
+    joystick_map = 0;
+    joy_driver_map = 0;
 }

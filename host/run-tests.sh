@@ -246,6 +246,16 @@ run_test() {
     fi
 }
 
+echo "=== test dbg-log-test ==="
+if "$BUILD_DIR/dbg-log-test"; then
+    echo "--- PASS dbg-log-test"
+    PASS=$((PASS + 1))
+else
+    echo "--- FAIL dbg-log-test"
+    FAIL=$((FAIL + 1))
+    FAILED_NAMES+=("dbg-log-test")
+fi
+
 echo "=== test uart-rx-model ==="
 if "$BUILD_DIR/uart-rx-model"; then
     echo "--- PASS uart-rx-model"

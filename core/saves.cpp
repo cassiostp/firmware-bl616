@@ -46,6 +46,7 @@
 // saves_set_blocks() before the restore. A 128 KB game (256 blocks) takes
 // ~2 ms of UART per block on a ~0.5 s pass; sv_fetch_block() bumps the
 // heartbeat per block, so the watchdog never fires mid-dump.
+#include "dbg_log.h"
 #include "saves.h"
 
 extern "C" {
@@ -152,6 +153,11 @@ static volatile bool sv_battery = true;
 // Dumps are armed only while the game runs on screen (overlay off). Menus and
 // loads settle it first. See the FatFs note above.
 static volatile bool sv_live = false;
+static volatile bool sv_dumping = false;    // a flush is talking to the card (saves_busy)
+
+bool saves_busy(void) {
+    return sv_dumping;
+}
 
 // What happened to this game's saves, for saves_status_text(). The counters
 // run since boot.
@@ -183,12 +189,22 @@ void saves_rx_byte(uint16_t blk, uint16_t off, uint8_t b) {
     (void)blk;                              // one save channel; block checked at done
 }
 void saves_rx_block_done(uint16_t blk) {
-    sv_chan_seen = true;
+    if (!sv_chan_seen) {
+        sv_chan_seen = true;
+        // First proof this core speaks the save channel (vs an old
+        // bitstream): separates core blame from firmware blame.
+        dbg_log("saves: save channel alive on core %u (0x0A block)",
+                (unsigned)sv_chan_core);
+    }
     sv_rx_blk = blk;
     if (sv_blk_sem) xSemaphoreGive(sv_blk_sem);
 }
 void saves_rx_dirty(void) {
-    sv_chan_seen = true;
+    if (!sv_chan_seen) {
+        sv_chan_seen = true;
+        dbg_log("saves: save channel alive on core %u (0x0B notice)",
+                (unsigned)sv_chan_core);
+    }
     sv_dirty = true;
     if (sv_live && sv_task)                 // menu up: the settle flushes it instead
         xTaskNotifyGive(sv_task);
@@ -224,6 +240,8 @@ static bool sv_fetch_block(uint16_t blk, uint32_t timeout_ms = 1000, bool quiet 
             sv_why = "no reply";
             dprint("saves: block %u timed out (frames bad %u, rx overflow %d), save NOT written",
                    blk, (unsigned)sv_n_badframe, (int)uart_rx_fifo_overflowed());
+            dbg_log("saves: block %u no reply (badframe %u, fifo ovf %d)",
+                    blk, (unsigned)sv_n_badframe, (int)uart_rx_fifo_overflowed());
         }
         return false;
     }
@@ -248,7 +266,13 @@ static bool sv_flush_locked(void) {
     if (sv_geom->pause_dump)
         set_core_config(get_core_config() | CORE_CFG_MENU_PAUSE);
     sv_last_dump_ms = (uint32_t)bflb_mtimer_get_time_ms();
+    sv_dumping = true;
+    dbg_log("saves: dump start %s (%u blocks)", sv_path, (unsigned)sv_blocks);
     bool ok = sv_dump_and_write();
+    sv_dumping = false;
+    dbg_log("saves: dump %s (%s, %lums)", ok ? "done" : "FAILED",
+            ok ? sv_path : sv_why,
+            (unsigned long)((uint32_t)bflb_mtimer_get_time_ms() - sv_last_dump_ms));
     if (sv_geom->pause_dump)
         apply_core_config();
     sv_last_ms = (uint32_t)bflb_mtimer_get_time_ms();
@@ -367,6 +391,7 @@ void saves_set_game(const char *fname, uint16_t core_id) {
         snprintf(sv_dir, sizeof sv_dir, "%ssaves/%s", prefix, sv_geom->dir);
         snprintf(sv_path, sizeof sv_path, "%s/%s.sav", sv_dir, name);
         dprint("saves: game set, save file %s", sv_path);
+        dbg_log("saves: game set, save file %s", sv_path);
     }
     sv_dirty = false;                       // the old game's pending state dies here
     sv_live = false;
@@ -423,6 +448,8 @@ void saves_restore(void) {
     sv_live = false;
     xSemaphoreGive(sv_mutex);
     dprint("saves: restored from %s", src);
+    dbg_log("saves: restored %s from %s (%u blocks)", sv_path, src,
+            (unsigned)sv_blocks);
 }
 
 // Core loaders: does THIS ROM have battery-backed save RAM? NES calls it from
@@ -438,7 +465,14 @@ void saves_set_battery(bool battery) {
 
 void saves_settle(void) {
     if (!sv_mutex) return;
+    uint64_t t0 = bflb_mtimer_get_time_ms();
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
+    // Waiting here is waiting behind an in-flight dump: a long wait is a
+    // menu that takes seconds to appear, which reads as a hang.
+    uint64_t waited = bflb_mtimer_get_time_ms() - t0;
+    if (waited >= 50)
+        dbg_log("saves: settle waited %lums for the dump (dirty=%d)",
+                (unsigned long)waited, sv_dirty ? 1 : 0);
     sv_live = false;                        // no new dumps after this point
     // A notice can be lost (or never sent, if the FPGA thought it had already
     // told us), so a small save is checked against the card even when nothing
@@ -448,6 +482,18 @@ void saves_settle(void) {
                   sv_blocks && sv_blocks <= SV_VERIFY_MAX_BLOCKS;
     if (sv_dirty || verify)
         sv_flush_locked();
+    xSemaphoreGive(sv_mutex);
+}
+
+void saves_discard(void) {
+    if (!sv_mutex) return;
+    if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
+    sv_live = false;
+    if (sv_dirty)
+        dbg_log("saves: pending save discarded (FPGA reloaded)");
+    sv_dirty = false;
+    sv_geom = NULL;
+    sv_path[0] = '\0';
     xSemaphoreGive(sv_mutex);
 }
 
@@ -538,11 +584,20 @@ void saves_diag_text(char *buf, size_t n) {
              uart_rx_fifo_overflowed() ? "O" : "-", sv_chan_seen ? "C" : "-");
 }
 
+unsigned saves_stack_free(void) {
+#ifdef TANGCORE_HOST
+    return 0;                       // the host shim has no high-water marks
+#else
+    return sv_task ? (unsigned)uxTaskGetStackHighWaterMark(sv_task) : 0;
+#endif
+}
+
 void saves_init(void) {
     sv_mutex = xSemaphoreCreateMutex();
     sv_blk_sem = xSemaphoreCreateBinary();
     if (xTaskCreate(saves_task, "saves", SV_TASK_STACK, NULL, 1, &sv_task) != pdPASS) {
         sv_task = NULL;                 // no async dumps; menu/load flushes still work
         dprint("saves: task not created (heap?), async saving OFF");
+        dbg_log("saves: task not created (heap?), async saving OFF");
     }
 }

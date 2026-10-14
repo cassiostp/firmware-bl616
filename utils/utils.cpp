@@ -1,6 +1,9 @@
 #include "utils.h"
+#include "dbg_console.h"
+#include "dbg_log.h"
 
 void fpga_tx_header(int cmd, int len) {
+    dbg_sniff_note_tx((uint8_t)cmd);
     bflb_uart_putchar(uart1_dev, 0xAA);
     bflb_uart_putchar(uart1_dev, len >> 8);
     bflb_uart_putchar(uart1_dev, len & 0xFF);
@@ -139,12 +142,13 @@ volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
 volatile uint32_t heartbeat;                // last activity tick (watchdog)
+volatile bool dbg_wdtest_stall;             // console wdtest: stop feeding the watchdog
 
 // Count a beat, and feed the watchdog here too: some bump sites run inside
 // critical sections, where the watchdog task can't.
 void heartbeat_bump(void) {
     heartbeat++;
-    if (wdg_dev)                    // NULL until main() sets the watchdog up
+    if (wdg_dev && !dbg_wdtest_stall)   // NULL until main() sets the watchdog up
         bflb_wdg_reset_countervalue(wdg_dev);
 }
 
@@ -153,6 +157,12 @@ static uint16_t suppress_mask[4];   // per pad: buttons ignored until released
 // read joypad states, without suppressed buttons
 void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2)
 {
+    // The last raw words logged. Pads only report changes, so the last
+    // "pads" line before a hang says which frame the firmware last saw:
+    // stuck bits (a wedge) vs silence (a dead transport).
+    static uint16_t last_raw[4];
+    uint16_t raw[4] = {0, 0, 0, 0}, supp[4] = {0, 0, 0, 0};
+    bool changed = false;
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
         uint16_t *pads[4] = {joy1, joy2, hid1, hid2};
         *joy1 = joy1_state;
@@ -160,11 +170,22 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
         *hid1 = hid1_state;
         *hid2 = hid2_state;
         for (int i = 0; i < 4; i++) {
+            raw[i] = *pads[i];
+            supp[i] = suppress_mask[i];
+            if (raw[i] != last_raw[i])
+                changed = true;
             suppress_mask[i] &= *pads[i];       // released: stop ignoring
             *pads[i] &= ~suppress_mask[i];
         }
+        if (changed)
+            for (int i = 0; i < 4; i++)
+                last_raw[i] = raw[i];
         xSemaphoreGive(state_mutex);
     }
+    if (changed)            // outside the mutex: dbg_log formats text
+        dbg_log("pads J=%03x/%03x H=%03x/%03x supp=%03x/%03x/%03x/%03x",
+                raw[0] & 0xfff, raw[1] & 0xfff, raw[2] & 0xfff, raw[3] & 0xfff,
+                supp[0] & 0xfff, supp[1] & 0xfff, supp[2] & 0xfff, supp[3] & 0xfff);
     heartbeat_bump();       // every menu/input loop calls this: alive
 }
 

@@ -10,6 +10,8 @@ enum GameAction {
     ACTION_RESUME,      // close the menus and go back to the game
     ACTION_RESET,       // reset the running game
     ACTION_CLOSE,       // close the game and show the main menu
+    ACTION_MODE_RELOAD, // MODE with the debug console on: reprogram the
+                        // menu core and redraw, without an MCU reset
 };
 
 extern volatile GameAction pending_action;
@@ -45,6 +47,10 @@ bool game_loaded(void);
 
 // Main menu "Options" screen
 void menu_options(void);
+
+// restart_mcu() for callers outside game_controls.cpp (the debug
+// console's reboot command). Does not return.
+void tc_restart_mcu(bool flash_mode);
 
 // Game menu "Scanlines..." screen
 struct Menu;

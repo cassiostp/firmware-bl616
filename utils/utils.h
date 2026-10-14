@@ -134,6 +134,9 @@ extern struct bflb_device_s *wdg_dev;
 // moving; when a crash or deadlock stops the bumps, the chip resets.
 extern volatile uint32_t heartbeat;
 extern void heartbeat_bump(void);
+// Set by the debug console's wdtest command: heartbeat_bump() and the
+// watchdog task stop feeding the hardware watchdog, so it fires.
+extern volatile bool dbg_wdtest_stall;
 
 // len: length of payload including the command (>=1)
 extern void fpga_tx_header(int cmd, int len);

@@ -22,12 +22,19 @@ void saves_settle(void);
 // Settle, then forget the game entirely: call before closing a game or
 // programming a bitstream that replaces it, never after.
 void saves_off(void);
+// Forget the game WITHOUT flushing: the FPGA no longer holds its save RAM
+// (MODE reloaded it), so a flush would only time out block by block.
+void saves_discard(void);
 void saves_rearm(void);             // the game runs again: dirty notices matter again
 
 // What happened to the running game's save, for the game menu: one line of up
 // to ~30 columns ("Saved to card 12s ago", "Save FAILED: no reply", ...), or ""
 // if the core has no battery saves. saves_diag_text is the counters, <= 32
 // columns, for the diagnostic line.
+bool saves_busy(void);              // a dump is talking to the card right now
+// The save task's stack high-water mark in words, for the watchdog's
+// periodic log snapshot (0 if the task was never created).
+unsigned saves_stack_free(void);
 void saves_status_text(char *buf, size_t n);
 void saves_diag_text(char *buf, size_t n);
 

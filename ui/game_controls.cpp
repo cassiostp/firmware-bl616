@@ -13,6 +13,10 @@ extern "C" {
 #include "menu_manager.h"
 #include "overlay.h"
 #include "utils.h"
+#include "dbg_log.h"
+#include "dbg_console.h"
+#include "usb_console.h"
+#include "saves.h"
 
 // Before a deliberate restart: the watchdog mustn't fire in whatever runs
 // next (the ROM flashing loader in flash mode).
@@ -59,6 +63,12 @@ uint16_t mode_silence_ms(void) {
     return mode_max_silence_ms;
 }
 
+// Combo-gate edge logging (see combo_in_progress): when the effective
+// gate last flipped, and whether the ">2 s held" line went out for it.
+static bool gate_log_on;
+static uint64_t gate_log_since;
+static bool gate_held_logged;
+
 void controls_reset(void) {
     combo_held = 0;
     combo_since = 0;
@@ -71,6 +81,9 @@ void controls_reset(void) {
     mode_max_silence_ms = 0;
     gate_sig = 0;
     gate_since = 0;
+    gate_log_on = false;
+    gate_log_since = 0;
+    gate_held_logged = false;
 }
 
 // A load-wait already saw the newly programmed core answer with this ID:
@@ -104,22 +117,41 @@ bool combo_in_progress(uint16_t pad1, uint16_t pad2) {
     for (uint16_t c : combos)
         if (c && (combo_count(pad1 & c) >= 2 || combo_count(pad2 & c) >= 2))
             gating = true;
+    uint64_t now = bflb_mtimer_get_time_ms();
+    bool gated;
     if (!gating) {
         gate_sig = 0;
-        return false;
-    }
-    // Time-box the block: pads only report changes, so one lost release
-    // frame (or a USB pad unplugged mid-press) holds combo bits forever.
-    // A real combo completes within its short hold; a state that sits
-    // unchanged far longer is stuck, and navigation must come back. Only
-    // the combo bits count for "unchanged": other buttons still navigate.
-    uint64_t now = bflb_mtimer_get_time_ms();
-    if (sig != gate_sig) {
+        gated = false;
+    } else if (sig != gate_sig) {
+        // Time-box the block: pads only report changes, so one lost release
+        // frame (or a USB pad unplugged mid-press) holds combo bits forever.
+        // A real combo completes within its short hold; a state that sits
+        // unchanged far longer is stuck, and navigation must come back. Only
+        // the combo bits count for "unchanged": other buttons still navigate.
         gate_sig = sig;
         gate_since = now;
-        return true;
+        gated = true;
+    } else {
+        gated = now - gate_since < COMBO_GATE_MS;
     }
-    return now - gate_since < COMBO_GATE_MS;
+    // Log the effective gate's edges, not its level: navigation is dead
+    // exactly while this is on, and the "off after ~1.5 s" line is the
+    // time-box unwedging a stuck state.
+    if (gated && !gate_log_on) {
+        gate_log_on = true;
+        gate_log_since = now;
+        gate_held_logged = false;
+        dbg_log("combo gate on: p=%03x/%03x", pad1 & 0xfff, pad2 & 0xfff);
+    } else if (!gated && gate_log_on) {
+        gate_log_on = false;
+        dbg_log("combo gate off after %lums",
+                (unsigned long)(now - gate_log_since));
+    } else if (gated && !gate_held_logged && now - gate_log_since > 2000) {
+        gate_held_logged = true;
+        dbg_log("combo gate held >2s: p=%03x/%03x (stuck pads?)",
+                pad1 & 0xfff, pad2 & 0xfff);
+    }
+    return gated;
 }
 
 static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
@@ -134,6 +166,8 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
         combo_held = held;
         combo_since = now;
         reset_fired = false;
+        if (held)
+            dbg_log("combo held %04x", held);
         return false;
     }
     if (!held || !game_loaded)
@@ -163,6 +197,7 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
     }
     pending_action = action;
     dprint("Combo %04x: action %d", held, action);
+    dbg_log("combo %04x fired: action %d", held, (int)action);
     return true;
 }
 
@@ -185,6 +220,9 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         return;
     last_poll = poll_start;
     if (gap > POLL_GAP_MS) {        // we weren't watching (ROM load, dialog...): start over
+        if (misses)
+            dbg_log("mode: poll gap %lums, %d-miss streak discarded",
+                    (unsigned long)gap, misses);
         misses = 0;
         silent_since = 0;
     }
@@ -196,6 +234,8 @@ static void check_mode_button(bool in_game, bool game_loaded) {
             if (!misses)
                 silent_since = poll_start;
             misses++;
+            dbg_log("mode: miss %d (gap %lums, last=%d)",
+                    misses, (unsigned long)gap, last_id);
         }
         return;
     }
@@ -214,13 +254,29 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         reloaded = true;
     if (!seen_answer && id == 0 && game_loaded)
         reloaded = true;
+    if (misses)
+        dbg_log("mode: answer id=%d last=%d seen=%d silent=%lums misses=%d%s",
+                id, last_id, seen_answer ? 1 : 0, (unsigned long)silent_ms,
+                misses, reloaded ? " -> MODE" : "");
+    if (silent_ms >= 600)
+        dbg_log("link: fpga silent %lums, back as core %d%s",
+                (unsigned long)silent_ms, id, reloaded ? " (MODE)" : "");
     if (reloaded) {
         dprint("FPGA back as core %d after %lums silent: MODE pressed, restarting",
                id, (unsigned long)silent_ms);
-        overlay(1);
-        overlay_status("Restarting...");
-        delay(50);
-        restart_mcu(false);
+        if (usb_console_enabled()) {
+            // A reset here would kill the USB console and, with a PC on
+            // the BL616 port, land in Sipeed's debug mode. Keep the MCU
+            // (and the log's audience) alive: the main loop reprograms
+            // the menu core and redraws instead.
+            dbg_log("MODE with usb console on: reload without MCU reset");
+            pending_action = ACTION_MODE_RELOAD;
+        } else {
+            overlay(1);
+            overlay_status("Restarting...");
+            delay(50);
+            restart_mcu(false);
+        }
     }
     seen_answer = true;
     last_id = id;
@@ -258,6 +314,7 @@ static uint16_t capture_combo(const char *what) {
     overlay_printf("  Wait 10s to cancel.");
 
     suppress_held_buttons();        // ignore the button that opened this screen
+    dbg_log("capture combo: %s start", what);
 
     uint64_t start = bflb_mtimer_get_time_ms();
     uint64_t steady_since = start;
@@ -281,12 +338,17 @@ static uint16_t capture_combo(const char *what) {
         if (combo_count(cur) == COMBO_BUTTONS && now - steady_since >= 1000) {
             overlay_cursor(0, 18);
             overlay_printf("  %-28s", (combo_to_string(cur, true) + " - got it").c_str());
+            dbg_log("capture combo: %s got %04x after %lums",
+                    what, cur, (unsigned long)(now - start));
             suppress_held_buttons();    // releasing them mustn't act on the menu
             delay(500);                 // long enough to read
             return cur;
         }
-        if (now - start >= 10000)
+        if (now - start >= 10000) {
+            dbg_log("capture combo: %s cancelled after %lums (held %04x)",
+                    what, (unsigned long)(now - start), cur);
             return 0;
+        }
         delay(20);
     }
 }
@@ -359,6 +421,7 @@ static void reboot_to_flash_mode(void) {
 // (the screen keeps whatever the FPGA last showed). The ROM's loader likewise
 // never shows up on the PC.
 static void restart_mcu(bool flash_mode) {
+    dbg_log("restart_mcu(flash=%d)", flash_mode ? 1 : 0);
     taskENTER_CRITICAL();
     usb_back_to_power_on_state();
     arch_delay_ms(100);             // long enough for the other end to see a detach
@@ -366,6 +429,10 @@ static void restart_mcu(bool flash_mode) {
         HBN_Set_User_Boot_Config(1);    // 1: boot from interface (download mode)
     stop_watchdog();
     GLB_SW_System_Reset();
+}
+
+void tc_restart_mcu(bool flash_mode) {
+    restart_mcu(flash_mode);
 }
 
 struct FlashModeMenu: Menu {
@@ -427,19 +494,23 @@ struct OptionsMenu: Menu {
         overlay_cursor(2, 15);
         overlay_printf("Flash mode...");
         overlay_cursor(2, 16);
-        overlay_printf("Save");
+        overlay_printf("USB debug console: %s", usb_console_enabled() ? "ON" : "OFF");
         overlay_cursor(2, 17);
+        overlay_printf("Save debug log");
+        overlay_cursor(2, 18);
+        overlay_printf("Save");
+        overlay_cursor(2, 19);
         overlay_printf("<< Back");
-        overlay_cursor(2, 20);
+        overlay_cursor(2, 21);
         //                01234567890123456789012345678901
         overlay_printf("In game:");
-        overlay_cursor(2, 21);
-        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 22);
-        overlay_printf(" Reset combo: reset the game,");
+        overlay_printf(" Menu combo: game menu");
         overlay_cursor(2, 23);
-        overlay_printf(" keep holding: close the game");
+        overlay_printf(" Reset combo: reset the game,");
         overlay_cursor(2, 24);
+        overlay_printf(" keep holding: close the game");
+        overlay_cursor(2, 25);
         overlay_printf("Video: in the game menu");
         if (!message.empty()) {
             overlay_cursor(2, 26);
@@ -448,7 +519,7 @@ struct OptionsMenu: Menu {
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 15, 16, 17};
+        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -490,7 +561,31 @@ struct OptionsMenu: Menu {
         case 6:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 7:
+        case 7:                     // USB debug console on/off
+            if (usb_console_enabled()) {
+                usb_console_set_enabled(false);
+                message = "USB console OFF; host back";
+            } else if (usb_console_set_enabled(true)) {
+                message = "USB console ON: BL616 pads off";
+            } else {
+                message = "Needs the SD card (drive is USB)";
+            }
+            break;
+        case 8: {                   // Save debug log
+            if (saves_busy()) {
+                message = "Save in progress, retry";
+                break;
+            }
+            std::string dir = std::string(drv) + "tangcore";
+            f_mkdir(dir.c_str());   // FR_EXIST is fine
+            dir += "/";
+            message = dbg_log_save(dir.c_str())
+                          ? "Wrote tangcore/debuglog.txt"
+                          : "Could not write the log";
+            dbg_log("options: save debug log -> %s", message.c_str());
+            break;
+        }
+        case 9:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away
@@ -515,6 +610,7 @@ extern int16_t active_core;
 
 static bool scanline_preview(void) {
     bool changed = false;
+    dbg_log("scanline preview: enter");
     suppress_held_buttons();            // the A that chose Preview
     bool live = active_core == 2 || active_core == 4;
     core_config_preview(live ? PREVIEW_LIVE : PREVIEW_PAUSED);
@@ -551,6 +647,8 @@ static bool scanline_preview(void) {
     suppress_held_buttons();            // the button that ended it isn't a menu choice
     overlay(1);
     core_config_preview(PREVIEW_OFF);
+    dbg_log("scanline preview: exit, changed=%d pending=%d",
+            changed ? 1 : 0, (int)pending_action);
     return changed;
 }
 
@@ -660,6 +758,7 @@ Menu *create_scanline_menu(void) {
 // anything changed. Paused, except on SNES/MD (live, pads muted): same as
 // the scanline preview.
 static bool video_preview(bool (*step)(uint16_t p)) {
+    dbg_log("video preview: enter");
     suppress_held_buttons();            // the A that chose Preview
     bool live = active_core == 2 || active_core == 4;
     core_config_preview(live ? PREVIEW_LIVE : PREVIEW_PAUSED);
@@ -683,6 +782,8 @@ static bool video_preview(bool (*step)(uint16_t p)) {
     suppress_held_buttons();            // the button that ended it isn't a menu choice
     overlay(1);
     core_config_preview(PREVIEW_OFF);
+    dbg_log("video preview: exit, changed=%d pending=%d",
+            changed ? 1 : 0, (int)pending_action);
     return changed;
 }
 
@@ -1066,10 +1167,12 @@ Menu *create_video_menu(void) {
 }
 
 void menu_options(void) {
+    dbg_log("options: open");
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new OptionsMenu()));
     menu_current()->do_redraw();
     suppress_held_buttons();    // the button that opened Options
     menu_input_loop();
+    dbg_log("options: exit, pending=%d", (int)pending_action);
     menu_clear();
 }

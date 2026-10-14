@@ -21,6 +21,8 @@ set(FW_SOURCES
     ${FIRMWARE_DIR}/ui/menu_manager.cpp
     ${FIRMWARE_DIR}/ui/overlay.cpp
     ${FIRMWARE_DIR}/utils/settings.cpp
+    ${FIRMWARE_DIR}/utils/dbg_console.cpp
+    ${FIRMWARE_DIR}/utils/dbg_log.cpp
     ${FIRMWARE_DIR}/utils/uart_rx.cpp
     ${FIRMWARE_DIR}/utils/utils.cpp
     ${FIRMWARE_DIR}/core/cores.cpp
@@ -140,3 +142,18 @@ target_include_directories(sim-time-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sim)
 target_compile_options(sim-time-test PRIVATE -Wall -Wextra -Wno-unused-parameter -g)
 target_link_libraries(sim-time-test PRIVATE pthread)
+
+# Unit test: debug log ring + console command parser (utils/dbg_log.cpp,
+# utils/dbg_console.cpp) against host stubs. Run by run-tests.sh.
+add_executable(dbg-log-test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/dbg_log_test.cpp
+    ${FIRMWARE_DIR}/utils/dbg_log.cpp
+    ${FIRMWARE_DIR}/utils/dbg_console.cpp)
+target_include_directories(dbg-log-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/shim
+    ${FIRMWARE_DIR}/utils
+    ${FIRMWARE_DIR}/ui
+    ${FIRMWARE_DIR}/core)
+target_compile_definitions(dbg-log-test PRIVATE TANG_CONSOLE138K TANGCORE_HOST=1)
+target_compile_options(dbg-log-test PRIVATE -Wall -Wextra -Wno-unused-parameter -g)
+target_link_libraries(dbg-log-test PRIVATE pthread)
