@@ -348,6 +348,7 @@ run_test() {
             sms:*) add_sms "$sd" "${spec#sms:}" ;;
             gba) add_gba "$sd" ;;
             gba-rtc) add_gba_rtc "$sd" AXVE FLASH1M_V ;;
+            gba-rtc-sram) add_gba_rtc "$sd" AXVE SRAM_V ;;
             gba-solar) add_gba_rtc "$sd" U3IE EEPROM_V ;;
             cfg-clock) seed_clock "$sd" ;;
             md:*) add_md "$sd" "${spec#md:}" ;;
@@ -446,6 +447,7 @@ run_test x-clock-mode sms:cgame.sms
 run_test y-clock-gba cfg-clock gba-rtc
 run_test y-clock-snes cfg-clock snes:game.smc
 run_test z-clock-solar cfg-clock gba-solar
+run_test z-rtc-eeprom-saves cfg-clock gba-rtc-sram mdjam:jamte.md
 
 echo "=== $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -ne 0 ]; then

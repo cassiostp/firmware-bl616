@@ -171,6 +171,9 @@ bitstreams), and runs `host/tests/*.script`:
 - `q-save-status` — the game menu's save line: nothing written yet, then
   "Saved to card" after a flush.
 - `q-save-timing` — the dump starts about 1 s after the game's first write.
+- `z-rtc-eeprom-saves` — a GBA RTC save (SRAM plus trailing RTC sector) and
+  a Genesis serial-EEPROM save written in one session both survive a power
+  cycle, reloaded in the opposite order.
 - `t-wedge-main` — a pad state stuck with 2 of 3 combo buttons stops
   blocking main-menu navigation after ~1.5 s, while still stuck.
 - `w-wedge-scanlines` — the same stuck state in Video > Scanlines.
