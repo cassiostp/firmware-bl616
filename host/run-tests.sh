@@ -90,6 +90,36 @@ EOF
     head -c 16384 /dev/zero > "$dir/gba/gba_bios.bin"
 }
 
+add_md_quirk() {
+    # $1 = dir, $2 = name, $3 = 8-char header serial (at $183): 2 KB ROM
+    # whose serial core/md.cpp maps to a cart quirk word (no "RA" header:
+    # serial-EEPROM carts size their save from the chip table instead).
+    local dir="$1" name="$2" serial="$3"
+    mkdir -p "$dir/genesis"
+    python3 - "$dir/genesis/$name" "$serial" <<'EOF'
+import sys
+data = bytearray(2048)
+data[0x183:0x18B] = sys.argv[2].encode().ljust(8, b' ')[:8]
+open(sys.argv[1], 'wb').write(data)
+EOF
+}
+
+add_md_big() {
+    # $1 = dir, $2 = name: 5 MB ROM (SSF2 size) with the add_md "RA" header.
+    local dir="$1" name="$2"
+    mkdir -p "$dir/genesis"
+    python3 - "$dir/genesis/$name" <<'EOF'
+import sys
+data = bytearray(2048)
+data[0x1B0:0x1B2] = b'RA'
+data[0x1B4:0x1B8] = (0x00200000).to_bytes(4, 'big')
+data[0x1B8:0x1BC] = (0x00203FFF).to_bytes(4, 'big')
+with open(sys.argv[1], 'wb') as f:
+    f.write(data)
+    f.truncate(5 * 1024 * 1024)
+EOF
+}
+
 add_md() {
     # $1 = dir, $2 = name: 2 KB ROM with an "RA" backup-RAM header for
     # $200000-$203FFF (16 KB image = 32 save blocks).
@@ -231,6 +261,9 @@ run_test() {
             sms:*) add_sms "$sd" "${spec#sms:}" ;;
             gba) add_gba "$sd" ;;
             md:*) add_md "$sd" "${spec#md:}" ;;
+            mdjam:*) add_md_quirk "$sd" "${spec#mdjam:}" 'T-81406 ' ;;
+            mdwb:*) add_md_quirk "$sd" "${spec#mdwb:}" 'G-4060  ' ;;
+            mdbig:*) add_md_big "$sd" "${spec#mdbig:}" ;;
             *) echo "bad fixture: $spec"; exit 2 ;;
         esac
     done
@@ -262,6 +295,9 @@ run_test c-pause sms:cgame.sms
 run_test d-sms-save sms:game.sms
 run_test e-options-persist
 run_test f-md-save md:game.md
+run_test w-md-eeprom mdjam:jamte.md
+run_test w-md-quirks mdwb:wboy.md
+run_test w-md-big mdbig:big.md
 run_test g-mode-early sms:cgame.sms
 run_test h-scanlines sms:cgame.sms
 run_test i-video-color sms:cgame.sms
