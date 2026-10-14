@@ -15,6 +15,10 @@ void saves_set_battery(bool battery);
 // The ROM loader: the game's own save RAM size, in 512-byte blocks (the SNES
 // header's SRAM size byte). 0 = no battery RAM. For per-game cores only.
 void saves_set_blocks(uint16_t blocks);
+// Per-game blank byte, overriding the core geometry's (one Genesis homebrew
+// expects a fresh SRAM of 0x00, not 0xFF). Reset by saves_set_game; call
+// before saves_restore.
+void saves_set_blank(uint8_t blank);
 void saves_restore(void);           // send the save into the FPGA; the core must not run yet
 // Settle any pending dump, then stop async dumps until re-armed: call when a
 // menu opens over the running game, and before the FPGA stops running it.
