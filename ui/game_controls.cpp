@@ -59,6 +59,12 @@ uint16_t mode_silence_ms(void) {
     return mode_max_silence_ms;
 }
 
+// Combo-gate edge logging (see combo_in_progress): when the gate last
+// flipped, and whether the ">2 s held" line went out for this hold.
+static bool gate_logged_on;
+static uint64_t gate_since;
+static bool gate_held_logged;
+
 void controls_reset(void) {
     combo_held = 0;
     combo_since = 0;
@@ -69,6 +75,9 @@ void controls_reset(void) {
     misses = 0;
     silent_since = 0;
     mode_max_silence_ms = 0;
+    gate_logged_on = false;
+    gate_since = 0;
+    gate_held_logged = false;
 }
 
 static bool pressed(uint16_t pad1, uint16_t pad2, uint16_t combo) {
@@ -80,11 +89,28 @@ static uint16_t active_reset_combo(void) {
 }
 
 bool combo_in_progress(uint16_t pad1, uint16_t pad2) {
+    bool on = false;
     uint16_t combos[] = {settings.menu_combo, active_reset_combo()};
     for (uint16_t c : combos)
         if (c && (combo_count(pad1 & c) >= 2 || combo_count(pad2 & c) >= 2))
-            return true;
-    return false;
+            on = true;
+    // Log the gate's edges, not its level: navigation is dead exactly
+    // while this is on, so a gate that never turns off *is* the wedge.
+    uint64_t now = bflb_mtimer_get_time_ms();
+    if (on && !gate_logged_on) {
+        gate_logged_on = true;
+        gate_since = now;
+        gate_held_logged = false;
+        dbg_log("combo gate on: p=%03x/%03x", pad1 & 0xfff, pad2 & 0xfff);
+    } else if (!on && gate_logged_on) {
+        gate_logged_on = false;
+        dbg_log("combo gate off after %lums", (unsigned long)(now - gate_since));
+    } else if (on && !gate_held_logged && now - gate_since > 2000) {
+        gate_held_logged = true;
+        dbg_log("combo gate held >2s: p=%03x/%03x (stuck pads?)",
+                pad1 & 0xfff, pad2 & 0xfff);
+    }
+    return on;
 }
 
 static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
@@ -99,6 +125,8 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
         combo_held = held;
         combo_since = now;
         reset_fired = false;
+        if (held)
+            dbg_log("combo held %04x", held);
         return false;
     }
     if (!held || !game_loaded)
@@ -128,6 +156,7 @@ static bool check_combos(uint16_t pad1, uint16_t pad2, bool in_game, bool game_l
     }
     pending_action = action;
     dprint("Combo %04x: action %d", held, action);
+    dbg_log("combo %04x fired: action %d", held, (int)action);
     return true;
 }
 
@@ -150,6 +179,9 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         return;
     last_poll = poll_start;
     if (gap > POLL_GAP_MS) {        // we weren't watching (ROM load, dialog...): start over
+        if (misses)
+            dbg_log("mode: poll gap %lums, %d-miss streak discarded",
+                    (unsigned long)gap, misses);
         misses = 0;
         silent_since = 0;
     }
@@ -161,6 +193,8 @@ static void check_mode_button(bool in_game, bool game_loaded) {
             if (!misses)
                 silent_since = poll_start;
             misses++;
+            dbg_log("mode: miss %d (gap %lums, last=%d)",
+                    misses, (unsigned long)gap, last_id);
         }
         return;
     }
@@ -179,6 +213,10 @@ static void check_mode_button(bool in_game, bool game_loaded) {
         reloaded = true;
     if (!seen_answer && id == 0 && game_loaded)
         reloaded = true;
+    if (misses)
+        dbg_log("mode: answer id=%d last=%d seen=%d silent=%lums misses=%d%s",
+                id, last_id, seen_answer ? 1 : 0, (unsigned long)silent_ms,
+                misses, reloaded ? " -> MODE" : "");
     if (silent_ms >= 600)
         dbg_log("link: fpga silent %lums, back as core %d%s",
                 (unsigned long)silent_ms, id, reloaded ? " (MODE)" : "");
@@ -234,8 +272,10 @@ static uint16_t capture_combo(const char *what) {
     overlay_printf("  Wait 10s to cancel.");
 
     suppress_held_buttons();        // ignore the button that opened this screen
+    dbg_log("capture combo: %s start", what);
 
     uint64_t start = bflb_mtimer_get_time_ms();
+    uint64_t entered = start;       // start restarts on input; entered doesn't
     uint64_t steady_since = start;
     uint16_t last = 0;
     while (1) {
@@ -256,12 +296,17 @@ static uint16_t capture_combo(const char *what) {
         if (combo_count(cur) == COMBO_BUTTONS && now - steady_since >= 1000) {
             overlay_cursor(0, 18);
             overlay_printf("  %-28s", (combo_to_string(cur, true) + " - got it").c_str());
+            dbg_log("capture combo: %s got %04x after %lums",
+                    what, cur, (unsigned long)(now - entered));
             suppress_held_buttons();    // releasing them mustn't act on the menu
             delay(500);                 // long enough to read
             return cur;
         }
-        if (now - start >= 10000)
+        if (now - start >= 10000) {
+            dbg_log("capture combo: %s cancelled after %lums (held %04x)",
+                    what, (unsigned long)(now - entered), cur);
             return 0;
+        }
         delay(20);
     }
 }
@@ -523,6 +568,7 @@ extern int16_t active_core;
 
 static bool scanline_preview(void) {
     bool changed = false;
+    dbg_log("scanline preview: enter");
     suppress_held_buttons();            // the A that chose Preview
     bool live = active_core == 2 || active_core == 4;
     core_config_preview(live ? PREVIEW_LIVE : PREVIEW_PAUSED);
@@ -559,6 +605,8 @@ static bool scanline_preview(void) {
     suppress_held_buttons();            // the button that ended it isn't a menu choice
     overlay(1);
     core_config_preview(PREVIEW_OFF);
+    dbg_log("scanline preview: exit, changed=%d pending=%d",
+            changed ? 1 : 0, (int)pending_action);
     return changed;
 }
 
@@ -668,6 +716,7 @@ Menu *create_scanline_menu(void) {
 // anything changed. Paused, except on SNES/MD (live, pads muted): same as
 // the scanline preview.
 static bool video_preview(bool (*step)(uint16_t p)) {
+    dbg_log("video preview: enter");
     suppress_held_buttons();            // the A that chose Preview
     bool live = active_core == 2 || active_core == 4;
     core_config_preview(live ? PREVIEW_LIVE : PREVIEW_PAUSED);
@@ -691,6 +740,8 @@ static bool video_preview(bool (*step)(uint16_t p)) {
     suppress_held_buttons();            // the button that ended it isn't a menu choice
     overlay(1);
     core_config_preview(PREVIEW_OFF);
+    dbg_log("video preview: exit, changed=%d pending=%d",
+            changed ? 1 : 0, (int)pending_action);
     return changed;
 }
 
@@ -1074,10 +1125,12 @@ Menu *create_video_menu(void) {
 }
 
 void menu_options(void) {
+    dbg_log("options: open");
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new OptionsMenu()));
     menu_current()->do_redraw();
     suppress_held_buttons();    // the button that opened Options
     menu_input_loop();
+    dbg_log("options: exit, pending=%d", (int)pending_action);
     menu_clear();
 }

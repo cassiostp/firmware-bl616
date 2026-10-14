@@ -10,6 +10,9 @@ void usb_gamepad_init(void);
 // Stop the detector and per-device client tasks (the USB debug console
 // tears the host stack down). usb_gamepad_init() restarts them.
 void usb_gamepad_stop(void);
+// The USB host detector task's stack high-water mark in words, for the
+// watchdog's periodic log snapshot (0 if it was never created).
+unsigned usb_host_stack_free(void);
 
 // state will be written here by the USB gamepad task
 extern volatile uint16_t hid1_state;               // SNES-format gamepad state

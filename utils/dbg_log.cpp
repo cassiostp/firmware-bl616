@@ -1,8 +1,15 @@
 #include "dbg_log.h"
 
+#include <malloc.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef TANGCORE_HOST
+// newlib may declare mallinfo without providing it (heap_3): weak, so the
+// null check in dbg_log_heap_free() says whether it exists.
+extern "C" __attribute__((weak)) struct mallinfo mallinfo(void);
+#endif
 
 extern "C" {
 #include <FreeRTOS.h>
@@ -113,6 +120,16 @@ void dbg_log(const char *fmt, ...) {
     taskENTER_CRITICAL();
     ring_put(buf, len);
     taskEXIT_CRITICAL();
+}
+
+int32_t dbg_log_heap_free(void) {
+#ifdef TANGCORE_HOST
+    return (int32_t)mallinfo2().fordblks;   // glibc: mallinfo() is deprecated
+#else
+    if (&mallinfo)
+        return (int32_t)mallinfo().fordblks;
+    return -1;
+#endif
 }
 
 uint64_t dbg_log_total(void) {

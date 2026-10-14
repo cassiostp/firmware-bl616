@@ -135,17 +135,19 @@ static void usbh_update(struct usb_config *usb) {
     // check status for tasks
     for (int i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; i++) {
         if (usb->hid_info[i].state != STATE_RUNNING) continue;
-        if (usb->hid_info[i].task_handle == NULL || 
+        if (usb->hid_info[i].task_handle == NULL ||
             eTaskGetState(usb->hid_info[i].task_handle) == eDeleted) {
             INFO("HID client #%d: task died unexpectedly\n", i);
+            dbg_log("usb host: HID client %d task died", i);
             usb->hid_info[i].state = STATE_NONE;
         }
     }
     for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
         if (usb->xbox_info[i].state != STATE_RUNNING) continue;
-        if (usb->xbox_info[i].task_handle == NULL || 
+        if (usb->xbox_info[i].task_handle == NULL ||
             eTaskGetState(usb->xbox_info[i].task_handle) == eDeleted) {
-            INFO("XBOX client #%d: task died unexpectedly\n", i);   
+            INFO("XBOX client #%d: task died unexpectedly\n", i);
+            dbg_log("usb host: Xinput client %d task died", i);
             usb->xbox_info[i].state = STATE_NONE;
         }
     }
@@ -432,6 +434,7 @@ static void usbh_xbox_client_thread(void *arg) {
                 error++;
                 if (xbox->nbytes == -USB_ERR_TIMEOUT) {
                     INFO("XBOX client #%d: timeout, reinit\n", xbox->index);
+                    dbg_log("usb host: Xinput %d URB timeout, reinit", xbox->index);
                     usbh_kill_urb(&xbox->hid_class->intin_urb);
                     // reinit if we timeout (device could've gone asleep)
                     xbox_init(xbox);
@@ -484,8 +487,9 @@ static void usbh_hid_thread(void *argument) {
                         usb->hid_info[i].report.report_size + (usb->hid_info[i].report.report_id_present ? 1:0),
                         0, usbh_hid_callback, &usb->hid_info[i]);     
 
-                xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
-                        &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle );
+                if (xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
+                        &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle ) != pdPASS)
+                    dbg_log("usb host: HID client %d task not created (heap?)", i);
             }
         }
 
@@ -500,8 +504,9 @@ static void usbh_hid_thread(void *argument) {
                 usb->xbox_info[i].js_index = hid_allocate_joystick();
                 DEBUG("  -> joystick %d", usb->xbox_info[i].js_index);
 
-                xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
-                        &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle );
+                if (xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
+                        &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle ) != pdPASS)
+                    dbg_log("usb host: Xinput client %d task not created (heap?)", i);
             }
         }
 
@@ -541,7 +546,12 @@ void usb_gamepad_init(void) {
             usb_config.xbox_info[i].sem = xSemaphoreCreateBinary();
     }
 
-    xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle);
+    if (xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle) != pdPASS)
+        dbg_log("usb host: detector task not created (heap?), USB pads off");
+}
+
+unsigned usb_host_stack_free(void) {
+    return usb_handle ? (unsigned)uxTaskGetStackHighWaterMark(usb_handle) : 0;
 }
 
 // The client tasks wait forever on their URB semaphores, so they can only

@@ -229,6 +229,7 @@ void init_gpio_and_uart() {
 
 // ---- USB gamepads: none attached; pads are driven by the sim ----
 void usb_gamepad_init(void) {}
+unsigned usb_host_stack_free(void) { return 0; }
 
 extern "C" {
 // ---- FPGA programming: record the core, pretend success ----

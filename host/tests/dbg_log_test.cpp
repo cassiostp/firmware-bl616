@@ -113,6 +113,9 @@ int main() {
     dbg_log("hello %d", 42);
     std::string t = ring_text();
     CHECK(t.find("[61.234] hello 42\n") != std::string::npos);
+    // The watchdog/program log lines read the heap through this: on the
+    // host it is a real mallinfo number, never the -1 "no mallinfo" case.
+    CHECK(dbg_log_heap_free() > 0);
 
     // ---- wrap: write well past the ring size ----
     for (int i = 0; i < 3000; i++)

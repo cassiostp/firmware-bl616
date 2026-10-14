@@ -9,6 +9,7 @@
  */
 
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <vector>
 
@@ -129,9 +130,15 @@ static void clear_pad_states(void);
 // by the FPGA restart from nothing, so reset what tracks them (and the
 // core_config copy, so one core's specific bits don't reach the next).
 static bool program_fpga(const char *fname) {
-    dbg_log("core load start: %s", fname);
+    // Heap around every program: a leak in the programmer shows up as a
+    // free-heap ratchet across loads within one session.
+    int32_t heap_before = dbg_log_heap_free();
+    dbg_log("core load start: %s (heap free %ld)", fname, (long)heap_before);
     bool r = fpga_program(fname);
-    dbg_log("core load %s: %s", r ? "ok" : "FAILED", fname);
+    int32_t heap_after = dbg_log_heap_free();
+    dbg_log("core load %s: %s (heap free %ld, delta %+ld)",
+            r ? "ok" : "FAILED", fname, (long)heap_after,
+            (long)(heap_after - heap_before));
     forget_core_config();               // the new core starts with core_config = 0
     clear_pad_states();
     controls_reset();
@@ -307,6 +314,7 @@ static int menu_loadrom(const char *dir) {
 static void send_hid_to_core(void) {
     uint16_t hid1_old = 0, hid2_old = 0;
     bool first = true;
+    dbg_log("hid loop: enter (game running)");
     dprint("Start sending HID to core...");
     while (1) {
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
@@ -329,6 +337,8 @@ static void send_hid_to_core(void) {
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+    dbg_log("hid loop: exit, pending=%d overlay=%d",
+            (int)pending_action, overlay_on() ? 1 : 0);
     dprint("Stopped sending HID to core.");
 }
 
@@ -429,29 +439,63 @@ int joy_choice(int start_line, int len, int *active) {
 #define HEARTBEAT_STALL_MS        15000   // stop feeding after this long without a beat
 #define WATCHDOG_FEED_MS          2000    // hardware timeout after feeding stops
 
+// Stack words still free on a task (its high-water mark), for the
+// watchdog snapshot. The host shim has no marks: report 0 there.
+static unsigned stack_free_words(TaskHandle_t h)
+{
+#ifdef TANGCORE_HOST
+    (void)h;
+    return 0;
+#else
+    return h ? (unsigned)uxTaskGetStackHighWaterMark(h) : 0;
+#endif
+}
+
 // Feed the hardware watchdog while the heartbeat keeps moving (something is
 // reading pads, listing files or sending data). If it stops - a crash, a spin
 // loop, a mutex deadlock - stop feeding and the watchdog resets the chip.
+// Every 30 s, one snapshot line: the last-known-good state (stack margins,
+// heap, UART losses) right up to whatever hang follows it.
 static void watchdog_task(void *pvParameters)
 {
     uint32_t last_beat = heartbeat;
     uint64_t last_beat_time = bflb_mtimer_get_time_ms();
+    uint64_t last_snap = last_beat_time;
     bool stall_logged = false;
+    bool feedoff_logged = false;
     while (1) {
+        uint64_t now = bflb_mtimer_get_time_ms();
         if (heartbeat != last_beat) {
             last_beat = heartbeat;
-            last_beat_time = bflb_mtimer_get_time_ms();
+            last_beat_time = now;
             stall_logged = false;
+            feedoff_logged = false;
         }
-        uint64_t stale = bflb_mtimer_get_time_ms() - last_beat_time;
+        uint64_t stale = now - last_beat_time;
         if (stale >= 5000 && !stall_logged) {
             stall_logged = true;
             dbg_log("watchdog: heartbeat stalled %lus (beat %lu)%s",
                     (unsigned long)(stale / 1000), (unsigned long)last_beat,
                     dbg_wdtest_stall ? " [wdtest]" : "");
         }
+        if (stale >= HEARTBEAT_STALL_MS && !feedoff_logged) {
+            feedoff_logged = true;
+            dbg_log("watchdog: heartbeat stalled %lus, stop feeding (HW reset follows)%s",
+                    (unsigned long)(stale / 1000),
+                    dbg_wdtest_stall ? " [wdtest]" : "");
+        }
         if (stale < HEARTBEAT_STALL_MS && !dbg_wdtest_stall)
             bflb_wdg_reset_countervalue(wdg_dev);
+        if (now - last_snap >= 30000) {
+            last_snap = now;
+            dbg_log("watchdog: beat %lu heap %ld stk main %u rx %u saves %u usb %u ringdrop %lu fifovf %d",
+                    (unsigned long)last_beat, (long)dbg_log_heap_free(),
+                    stack_free_words(main_task_handle),
+                    stack_free_words(uart1_rx_task_handle),
+                    saves_stack_free(), usb_host_stack_free(),
+                    (unsigned long)uart_rx_ring_dropped(),
+                    uart_rx_fifo_overflowed() ? 1 : 0);
+        }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
@@ -481,6 +525,9 @@ static void uart1_rx_task(void *pvParameters)
             if (pos != 0 && now - last_byte > 50) {
                 if (type == 0x0A && pos >= 4)
                     saves_rx_bad_frame();       // a save block cut short
+                dbg_log("uart resync: gap %lums mid-frame (type=%02x pos=%u len=%u)",
+                        (unsigned long)(now - last_byte), type,
+                        (unsigned)pos, (unsigned)len);
                 pos = 0;
             }
             last_byte = now;
@@ -590,6 +637,8 @@ static void uart1_rx_task(void *pvParameters)
                 pos = 0;
 
             } else {
+                dbg_log("uart resync: unknown type %02x (len=%u)", type,
+                        (unsigned)len);
                 pos = 0; // Reset if we get out of sync
             }
         }
@@ -735,6 +784,7 @@ static void show_game_menu(void) {
     push_menu(std::unique_ptr<Menu>(new GameMenu()));
     menu_current()->do_redraw();
     menu_input_loop();
+    dbg_log("game menu exit, pending=%d", (int)pending_action);
     menu_clear();
 }
 
@@ -766,6 +816,7 @@ static bool handle_game_action(void) {
             break;
         }
         case ACTION_RESUME:
+            dbg_log("game action: resume");
             menu_clear();
             if (game_loaded()) {
                 overlay(0);             // the main loop goes back to the game
@@ -1026,13 +1077,43 @@ int main(void)
     saves_init();           // battery saves: core/saves.cpp
     usb_console_init();     // debug console task (USB device stays off until Options)
     overlay_status("Creating tasks...");
-    // Create the tasks
-    xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle);
-    xTaskCreate(uart1_rx_task, "uart1_rx_task", UART1_RX_TASK_STACK_SIZE, NULL, UART1_RX_TASK_PRIORITY, &uart1_rx_task_handle);
-    xTaskCreate(watchdog_task, "watchdog", WATCHDOG_TASK_STACK_SIZE, NULL, WATCHDOG_TASK_PRIORITY, NULL);
-    
+    // Create the tasks. A task that silently never starts (heap) looks
+    // exactly like a hang, so say so before the scheduler takes over.
+    if (xTaskCreate(main_task, "main_task", MAIN_TASK_STACK_SIZE, NULL, MAIN_TASK_PRIORITY, &main_task_handle) != pdPASS)
+        dbg_log("boot: main_task not created (heap?)");
+    if (xTaskCreate(uart1_rx_task, "uart1_rx_task", UART1_RX_TASK_STACK_SIZE, NULL, UART1_RX_TASK_PRIORITY, &uart1_rx_task_handle) != pdPASS)
+        dbg_log("boot: uart1_rx_task not created (heap?)");
+    if (xTaskCreate(watchdog_task, "watchdog", WATCHDOG_TASK_STACK_SIZE, NULL, WATCHDOG_TASK_PRIORITY, NULL) != pdPASS)
+        dbg_log("boot: watchdog task not created (heap?)");
+    dbg_log("boot: tasks created, heap free %ld", (long)dbg_log_heap_free());
+
     vTaskStartScheduler();
 
     while (1) {
+    }
+}
+
+// FreeRTOS failure hooks (configCHECK_FOR_STACK_OVERFLOW=2,
+// configUSE_MALLOC_FAILED_HOOK=1). The SDK's are weak printf-and-spin
+// defaults; ours also leave a line in the log ring, which survives the
+// watchdog reset that follows, so the dead task names itself in
+// lastlog.txt. Best effort only: the stack that overflowed is already
+// gone, so these must stay tiny. The spin is deliberate: the heartbeat
+// stops and the watchdog resets the chip.
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t task, char *name)
+{
+    (void)task;
+    dbg_log("FATAL: stack overflow in %s", name ? name : "?");
+    printf("FATAL: stack overflow in %s\r\n", name ? name : "?");
+    for (;;) {
+    }
+}
+
+extern "C" void vApplicationMallocFailedHook(void)
+{
+    // No heap query here: malloc just failed, its lock state is unknown.
+    dbg_log("FATAL: malloc failed");
+    printf("FATAL: malloc failed\r\n");
+    for (;;) {
     }
 }

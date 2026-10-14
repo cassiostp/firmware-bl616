@@ -38,6 +38,11 @@ struct dbg_pm_header {
 void dbg_log_init(void);                // once, early in main(), before other tasks log
 void dbg_log(const char *fmt, ...);
 
+// Free heap in bytes for log lines (mallinfo's fordblks), or -1 when this
+// libc has no mallinfo (the SDK links heap_3, so there is no FreeRTOS
+// heap query either). Safe from any task; never blocks.
+int32_t dbg_log_heap_free(void);
+
 // Stream/cursor access for the console task.
 uint64_t dbg_log_total(void);           // bytes ever written
 uint64_t dbg_log_dropped(void);         // bytes overwritten before anyone read them

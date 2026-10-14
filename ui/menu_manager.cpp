@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "console.h"
 #include "game_controls.h"
+#include "dbg_log.h"
 
 std::vector<std::unique_ptr<Menu>> menu_stack;
 
@@ -34,6 +35,7 @@ void menu_input_loop() {
     if (!menu_is_active())
         return;
 
+    dbg_log("menu loop: enter, depth=%d", (int)menu_stack.size());
     DEBUG("Menu input loop\n");
     std::vector<int> options = menu_current()->get_options();
     int last = 0, active = 0;
@@ -79,6 +81,8 @@ void menu_input_loop() {
             if (r) {
                 pop_menu();
                 if (!menu_is_active()) {
+                    dbg_log("menu loop: exit, stack empty, pending=%d",
+                            (int)pending_action);
                     delay(100);
                     return;
                 }
@@ -101,4 +105,6 @@ void menu_input_loop() {
             delay(100);
         last = active;
     }
+    dbg_log("menu loop: exit, depth=%d overlay=%d pending=%d",
+            (int)menu_stack.size(), overlay_on() ? 1 : 0, (int)pending_action);
 }

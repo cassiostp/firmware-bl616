@@ -32,6 +32,9 @@ void saves_rearm(void);             // the game runs again: dirty notices matter
 // if the core has no battery saves. saves_diag_text is the counters, <= 32
 // columns, for the diagnostic line.
 bool saves_busy(void);              // a dump is talking to the card right now
+// The save task's stack high-water mark in words, for the watchdog's
+// periodic log snapshot (0 if the task was never created).
+unsigned saves_stack_free(void);
 void saves_status_text(char *buf, size_t n);
 void saves_diag_text(char *buf, size_t n);
 
