@@ -6,6 +6,7 @@
 #include "overlay.h"
 #include "saves.h"
 #include "settings.h"
+#include "fastload.h"
 
 // Core specific state
 bool gba_bios_loaded;
@@ -82,9 +83,12 @@ static uint32_t gba_scan_backup(const uint8_t *p, uint32_t n, uint8_t *tail, uin
 
 
 // check if gba_bios.bin is present in the root directory
-// if not, warn user, if present, load it
-void gba_load_bios() {
-    if (gba_bios_loaded | gba_missing_bios_warned) return;
+// if not, warn user, if present, load it. Streams at the current link rate
+// and, on a fast link, checks the BIOS window (loading state 4) the same
+// way as the ROM. Returns false only when the BIOS file cannot be read
+// (missing BIOS is fine: the core falls back to its open-source BIOS).
+static bool gba_load_bios(int *link_code) {
+    if (gba_bios_loaded | gba_missing_bios_warned) return true;
 
     DEBUG("gba_load_bios start\n");
     FILINFO fno;
@@ -95,25 +99,63 @@ void gba_load_bios() {
                  "Using open source BIOS\n"
                  "Expect low compatibility", 1);
         gba_missing_bios_warned = 1;
-        return;
+        return true;
     }
 
-    int r = 1;
+    bool ok = true;
     unsigned br;
     if (f_open(&fcore, bios_path.c_str(), FA_READ) != FR_OK) {
         overlay_message("Cannot open /gba/gba_bios.bin", 1);
-        return;
+        return false;
     }
     set_loading_state(4);
+    uint32_t crc = 0xFFFFFFFF, cnt = 0;
+    FRESULT r;
     do {
-        if ((r = f_read(&fcore, fbuf, 1024, &br)) != FR_OK)
+        if ((r = f_read(&fcore, fbuf, BLOCK_SIZE, &br)) != FR_OK) {
+            ok = false;
             break;
-        send_fbuf_data(br);
-    } while (br == 1024);
+        }
+        for (unsigned o = 0; o < br; o += 1024) {
+            unsigned n = br - o > 1024 ? 1024 : br - o;
+            send_data_frame(fbuf + o, (uint16_t)n);
+            crc = fast_crc32_update(crc, fbuf + o, n);
+            cnt += n;
+        }
+    } while (br == BLOCK_SIZE);
+
+    if (ok && *link_code != FAST_BAUD_2M && !fast_verify(crc ^ 0xFFFFFFFF, cnt)) {
+        // Same full-retry shape as the ROM below: back to 2M, whole BIOS again.
+        DEBUG("gba_load_bios: fast verify failed, retry at 2M\n");
+        *link_code = fast_negotiate(FAST_BAUD_2M, *link_code);
+        if (*link_code != FAST_BAUD_2M) {
+            delay(1200);                    // the core's watchdog reverts it
+            fast_set_baud(2000000);
+            *link_code = FAST_BAUD_2M;
+        }
+        f_lseek(&fcore, 0);
+        set_loading_state(4);
+        crc = 0xFFFFFFFF; cnt = 0;
+        do {
+            if ((r = f_read(&fcore, fbuf, BLOCK_SIZE, &br)) != FR_OK) {
+                ok = false;
+                break;
+            }
+            for (unsigned o = 0; o < br; o += 1024) {
+                unsigned n = br - o > 1024 ? 1024 : br - o;
+                send_data_frame(fbuf + o, (uint16_t)n);
+                crc = fast_crc32_update(crc, fbuf + o, n);
+                cnt += n;
+            }
+        } while (br == BLOCK_SIZE);
+        if (ok && !fast_verify(crc ^ 0xFFFFFFFF, cnt))
+            DEBUG("gba_load_bios: 2M verify failed too (proceeding)\n");
+    }
 
     f_close(&fcore);
     gba_bios_loaded = 1;
     DEBUG("gba_load_bios end\n");
+    return ok;
 }
 
 int loadgba(const char *fname) {
@@ -133,7 +175,6 @@ int loadgba(const char *fname) {
         overlay_status("Cannot open file");
         return r;
     }
-    unsigned int off = 0, br, total = 0;
     uint8_t tail[9];                    // backup ID scan: prev chunk's tail
     uint32_t tlen = 0, bhits = 0;       // (declared before the gotos below)
     uint8_t btype = 0;                  // the detected backup chip
@@ -141,34 +182,121 @@ int loadgba(const char *fname) {
     char game_code[4] = {0, 0, 0, 0};   // ROM offset 0xAC, from the first chunk
     memset(tail, 0, sizeof tail);
 
-    // load actual ROM
+    // The seek runs before the streaming state below so a failure returns
+    // early, the same way loadgba_close at the end does.
+    if ((r = f_lseek(&fcore, 0)) != FR_OK) {
+        overlay_status("Seek failure");
+        set_loading_state(0);   // turn off game loading, this starts the core
+        f_close(&fcore);
+        return r;
+    }
+
+    // Negotiate the fast link first: 8M, else 4M, else 2M exactly as today.
+    // A core without FAST_UART stays silent through both probes (120 ms),
+    // and every byte after that is the proven 2M path.
+    int link_code = fast_negotiate(FAST_BAUD_8M, FAST_BAUD_2M);
+    if (link_code != FAST_BAUD_8M)
+        link_code = fast_negotiate(FAST_BAUD_4M, FAST_BAUD_2M);
+    DEBUG("loadgba: link code %d\n", link_code);
+
+    // load actual ROM: 8 KB SD reads framed as 1 KB 0x07 payloads (the frame
+    // length tops out at 2047), with the CRC-32 and byte count the core
+    // checks on 0x16.
     set_loading_state(1);		// enable game loading, this resets GBA
     core_running = false;
 
-    // Send rom content to gba
-    if ((r = f_lseek(&fcore, off)) != FR_OK) {
-        overlay_status("Seek failure");
-        goto loadgba_close;
-    }
-    do {
-        if ((r = f_read(&fcore, fbuf, 1024, &br)) != FR_OK)
+    uint32_t rom_crc = 0xFFFFFFFF, rom_cnt = 0;
+    unsigned br = 0, total = 0;
+    for (;;) {
+        if ((r = f_read(&fcore, fbuf, BLOCK_SIZE, &br)) != FR_OK)
             break;
-
-        bhits |= gba_scan_backup(fbuf, br, tail, &tlen);
-        if (total == 0 && br > 0xB0)    // game code at 0xAC is in chunk 0
-            memcpy(game_code, fbuf + 0xAC, 4);
-        send_fbuf_data(br);
+        if (br == 0)
+            break;
+        for (unsigned o = 0; o < br; o += 1024) {
+            unsigned n = br - o > 1024 ? 1024 : br - o;
+            bhits |= gba_scan_backup(fbuf + o, n, tail, &tlen);
+            if (total + o == 0 && n > 0xB0)    // game code at 0xAC is in frame 0
+                memcpy(game_code, fbuf + 0xAC, 4);
+            send_data_frame(fbuf + o, (uint16_t)n);
+            rom_crc = fast_crc32_update(rom_crc, fbuf + o, n);
+            rom_cnt += n;
+        }
 
         total += br;
         if ((total & 0xffff) == 0) {	// display progress every 64KB
             //              01234567890123456789012345678901
             overlay_status("%d/%dK                          ", total >> 10, size >> 10);
         }
-    } while (br == 1024);
+        if (br < BLOCK_SIZE)
+            break;
+    }
 
-    DEBUG("loadgba: %d bytes rom sent.\n", total); 
+    DEBUG("loadgba: %d bytes rom sent.\n", total);
 
-    gba_load_bios();
+    if (r == FR_OK && link_code != FAST_BAUD_2M &&
+            !fast_verify(rom_crc ^ 0xFFFFFFFF, rom_cnt)) {
+        // The stream the core saw is not the file: the whole ROM goes again
+        // at 2M (the core's window reopens at loading==1, so the retry is a
+        // complete load, not a patch).
+        overlay_status("Load check failed, retrying at 2M...");
+        DEBUG("loadgba: fast verify failed, retry at 2M\n");
+        link_code = fast_negotiate(FAST_BAUD_2M, link_code);
+        if (link_code != FAST_BAUD_2M) {
+            delay(1200);                    // the core's watchdog reverts it
+            fast_set_baud(2000000);
+            link_code = FAST_BAUD_2M;
+        }
+        memset(tail, 0, sizeof tail);
+        tlen = 0; bhits = 0;
+        memset(game_code, 0, sizeof game_code);
+        set_loading_state(1);
+        rom_crc = 0xFFFFFFFF; rom_cnt = 0; total = 0;
+        r = f_lseek(&fcore, 0);
+        if (r == FR_OK) {
+            for (;;) {
+                if ((r = f_read(&fcore, fbuf, BLOCK_SIZE, &br)) != FR_OK)
+                    break;
+                if (br == 0)
+                    break;
+                for (unsigned o = 0; o < br; o += 1024) {
+                    unsigned n = br - o > 1024 ? 1024 : br - o;
+                    bhits |= gba_scan_backup(fbuf + o, n, tail, &tlen);
+                    if (total + o == 0 && n > 0xB0)
+                        memcpy(game_code, fbuf + 0xAC, 4);
+                    send_data_frame(fbuf + o, (uint16_t)n);
+                    rom_crc = fast_crc32_update(rom_crc, fbuf + o, n);
+                    rom_cnt += n;
+                }
+                total += br;
+                if ((total & 0xffff) == 0)
+                    overlay_status("%d/%dK                          ", total >> 10, size >> 10);
+                if (br < BLOCK_SIZE)
+                    break;
+            }
+        }
+        DEBUG("loadgba: retry sent %d bytes.\n", total);
+        if (r == FR_OK && !fast_verify(rom_crc ^ 0xFFFFFFFF, rom_cnt))
+            DEBUG("loadgba: 2M verify failed too (proceeding)\n");
+    }
+
+    f_close(&fcore);          // the ROM is fully streamed; the BIOS opens fresh
+
+    gba_load_bios(&link_code);
+
+    // Back to 2M for the small stuff and the save traffic: the proven rate,
+    // and a fast link would revert by itself after 1 s idle anyway.
+    // saw_fast remembers whether this core speaks the fast protocol: only
+    // then does the region-3 check below have an answer to wait for (an old
+    // core would just eat two 500 ms timeouts).
+    bool saw_fast = link_code != FAST_BAUD_2M;
+    if (link_code != FAST_BAUD_2M) {
+        link_code = fast_negotiate(FAST_BAUD_2M, link_code);
+        if (link_code != FAST_BAUD_2M) {
+            delay(1200);
+            fast_set_baud(2000000);
+            link_code = FAST_BAUD_2M;
+        }
+    }
 
     // Tell the core which backup chip to emulate (loader region 3; the core
     // zeroes the setting at loading==1, so it goes in after the ROM stream),
@@ -181,12 +309,24 @@ int loadgba(const char *fname) {
     gba_gpio_flags = gba_gpio_flags_for(game_code);
     // Loader region 3 config, in order: backup type, GPIO flags, solar %.
     // Always send all three: the core zeroes them at loading==1, and an old
-    // bitstream simply ignores the extra bytes.
+    // bitstream simply ignores the extra bytes. Sent at 2M and verified: it
+    // is only 3 bytes, and the check also proves the switchback above
+    // really put both ends back on the proven rate.
     fbuf[0] = btype;
     fbuf[1] = gba_gpio_flags;
     fbuf[2] = settings.solar_pct;
     set_loading_state(3);
     send_fbuf_data(3);
+    if (saw_fast) {
+        uint32_t cfg_crc = fast_crc32_update(0xFFFFFFFF, fbuf, 3);
+        if (!fast_verify(cfg_crc ^ 0xFFFFFFFF, 3)) {
+            DEBUG("loadgba: region-3 verify failed, resending\n");
+            set_loading_state(3);
+            send_fbuf_data(3);
+            if (!fast_verify(cfg_crc ^ 0xFFFFFFFF, 3))
+                DEBUG("loadgba: region-3 reverify failed too (proceeding)\n");
+        }
+    }
     if (!btype)
         saves_set_battery(false);
     saves_set_blocks(bblocks);      // 64 (blank wipe only) if there is no battery
@@ -202,7 +342,6 @@ int loadgba(const char *fname) {
 
     overlay(0);		// turn off OSD
 
-loadgba_close:
     set_loading_state(0);   // turn off game loading, this starts the core
     f_close(&fcore);
     return r;

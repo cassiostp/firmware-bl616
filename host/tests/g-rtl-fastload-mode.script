@@ -1,0 +1,14 @@
+# MODE in the middle of a fast load: the FPGA goes silent 4 KB into the ROM
+# (reloading from flash), the rest of the load streams into the void, and
+# the firmware comes back to the menu with the link at 2M and reboots.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+arm-silence-rom 4096 8000
+press a
+wait-reset
+expect-screen "TangCore"
+expect-cursor-row 9

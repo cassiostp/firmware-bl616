@@ -3,7 +3,9 @@
 // only the RtlModel interface (rtl_model.hpp), so per-core differences
 // (save window, array paths, clock ratio) live in model_<core>.cpp.
 //
-// UART (bit-level at the real 2 Mbaud, FREQ=21.492MHz -> 10.746 ticks/bit):
+// UART (bit-level at the firmware's current link rate -- 2 Mbaud normally,
+// up to 8 Mbaud while a fast load is negotiated -- with FREQ=21.492MHz so
+// 10.746 ticks/bit at 2M):
 //   MCU -> FPGA bytes queue in tx_queue (any thread) and serialize from
 //   there, chained back-to-back like the MCU's own UART (1 start + 8 data +
 //   1 stop bit; the receiver needs >= 1 stop). No arrival stamps: order is
@@ -32,6 +34,7 @@
 // hardware mid-frame).
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -50,17 +53,16 @@ RtlModel *new_rtl_model();
 
 namespace {
 
-const double TICKS_PER_BIT = 21492000.0 / 2000000.0; // 10.746
-const uint64_t BYTE_TICKS = 107;                     // 10 bits at 2 Mbaud
+const double SIM_TICKS_PER_S = 21492000.0; // one sim tick = one clk period
 const int BATCH = 256;                               // max ticks per step piece
 const int QUIET_HIGH_TICKS = 16;                     // TX idle-high run to jump
 const size_t TX_LIMIT = 4096; // backlog bound: biggest legit burst is a 1 KB
                               // ROM frame; past this putchar blocks (UART FIFO)
 const uint64_t RESET_TICKS = 30;                     // resetn stretch
 
-uint64_t bit_at(uint64_t start, int i) {
+uint64_t bit_at(uint64_t start, int i, double ticks_per_bit) {
     // Mid-bit sample tick for data bit i (start = falling edge tick).
-    return start + (uint64_t)llround((1.5 + i) * TICKS_PER_BIT);
+    return start + (uint64_t)llround((1.5 + i) * ticks_per_bit);
 }
 
 int id_for_file(const std::string &path) {
@@ -148,6 +150,12 @@ class RtlBackend : public FpgaBackend {
             }
             break;
         case 4:
+            if (tx_type == 0x07 && corrupt_armed.load(std::memory_order_relaxed) &&
+                !tx_queue.empty()) {
+                tx_queue.back() ^= 0x01; // one flipped wire bit, queued already
+                corrupt_armed.store(false, std::memory_order_relaxed);
+                vlog("corrupt: flipped a 0x07 payload byte");
+            }
             if (--tx_left == 0) {
                 tx_ps = 0;
                 if (verbose.load(std::memory_order_relaxed)) {
@@ -297,6 +305,38 @@ class RtlBackend : public FpgaBackend {
         drop_pending.store(true, std::memory_order_relaxed); // in-flight dies
         vlog("MODE: silent for " + std::to_string(silence_ms) + " ms");
     }
+    // Fast ROM loading: the firmware switched the link rate (0x15 accepted),
+    // so this bridge's bit-level serialiser follows. The Verilated model
+    // switches itself when it processes the same 0x15, a few bit times
+    // earlier -- never later, because the firmware only sends at the new
+    // rate after receiving the 0x0C answer.
+    void set_baud(uint32_t baud) override {
+        if (baud < 1000000)
+            baud = 2000000;
+        double tpb = SIM_TICKS_PER_S / (double)baud;
+        ticks_per_bit.store(tpb, std::memory_order_relaxed);
+        byte_ticks.store((uint64_t)llround(10.0 * tpb), std::memory_order_relaxed);
+        baud_rate_cached.store(baud, std::memory_order_relaxed);
+        uint32_t m = baud_max_cached.load(std::memory_order_relaxed);
+        if (baud > m)
+            baud_max_cached.store(baud, std::memory_order_relaxed);
+        vlog("baud now " + std::to_string(baud));
+    }
+    uint32_t baud_rate() override {
+        return baud_rate_cached.load(std::memory_order_relaxed);
+    }
+    uint32_t baud_max() override {
+        return baud_max_cached.load(std::memory_order_relaxed);
+    }
+    void corrupt_next_byte() override {
+        corrupt_armed.store(true, std::memory_order_relaxed);
+        vlog("corrupt armed: next 0x07 payload byte");
+    }
+    void silence_when_rom(uint64_t n, int silence_ms) override {
+        silence_rom_at.store(n, std::memory_order_relaxed);
+        silence_rom_ms.store(silence_ms, std::memory_order_relaxed);
+        vlog("silence armed at rom_bytes=" + std::to_string(n));
+    }
     void drop_ids(int n) override {
         if (n > 0)
             drop_core_ids.fetch_add(n, std::memory_order_relaxed);
@@ -358,6 +398,15 @@ class RtlBackend : public FpgaBackend {
     std::atomic<uint32_t> last_video_cached{0};
     std::atomic<bool> overlay_cached{true};
     std::atomic<uint32_t> rom_bytes_cached{0};
+    // Link baud both directions run at (fast ROM loading): written by
+    // set_baud on firmware threads, read by run_until (single stepper).
+    std::atomic<double> ticks_per_bit{SIM_TICKS_PER_S / 2000000.0};
+    std::atomic<uint64_t> byte_ticks{107}; // 10 bits at 2 Mbaud
+    std::atomic<uint32_t> baud_rate_cached{2000000};
+    std::atomic<uint32_t> baud_max_cached{2000000};
+    std::atomic<bool> corrupt_armed{false};
+    std::atomic<uint64_t> silence_rom_at{UINT64_MAX};
+    std::atomic<int> silence_rom_ms{0};
 
     // Records + log.
     std::mutex rec_m;
@@ -398,6 +447,7 @@ class RtlBackend : public FpgaBackend {
 
     void step_batch(uint64_t batch_end) {
         uint64_t now = pos.load(std::memory_order_relaxed);
+
         // Latch cross-thread inputs.
         pins.joy1 = joy1.load(std::memory_order_relaxed);
         pins.joy2 = joy2.load(std::memory_order_relaxed);
@@ -422,12 +472,13 @@ class RtlBackend : public FpgaBackend {
         pump_poke();
         // Drain newly pushed MCU bytes into the serial schedule.
         {
+            uint64_t bt = byte_ticks.load(std::memory_order_relaxed);
             std::lock_guard<std::mutex> lk(tx_m);
             while (!tx_queue.empty()) {
                 uint64_t start = line_free > now ? line_free : now;
                 sched.push_back({start, tx_queue.front()});
                 tx_queue.pop_front();
-                line_free = start + BYTE_TICKS;
+                line_free = start + bt;
             }
         }
         if (pins.silence) {
@@ -467,12 +518,28 @@ class RtlBackend : public FpgaBackend {
             overlay_cached.store(pins.overlay, std::memory_order_relaxed);
             rom_bytes_cached.store(pins.rom_bytes, std::memory_order_relaxed);
         }
+        // Fastload MODE-during-load hook: go silent once the model has
+        // consumed the armed number of ROM bytes, like trigger_mode after.
+        uint64_t rom_at = silence_rom_at.load(std::memory_order_relaxed);
+        if (rom_at != UINT64_MAX &&
+            rom_bytes_cached.load(std::memory_order_relaxed) >= rom_at) {
+            silence_rom_at.store(UINT64_MAX, std::memory_order_relaxed);
+            silence_active.store(true, std::memory_order_relaxed);
+            silence_until.store(batch_end +
+                                    (uint64_t)silence_rom_ms.load(std::memory_order_relaxed) *
+                                        sim::TICKS_PER_MS,
+                                std::memory_order_relaxed);
+            drop_pending.store(true, std::memory_order_relaxed);
+            vlog("silence-when-rom fired");
+        }
         pos.store(batch_end, std::memory_order_relaxed);
     }
 
     int level_at(uint64_t t) {
+        double tpb = ticks_per_bit.load(std::memory_order_relaxed);
+        uint64_t bt = byte_ticks.load(std::memory_order_relaxed);
         // MCU waveform level at tick t (prunes consumed bytes).
-        while (!sched.empty() && t >= sched.front().start + BYTE_TICKS) {
+        while (!sched.empty() && t >= sched.front().start + bt) {
             sched.pop_front();
             backlog.fetch_sub(1, std::memory_order_relaxed);
         }
@@ -480,11 +547,11 @@ class RtlBackend : public FpgaBackend {
             return 1;
         uint64_t dt = t - sched.front().start;
         uint8_t b = sched.front().b;
-        if (dt < (uint64_t)llround(1 * TICKS_PER_BIT))
+        if (dt < (uint64_t)llround(1 * tpb))
             return 0; // start bit
         for (int i = 0; i < 8; i++) {
-            uint64_t edge = (uint64_t)llround((1 + i) * TICKS_PER_BIT);
-            uint64_t next = (uint64_t)llround((2 + i) * TICKS_PER_BIT);
+            uint64_t edge = (uint64_t)llround((1 + i) * tpb);
+            uint64_t next = (uint64_t)llround((2 + i) * tpb);
             if (dt >= edge && dt < next)
                 return (b >> i) & 1;
         }
@@ -492,6 +559,7 @@ class RtlBackend : public FpgaBackend {
     }
 
     uint64_t next_edge(uint64_t from) {
+        double tpb = ticks_per_bit.load(std::memory_order_relaxed);
         // Next scheduled waveform change at/after `from` (front entry only;
         // entries are chained in order and level_at prunes the consumed).
         if (sched.empty())
@@ -499,7 +567,7 @@ class RtlBackend : public FpgaBackend {
         if (sched.front().start >= from)
             return sched.front().start;
         for (int i = 0; i <= 9; i++) {
-            uint64_t e = sched.front().start + (uint64_t)llround(i * TICKS_PER_BIT);
+            uint64_t e = sched.front().start + (uint64_t)llround(i * tpb);
             if (e >= from)
                 return e;
         }
@@ -523,12 +591,12 @@ class RtlBackend : public FpgaBackend {
             }
             return;
         }
-        while (dec_bit < 8 && tick >= bit_at(dec_start, dec_bit)) {
+        while (dec_bit < 8 && tick >= bit_at(dec_start, dec_bit, ticks_per_bit.load(std::memory_order_relaxed))) {
             if (level)
                 dec_byte |= (uint8_t)(1 << dec_bit);
             dec_bit++;
         }
-        if (dec_bit == 8 && tick >= dec_start + (uint64_t)llround(9.5 * TICKS_PER_BIT)) {
+        if (dec_bit == 8 && tick >= dec_start + (uint64_t)llround(9.5 * ticks_per_bit.load(std::memory_order_relaxed))) {
             frame_byte(dec_byte);
             dec_idle = true;
         }

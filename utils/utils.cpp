@@ -23,10 +23,15 @@ uint32_t get_file_size(const char *fname) {
 
 // Send a romdata packet to core of len bytes in `fbuf`
 void send_fbuf_data(uint16_t len) {
+    send_data_frame(fbuf, len);
+}
+
+// Same, but the payload lives at p (a slice of a bigger SD read).
+void send_data_frame(const uint8_t *p, uint16_t len) {
     taskENTER_CRITICAL();
     fpga_tx_header(0x07, len+1);
     for (int i = 0; i < len; i ++) {
-        fpga_tx_byte(fbuf[i]);
+        fpga_tx_byte(p[i]);
     }
     taskEXIT_CRITICAL();
     heartbeat_bump();               // ROM transfers call this in a tight loop
@@ -139,6 +144,24 @@ volatile uint16_t joy2_state = 0;
 volatile uint16_t hid1_state = 0;
 volatile uint16_t hid2_state = 0;
 volatile int16_t core_id = -1;
+// Fast-load replies (core/fastload.cpp): stashed by uart1_rx_task (main.cpp)
+// for the loader thread, following the core_id pattern above.
+volatile int16_t fast_baud_ack = -1;
+volatile uint8_t fast_baud_max = 0;
+volatile uint32_t fast_load_crc = 0;
+volatile uint32_t fast_load_cnt = 0;
+volatile bool fast_load_crc_ready = false;
+
+void fast_reply_reset(void) {
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        fast_baud_ack = -1;
+        fast_baud_max = 0;
+        fast_load_crc = 0;
+        fast_load_cnt = 0;
+        fast_load_crc_ready = false;
+        xSemaphoreGive(state_mutex);
+    }
+}
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
 volatile uint32_t heartbeat;                // last activity tick (watchdog)

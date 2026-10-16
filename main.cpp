@@ -32,6 +32,7 @@ extern "C" {
 #include "usb_gamepad.h"
 #include "utils.h"
 #include "cores.h"
+#include "fastload.h"
 #include "saves.h"
 #include "overlay.h"
 #include "init.h"
@@ -143,6 +144,10 @@ static bool program_fpga(const char *fname) {
     forget_core_config();               // the new core starts with core_config = 0
     clear_pad_states();
     controls_reset();
+    // A fresh bitstream always answers at 2 Mbaud: come back there too, so a
+    // MODE press or a reprogram in the middle of a fast load cannot leave the
+    // MCU up at 8M, deaf to the new core.
+    fast_set_baud_2m();
     return r;
 }
 
@@ -520,7 +525,7 @@ static void watchdog_task(void *pvParameters)
 // Receive joypad updates and other UART responses from the FPGA
 static void uart1_rx_task(void *pvParameters)
 {
-    uint8_t buffer[5];
+    uint8_t buffer[8];              // biggest fixed reply: 0x0D's CRC32+count
     uint16_t pos = 0;
     uint8_t type = 0;
     uint16_t len = 0;
@@ -658,6 +663,31 @@ static void uart1_rx_task(void *pvParameters)
                 saves_rx_dirty();
                 pos = 0;
 
+            } else if (type == 0x0C) {           // fast-load baud answer: accepted + max
+                buffer[pos-4] = ch;
+                if (pos == len+2) {
+                    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+                        fast_baud_ack = buffer[0];
+                        fast_baud_max = buffer[1];
+                        xSemaphoreGive(state_mutex);
+                    }
+                    pos = 0;
+                } else
+                    pos++;
+            } else if (type == 0x0D) {           // fast-load check values: CRC32 + count
+                buffer[pos-4] = ch;
+                if (pos == len+2) {
+                    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+                        fast_load_crc = ((uint32_t)buffer[0] << 24) | ((uint32_t)buffer[1] << 16) |
+                                        ((uint32_t)buffer[2] << 8) | buffer[3];
+                        fast_load_cnt = ((uint32_t)buffer[4] << 24) | ((uint32_t)buffer[5] << 16) |
+                                        ((uint32_t)buffer[6] << 8) | buffer[7];
+                        fast_load_crc_ready = true;
+                        xSemaphoreGive(state_mutex);
+                    }
+                    pos = 0;
+                } else
+                    pos++;
             } else {
                 dbg_log("uart resync: unknown type %02x (len=%u)", type,
                         (unsigned)len);
@@ -960,6 +990,11 @@ static void main_task(void *pvParameters)
                 settings_save();
             }
             if (active_core == -1) {
+                // Unheard core: it may answer at 2M while the MCU is still up
+                // at a fast rate (MODE in the middle of a fast load). Come
+                // back to the power-on rate before polling.
+                if (fast_current_baud() != 2000000)
+                    fast_set_baud_2m();
                 active_core = get_core_id();            // 200ms timeout
                 overlay_status("core_id=%d", active_core);
                 if (active_core >= 0) redraw = true;    // redraw immediately if core is detected

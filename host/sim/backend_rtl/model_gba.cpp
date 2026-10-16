@@ -34,7 +34,12 @@ class GbaModel : public RtlModel {
         top.clk = 0;
         top.fclk = 0;
         top.hclk = 0;
-        top.resetn = 0;
+        // Out of reset for the constructor eval: the bridge holds resetn low
+        // for its first 30 ticks, and that 1->0 edge is what the iosys
+        // dual_clk_fifos' asynchronous resets need (Verilator zeroes every
+        // register, so without an edge rempty sticks at 0 and both FIFOs
+        // read garbage forever; on hardware the power-on GSR does this).
+        top.resetn = 1;
         top.joy1 = 0;
         top.joy2 = 0;
         top.uart_rx = 1;
@@ -58,34 +63,31 @@ class GbaModel : public RtlModel {
         top.poke_off = pins.poke_off;
         top.poke_data = pins.poke_data;
         top.churn_en = pins.churn ? 1 : 0;
-        // Eight evals per tick (every edge): fclk runs 4x clk and clk's own
-        // edges coincide with an fclk rise (fall) as they do on the board's
-        // PLL output set. Fewer (rising edges only) breaks the save path in
-        // practice, so the extra evals stay (see model_nes.cpp).
+        // Eight evals per tick (every edge): fclk runs exactly 4x clk, and
+        // clk's own edges coincide with an fclk rise (fall) as they do on
+        // the board's PLL output set. The fast UART (FAST_UART) counts baud
+        // timing in fclk, so the 4x ratio must be exact: assigning fclk twice
+        // before one eval is not an edge (Verilator only sees the final
+        // value), which once left the fast domain at 3/4 speed. Fewer evals
+        // (rising edges only) breaks the save path in practice, so the extra
+        // evals stay (see model_nes.cpp).
         for (uint64_t i = 0; i < n; i++) {
-            top.clk = 0;
-            top.fclk = 0;
-            top.eval();
-            top.clk = 1;          // clk rises with an fclk rise
-            top.fclk = 1;
-            top.hclk = 1;
-            top.eval();
-            if (tx_levels)
-                tx_levels[i] = top.uart_tx ? 1 : 0;
-            top.fclk = 0;
-            top.eval();
-            top.fclk = 1;
-            top.eval();
-            top.fclk = 0;         // clk falls with an fclk rise (hclk follows)
-            top.fclk = 1;
-            top.hclk = 0;
-            top.eval();
-            top.fclk = 0;
-            top.eval();
-            top.fclk = 1;
-            top.eval();
-            top.fclk = 0;
-            top.eval();
+            for (int k = 0; k < 4; k++) {
+                if (k == 0) {
+                    top.clk = 1;    // clk rises with the first fclk rise
+                    top.hclk = 1;
+                }
+                if (k == 2) {
+                    top.clk = 0;    // ... and falls with the third
+                    top.hclk = 0;
+                }
+                top.fclk = 1;
+                top.eval();
+                if (k == 0 && tx_levels)
+                    tx_levels[i] = top.uart_tx ? 1 : 0;
+                top.fclk = 0;
+                top.eval();
+            }
         }
         pins.uart_tx = top.uart_tx != 0;
         pins.tx_pending = top.tx_pending != 0;

@@ -795,6 +795,78 @@ int run_script() {
                 script_fail(lineno, "usage: drop-id <count>");
             printf("[%d] drop-id %ld (drop next core-ID replies)\n", lineno, n);
             fpga::drop_ids((int)n);
+        } else if (cmd == "expect-baud") {
+            // expect-baud <rate> [timeout]: the backend's current link rate.
+            uint64_t to = 15000;
+            long rate;
+            if ((t.size() != 2 && t.size() != 3) || !parse_num(t[1], rate))
+                script_fail(lineno, "usage: expect-baud <rate> [timeout]");
+            if (t.size() == 3 && !parse_dur(t[2], to))
+                script_fail(lineno, "bad timeout");
+            printf("[%d] expect-baud %ld\n", lineno, rate);
+            uint64_t t0 = now_ms();
+            while (fpga::baud_rate() != (uint32_t)rate && now_ms() - t0 < to)
+                msleep(20);
+            if (fpga::baud_rate() != (uint32_t)rate)
+                script_fail(lineno, "baud never reached " + t[1]);
+        } else if (cmd == "expect-baud-max") {
+            // expect-baud-max <rate> [timeout]: highest link rate so far.
+            uint64_t to = 15000;
+            long rate;
+            if ((t.size() != 2 && t.size() != 3) || !parse_num(t[1], rate))
+                script_fail(lineno, "usage: expect-baud-max <rate> [timeout]");
+            if (t.size() == 3 && !parse_dur(t[2], to))
+                script_fail(lineno, "bad timeout");
+            printf("[%d] expect-baud-max %ld\n", lineno, rate);
+            uint64_t t0 = now_ms();
+            while (fpga::baud_max() != (uint32_t)rate && now_ms() - t0 < to)
+                msleep(20);
+            if (fpga::baud_max() != (uint32_t)rate)
+                script_fail(lineno, "baud never peaked at " + t[1]);
+        } else if (cmd == "expect-rom-bytes") {
+            // expect-rom-bytes <n> [timeout]: ROM payload bytes consumed.
+            uint64_t to = 15000;
+            long n;
+            if ((t.size() != 2 && t.size() != 3) || !parse_num(t[1], n))
+                script_fail(lineno, "usage: expect-rom-bytes <n> [timeout]");
+            if (t.size() == 3 && !parse_dur(t[2], to))
+                script_fail(lineno, "bad timeout");
+            printf("[%d] expect-rom-bytes %ld\n", lineno, n);
+            uint64_t t0 = now_ms();
+            while (fpga::rom_bytes() != (uint64_t)n && now_ms() - t0 < to)
+                msleep(20);
+            if (fpga::rom_bytes() != (uint64_t)n)
+                script_fail(lineno, "rom_bytes stuck");
+        } else if (cmd == "corrupt-next-byte") {
+            // Flip a bit in the next 0x07 payload byte (fastload CRC test).
+            if (t.size() != 1)
+                script_fail(lineno, "usage: corrupt-next-byte");
+            printf("[%d] corrupt-next-byte\n", lineno);
+            fpga::corrupt_next_byte();
+        } else if (cmd == "arm-silence-rom") {
+            // arm-silence-rom <bytes> [silence-ms]: MODE once rom_bytes hits
+            // <bytes> (fastload MODE-during-load test). Non-blocking: press
+            // the load after, then wait-reset for the reboot it causes.
+            long n, ms = 4000;
+            if ((t.size() != 2 && t.size() != 3) || !parse_num(t[1], n))
+                script_fail(lineno, "usage: arm-silence-rom <bytes> [silence-ms]");
+            if (t.size() == 3 && !parse_num(t[2], ms))
+                script_fail(lineno, "bad silence-ms");
+            printf("[%d] arm-silence-rom %ld\n", lineno, n);
+            fpga::silence_when_rom((uint64_t)n, (int)ms);
+        } else if (cmd == "wait-reset") {
+            // Block until the firmware reboots itself (MODE/watchdog paths);
+            // the supervisor re-execs us past this line, like mode.
+            if (t.size() != 1)
+                script_fail(lineno, "usage: wait-reset");
+            printf("[%d] wait-reset\n", lineno);
+            uint64_t t0 = now_ms();
+            while (!g_reset_requested.load() && now_ms() - t0 < 30000)
+                msleep(20);
+            if (!g_reset_requested.load())
+                script_fail(lineno, "firmware did not reboot");
+            for (;;)
+                msleep(1000); // supervisor takes over (re-exec)
         } else if (cmd == "power-cycle") {
             printf("[%d] power-cycle: rebooting\n", lineno);
             fflush(stdout);

@@ -27,6 +27,7 @@ set(FW_SOURCES
     ${FIRMWARE_DIR}/utils/uart_rx.cpp
     ${FIRMWARE_DIR}/utils/utils.cpp
     ${FIRMWARE_DIR}/core/cores.cpp
+    ${FIRMWARE_DIR}/core/fastload.cpp
     ${FIRMWARE_DIR}/core/gba.cpp
     ${FIRMWARE_DIR}/core/md.cpp
     ${FIRMWARE_DIR}/core/nes.cpp

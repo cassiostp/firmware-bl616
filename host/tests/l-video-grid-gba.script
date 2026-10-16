@@ -9,6 +9,11 @@ press down
 press a
 expect-overlay off
 expect-core gbatang
+# The fake core has no FAST_UART: the 0x15 probes stay silent and the link
+# never leaves 2M (16384 ROM + 1024 BIOS + 3 region-3 bytes, one attempt).
+expect-baud-max 2000000
+expect-baud 2000000
+expect-rom-bytes 17411
 hold select+start+l 400ms
 expect-screen "Resume"
 press down
