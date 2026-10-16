@@ -31,7 +31,15 @@ def main() -> int:
     logname = sys.argv[2] if len(sys.argv) > 2 else \
         time.strftime("usbconsole-%Y%m%d-%H%M%S.log")
 
-    fd = os.open(dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        fd = os.open(dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    except PermissionError:
+        print(f"cannot open {dev}: permission denied - "
+              "add yourself to the dialout group "
+              "(sudo usermod -aG dialout $USER, then log out and in) "
+              "or run it with sudo",
+              file=sys.stderr)
+        return 1
     # CDC ACM ignores baud, but the port must be raw and DTR asserted:
     # opening with termios defaults + HUPCL off keeps DTR up.
     attrs = termios.tcgetattr(fd)
