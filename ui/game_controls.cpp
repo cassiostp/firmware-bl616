@@ -55,6 +55,7 @@ static bool seen_answer;            // the FPGA answered since the last reset
 static int16_t last_id;             // the last core ID it answered
 static int misses;                  // polls in a row without an answer
 static uint64_t silent_since;       // start of the first unanswered poll (0 = answering)
+static uint64_t miss_log_at;        // last poll that logged a miss line (0 = none this streak)
 static uint32_t gate_sig;           // combo bits (both pads) doing the gating
 static uint64_t gate_since;         // when that gating state last changed
 static uint16_t mode_max_silence_ms;  // longest silent gap seen (diagnostic line)
@@ -80,6 +81,7 @@ void controls_reset(void) {
     last_id = -1;
     misses = 0;
     silent_since = 0;
+    miss_log_at = 0;
     mode_max_silence_ms = 0;
     gate_sig = 0;
     gate_since = 0;
@@ -100,6 +102,7 @@ void controls_prime_core_id(int16_t id) {
     last_id = id;
     misses = 0;
     silent_since = 0;
+    miss_log_at = 0;
     last_poll = bflb_mtimer_get_time_ms();
 }
 
@@ -236,8 +239,14 @@ static void check_mode_button(bool in_game, bool game_loaded) {
             if (!misses)
                 silent_since = poll_start;
             misses++;
-            dbg_log("mode: miss %d (gap %lums, last=%d)",
-                    misses, (unsigned long)gap, last_id);
+            // A dead link would log a line every 250 ms (thousands in one
+            // stall): the first 3 misses, then one line every 10 s with the
+            // count. The answer line below still summarises the streak.
+            if (misses <= 3 || poll_start - miss_log_at >= 10000) {
+                miss_log_at = poll_start;
+                dbg_log("mode: miss %d (gap %lums, last=%d)",
+                        misses, (unsigned long)gap, last_id);
+            }
         }
         return;
     }
@@ -284,6 +293,7 @@ static void check_mode_button(bool in_game, bool game_loaded) {
     last_id = id;
     misses = 0;
     silent_since = 0;
+    miss_log_at = 0;
 }
 
 bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded) {
