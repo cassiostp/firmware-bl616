@@ -440,7 +440,9 @@ void saves_restore(void) {
     char tmp[270]; snprintf(tmp, sizeof tmp, "%s.tmp", sv_path);
     const char *src = "blank";
     bool opened = sv_battery && f_open(&fsave, sv_path, FA_READ) == FR_OK;
-    if (!opened && sv_battery && f_open(&fsave, tmp, FA_READ) == FR_OK) {   // power cut mid-write
+    if (opened)
+        src = "file";
+    else if (sv_battery && f_open(&fsave, tmp, FA_READ) == FR_OK) {   // power cut mid-write
         opened = true;
         src = "recovered .tmp";
     }
