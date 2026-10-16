@@ -27,7 +27,7 @@ struct dbg_platform {
     void (*cmd_saves)(dbg_emit_fn emit);    // save counters
     void (*cmd_link)(dbg_emit_fn emit);     // UART link counters
     void (*do_reboot)(void);                // clean MCU restart; does not return
-    void (*do_wdtest)(void);                // stop feeding the watchdog on purpose
+    void (*do_wdtest)(void);                // stall the heartbeat on purpose (watchdog recovery test)
 };
 
 void dbg_console_init(const struct dbg_platform *platform);

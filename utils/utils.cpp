@@ -142,13 +142,16 @@ volatile int16_t core_id = -1;
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
 volatile uint32_t heartbeat;                // last activity tick (watchdog)
-volatile bool dbg_wdtest_stall;             // console wdtest: stop feeding the watchdog
+volatile bool dbg_wdtest_stall;             // console wdtest: freeze the heartbeat (a real-looking stall)
 
 // Count a beat, and feed the watchdog here too: some bump sites run inside
 // critical sections, where the watchdog task can't.
+// wdtest freezes this entirely (no beat, no feed), so the stall looks real.
 void heartbeat_bump(void) {
+    if (dbg_wdtest_stall)
+        return;
     heartbeat++;
-    if (wdg_dev && !dbg_wdtest_stall)   // NULL until main() sets the watchdog up
+    if (wdg_dev)   // NULL until main() sets the watchdog up
         bflb_wdg_reset_countervalue(wdg_dev);
 }
 

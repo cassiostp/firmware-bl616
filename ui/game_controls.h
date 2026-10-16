@@ -49,7 +49,7 @@ bool game_loaded(void);
 void menu_options(void);
 
 // restart_mcu() for callers outside game_controls.cpp (the debug
-// console's reboot command). Does not return.
+// console's reboot command, the watchdog task). Does not return.
 void tc_restart_mcu(bool flash_mode);
 
 // Game menu "Scanlines..." screen

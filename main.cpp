@@ -447,7 +447,7 @@ int joy_choice(int start_line, int len, int *active) {
 #define UART1_RX_TASK_PRIORITY    3
 #define WATCHDOG_TASK_STACK_SIZE  256
 #define WATCHDOG_TASK_PRIORITY    4       // above main_task: feeds it mustn't miss
-#define HEARTBEAT_STALL_MS        15000   // stop feeding after this long without a beat
+#define HEARTBEAT_STALL_MS        15000   // restart the MCU after this long without a beat
 #define WATCHDOG_FEED_MS          2000    // hardware timeout after feeding stops
 
 // Stack words still free on a task (its high-water mark), for the
@@ -462,9 +462,13 @@ static unsigned stack_free_words(TaskHandle_t h)
 #endif
 }
 
-// Feed the hardware watchdog while the heartbeat keeps moving (something is
-// reading pads, listing files or sending data). If it stops - a crash, a spin
-// loop, a mutex deadlock - stop feeding and the watchdog resets the chip.
+// Recover from a wedged firmware by restarting the MCU through
+// restart_mcu(), which first puts USB back to its power-on state, so the
+// reboot comes back to the menu instead of landing in Sipeed's debug mode
+// the way a raw watchdog reset did (firmware#20). The hardware watchdog
+// stays behind this as the backstop: this task feeds it every pass, so it
+// fires only when this task itself can't run (interrupts off, a
+// higher-priority spin, the task dead), ~2 s after the last feed.
 // Every 30 s, one snapshot line: the last-known-good state (stack margins,
 // heap, UART losses) right up to whatever hang follows it.
 static void watchdog_task(void *pvParameters)
@@ -473,14 +477,14 @@ static void watchdog_task(void *pvParameters)
     uint64_t last_beat_time = bflb_mtimer_get_time_ms();
     uint64_t last_snap = last_beat_time;
     bool stall_logged = false;
-    bool feedoff_logged = false;
+    bool restart_logged = false;
     while (1) {
         uint64_t now = bflb_mtimer_get_time_ms();
         if (heartbeat != last_beat) {
             last_beat = heartbeat;
             last_beat_time = now;
             stall_logged = false;
-            feedoff_logged = false;
+            restart_logged = false;
         }
         uint64_t stale = now - last_beat_time;
         if (stale >= 5000 && !stall_logged) {
@@ -489,14 +493,16 @@ static void watchdog_task(void *pvParameters)
                     (unsigned long)(stale / 1000), (unsigned long)last_beat,
                     dbg_wdtest_stall ? " [wdtest]" : "");
         }
-        if (stale >= HEARTBEAT_STALL_MS && !feedoff_logged) {
-            feedoff_logged = true;
-            dbg_log("watchdog: heartbeat stalled %lus, stop feeding (HW reset follows)%s",
-                    (unsigned long)(stale / 1000),
-                    dbg_wdtest_stall ? " [wdtest]" : "");
+        if (stale >= HEARTBEAT_STALL_MS) {
+            if (!restart_logged) {
+                restart_logged = true;
+                dbg_log("watchdog: heartbeat stalled %lus, restarting%s",
+                        (unsigned long)(stale / 1000),
+                        dbg_wdtest_stall ? " [wdtest]" : "");
+            }
+            tc_restart_mcu(false);    // USB to power-on state, then reset; no return
         }
-        if (stale < HEARTBEAT_STALL_MS && !dbg_wdtest_stall)
-            bflb_wdg_reset_countervalue(wdg_dev);
+        bflb_wdg_reset_countervalue(wdg_dev);
         if (now - last_snap >= 30000) {
             last_snap = now;
             dbg_log("watchdog: beat %lu heap %ld stk main %u rx %u saves %u usb %u ringdrop %lu fifovf %d",
@@ -1137,8 +1143,10 @@ int main(void)
     fatfs_usbh_driver_register();
     usb_gamepad_init();
 
-    // Hardware watchdog: ~2 s without a feed resets the chip. Feeding it is
-    // the watchdog task's job, and that stops when the heartbeat does.
+    // Hardware watchdog: ~2 s without a feed resets the chip. The watchdog
+    // task feeds it every pass and restarts the MCU itself when the
+    // heartbeat stalls; the hardware reset only fires when that task can't
+    // run (firmware#20).
     wdg_dev = bflb_device_get_by_name("watchdog");
     struct bflb_wdg_config_s wdg_cfg = {
         .clock_source = WDG_CLKSRC_32K,

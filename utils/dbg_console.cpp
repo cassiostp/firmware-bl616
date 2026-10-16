@@ -177,9 +177,8 @@ static void run_command(char *cmd) {
         if (!strcmp(arg, "yes") && wdtest_asked_ms && now - wdtest_asked_ms < CONFIRM_MS) {
             wdtest_asked_ms = 0;
             dbg_log("wdtest: watchdog stall requested from console");
-            emit("wdtest: heartbeat stalled; the watchdog resets in ~2 s if it works.\n"
-                 "With the PC attached the board may land in Sipeed debug mode (issue #20);\n"
-                 "power-cycle with the PC unplugged to recover.\n");
+            emit("wdtest: heartbeat stalled; the firmware restarts itself in ~15 s.\n"
+                 "Expect the menu back within ~20 s, with or without the PC attached.\n");
             if (platform && platform->do_wdtest)
                 platform->do_wdtest();
         } else {

@@ -130,12 +130,14 @@ extern struct bflb_device_s *wdg_dev;
 
 // Watchdog heartbeat: bumped by the input, file listing and data transfer
 // paths, so any of them counts as "the firmware is doing something". The
-// watchdog task (main.cpp) feeds the hardware watchdog only while this keeps
-// moving; when a crash or deadlock stops the bumps, the chip resets.
+// watchdog task (main.cpp) feeds the hardware watchdog while it runs, and
+// restarts the MCU itself when this stops moving for ~15 s (firmware#20);
+// the hardware reset only fires when that task can't run.
 extern volatile uint32_t heartbeat;
 extern void heartbeat_bump(void);
-// Set by the debug console's wdtest command: heartbeat_bump() and the
-// watchdog task stop feeding the hardware watchdog, so it fires.
+// Set by the debug console's wdtest command: the heartbeat stops (no beats,
+// no feeds), so the watchdog task restarts the MCU after ~15 s, like a real
+// stall. The hardware watchdog fires only if that task can't run.
 extern volatile bool dbg_wdtest_stall;
 
 // len: length of payload including the command (>=1)

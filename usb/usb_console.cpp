@@ -268,7 +268,7 @@ static void pf_reboot(void) {
 }
 
 static void pf_wdtest(void) {
-    dbg_wdtest_stall = true;            // heartbeat_bump + watchdog task stop feeding
+    dbg_wdtest_stall = true;            // freeze the heartbeat: the watchdog task restarts in ~15 s
 }
 
 static const struct dbg_platform platform = {
