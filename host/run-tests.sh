@@ -470,6 +470,7 @@ run_test p-save-fail sms:game.sms
 run_test q-save-status sms:game.sms
 run_test q-save-timing sms:game.sms
 run_test t-wedge-main
+run_test t-garbage-pads sms:cgame.sms
 run_test w-wedge-scanlines sms:cgame.sms
 run_test x-monitor-cores
 run_test y-diag-game-menu sms:cgame.sms

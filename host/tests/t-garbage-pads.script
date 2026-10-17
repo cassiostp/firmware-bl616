@@ -1,0 +1,24 @@
+# A bad-contact pad's garbage report (8 buttons at once, the J0f0f shape)
+# must not act as input: words with more than 6 buttons are dropped where
+# frames enter, so no combo fires and the menus keep working (#2).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+# Garbage holding the whole menu combo (select+start+l): no game menu opens.
+stuck r+l+x+a+start+select+y+b
+wait 1s
+expect-overlay off
+unstuck
+# Input still works after the garbage: the menu combo opens the game menu.
+hold select+start+l 400ms
+expect-screen "Resume"
+press a
+expect-overlay off
