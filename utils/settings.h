@@ -39,6 +39,8 @@ struct Settings {
     uint8_t crt_mask_strength;  // 0..3: the mask dims 1/4, 3/8, 1/2, 5/8 (video_config bits 14:13)
     bool lcd_grid;              // handheld pixel grid (video_config bit 15)
     uint8_t lcd_grid_strength;  // 0..3: the grid dims 1/8, 1/4, 3/8, 1/2 (video_config bits 17:16)
+    bool display120;            // load the 120 Hz (480p) core build when one is on the card
+    uint8_t bfi_mode;           // 0..3: off, black, dim, rolling (video_config bits 21:20)
     bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
     uint32_t clock_unix;        // wall clock anchor: unix seconds at the last save (0 = never set)
     uint32_t clock_hbn;         // HBN RTC counter (seconds) at that same instant
@@ -67,6 +69,9 @@ bool lcd_grid_offered();
 // without the menu).
 enum Preview { PREVIEW_OFF, PREVIEW_PAUSED, PREVIEW_LIVE };
 void core_config_preview(Preview p);
+
+// "Black" for bfi_mode
+const char *bfi_mode_name(uint8_t mode);
 
 // "75%" for scanline_dark
 int scanline_dark_percent(uint8_t dark);

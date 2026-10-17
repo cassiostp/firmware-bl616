@@ -1,5 +1,6 @@
 #include <string>
 #include <memory>
+#include <stdio.h>
 
 extern "C" {
 #include "bl616_glb.h"
@@ -579,10 +580,10 @@ static bool edit_datetime(void) {
                 return false;
             }
             if (p & BTN_UP) {
-                if (field > 0) field--;
+                field = (field + 4) % 5;      // wrap: Year -> Minute
                 acted = true;
             } else if (p & BTN_DOWN) {
-                if (field < 4) field++;
+                field = (field + 1) % 5;      // wrap: Minute -> Year
                 acted = true;
             } else if (p & (BTN_LEFT | BTN_RIGHT)) {
                 int d = (p & BTN_RIGHT) ? 1 : -1;
@@ -608,66 +609,57 @@ static bool edit_datetime(void) {
     }
 }
 
-struct OptionsMenu: Menu {
+struct OptionsMenu: ScrollMenu {
     Settings edit;
     std::string message;
 
     OptionsMenu() : edit(settings) {}
 
-    void render() override {
-        overlay_clear();
-        overlay_cursor(0, 6);
-        //              01234567890123456789012345678901
-        overlay_printf("         --- Options ---");
-        overlay_cursor(2, 9);
-        overlay_printf("Menu:  %s", combo_to_string(edit.menu_combo, true).c_str());
-        overlay_cursor(2, 10);
-        overlay_printf("Reset: %s", combo_to_string(edit.reset_combo, true).c_str());
-        overlay_cursor(2, 11);
-        overlay_printf("Reset combo: %s", edit.reset_enabled ? "ON" : "OFF");
-        overlay_cursor(2, 12);
-        overlay_printf("Hold to close: %lu s", (unsigned long)(edit.close_hold_ms / 1000));
-        overlay_cursor(2, 13);
-        overlay_printf("Diagnostics: %s", edit.diag ? "ON" : "OFF");
-        overlay_cursor(2, 14);
-        overlay_printf("Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF");
-        overlay_cursor(2, 15);
-        {
+    const char *menu_title() override {
+        return "         --- Options ---";
+    }
+
+    int item_count() override {
+        return 13;
+    }
+
+    std::string item_text(int i) override {
+        char buf[40];
+        switch (i) {
+        case 0: snprintf(buf, sizeof buf, "Menu:  %s", combo_to_string(edit.menu_combo, true).c_str()); break;
+        case 1: snprintf(buf, sizeof buf, "Reset: %s", combo_to_string(edit.reset_combo, true).c_str()); break;
+        case 2: snprintf(buf, sizeof buf, "Reset combo: %s", edit.reset_enabled ? "ON" : "OFF"); break;
+        case 3: snprintf(buf, sizeof buf, "Hold to close: %lu s", (unsigned long)(edit.close_hold_ms / 1000)); break;
+        case 4: snprintf(buf, sizeof buf, "Diagnostics: %s", edit.diag ? "ON" : "OFF"); break;
+        case 5: snprintf(buf, sizeof buf, "Display: %s", edit.display120 ? "120 Hz (480p)" : "60 Hz (720p)"); break;
+        case 6: snprintf(buf, sizeof buf, "Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF"); break;
+        case 7: {
             DateTime dt;
             clock_now(dt);
             char when[20];
             clock_format_short(when, sizeof when, dt);
-            overlay_printf("Date & time: %s", when);
+            snprintf(buf, sizeof buf, "Date & time: %s", when);
+            break;
         }
-        overlay_cursor(2, 16);
-        overlay_printf("Flash mode...");
-        overlay_cursor(2, 17);
-        overlay_printf("USB debug console: %s", usb_console_enabled() ? "ON" : "OFF");
-        overlay_cursor(2, 18);
-        overlay_printf("Save debug log");
-        overlay_cursor(2, 19);
-        overlay_printf("Save");
-        overlay_cursor(2, 20);
-        overlay_printf("<< Back");
-        overlay_cursor(2, 22);
-        //                01234567890123456789012345678901
-        overlay_printf("In game:");
-        overlay_cursor(2, 23);
-        overlay_printf(" Menu combo: game menu");
-        overlay_cursor(2, 24);
-        overlay_printf(" Reset combo: reset the game,");
-        overlay_cursor(2, 25);
-        overlay_printf(" keep holding: close the game");
-        overlay_cursor(2, 26);
-        overlay_printf("Video: in the game menu");
-        if (!message.empty()) {
-            overlay_cursor(2, 27);
-            overlay_printf("%s", message.c_str());
+        case 8: snprintf(buf, sizeof buf, "Flash mode..."); break;
+        case 9: snprintf(buf, sizeof buf, "USB debug console: %s", usb_console_enabled() ? "ON" : "OFF"); break;
+        case 10: snprintf(buf, sizeof buf, "Save debug log"); break;
+        case 11: snprintf(buf, sizeof buf, "Save"); break;
+        default: snprintf(buf, sizeof buf, "<< Back"); break;
         }
+        return buf;
     }
 
-    std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+    void render_footer() override {
+        if (!message.empty()) {
+            overlay_cursor(2, MENU_FOOTER_ROW);
+            overlay_printf("%s", message.c_str());
+        }
+        //              01234567890123456789012345678901
+        overlay_cursor(2, 23);
+        overlay_printf("Menu combo opens the game menu");
+        overlay_cursor(2, 24);
+        overlay_printf("Reset resets, hold closes game");
     }
 
     bool set_combo(uint16_t *target, uint16_t other, const char *what) {
@@ -687,9 +679,9 @@ struct OptionsMenu: Menu {
         return false;
     }
 
-    bool on_choose(int idx) override {
+    bool item_chosen(int i) override {
         message = "";
-        switch (idx) {
+        switch (i) {
         case 0:
             return set_combo(&edit.menu_combo, edit.reset_combo, "menu combo");
         case 1:
@@ -704,29 +696,33 @@ struct OptionsMenu: Menu {
             edit.diag = !edit.diag;
             break;
         case 5:
-            edit.pause_in_menu = !edit.pause_in_menu;
+            edit.display120 = !edit.display120;
+            message = "Takes effect on next load";
             break;
         case 6:
+            edit.pause_in_menu = !edit.pause_in_menu;
+            break;
+        case 7:
             if (edit_datetime()) {
                 extern int16_t active_core;
                 message = settings_save() ? "Clock set" : "Save failed. Read-only drive?";
                 clock_send_to_core(active_core == 3 ? gba_current_gpio_flags() : 0);
             }
             break;
-        case 7:
+        case 8:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 8:                     // USB debug console on/off
+        case 9:                     // USB debug console on/off
             if (usb_console_enabled()) {
                 usb_console_set_enabled(false);
                 message = "USB console OFF; host back";
             } else if (usb_console_set_enabled(true)) {
                 message = "USB console ON: BL616 pads off";
             } else {
-                message = "Needs the SD card (drive is USB)";
+                message = "Needs the SD card (USB drive)";
             }
             break;
-        case 9: {                   // Save debug log
+        case 10: {                  // Save debug log
             if (saves_busy()) {
                 message = "Save in progress, retry";
                 break;
@@ -740,7 +736,7 @@ struct OptionsMenu: Menu {
             dbg_log("options: save debug log -> %s", message.c_str());
             break;
         }
-        case 10:
+        case 11:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away
@@ -1026,7 +1022,7 @@ struct ColorMenu: Menu {
         overlay_cursor(2, 23);
         overlay_printf(" A or B      back here");
         if (!message.empty()) {
-            overlay_cursor(2, 25);
+            overlay_cursor(2, 24);
             overlay_printf("%s", message.c_str());
         }
     }
@@ -1221,10 +1217,17 @@ struct VideoMenu: Menu {
     std::vector<int> rows;
     bool changed = false;
     std::string message;
+    bool bfi;       // a 120 Hz build is running: offer the BFI row
 
     VideoMenu() {
-        rows = lcd_grid_offered() ? std::vector<int>{9, 10, 11, 12, 13, 15}
-                                  : std::vector<int>{9, 10, 11, 13, 15};
+        // The firmware loads specific files from Cores verbatim, so the
+        // running bitstream decides: only a _120hz build gets BFI.
+        bfi = loaded_core_is_120hz();
+        rows = lcd_grid_offered() ? std::vector<int>{9, 10, 11, 12, 13}
+                                  : std::vector<int>{9, 10, 11, 13};
+        if (bfi)
+            rows.push_back(14);
+        rows.push_back(bfi ? 16 : 15);
     }
 
     ~VideoMenu() {
@@ -1249,7 +1252,13 @@ struct VideoMenu: Menu {
         }
         overlay_cursor(2, 13);
         overlay_printf("Scale: %s", settings.scale_full ? "Full" : "Integer");
-        overlay_cursor(2, 15);
+        if (bfi) {
+            overlay_cursor(2, 14);
+            overlay_printf("BFI: %s", bfi_mode_name(settings.bfi_mode));
+            overlay_cursor(2, 16);
+        } else {
+            overlay_cursor(2, 15);
+        }
         overlay_printf("<< Back");
         if (!message.empty()) {
             overlay_cursor(2, 17);
@@ -1278,6 +1287,12 @@ struct VideoMenu: Menu {
             return false;
         } else if (row == 13) {         // Full, Integer
             settings.scale_full = !settings.scale_full;
+            changed = true;
+            apply_core_config();
+            do_redraw();
+            return false;
+        } else if (row == 14) {         // Off, Black, Dim, Rolling
+            settings.bfi_mode = (settings.bfi_mode + 1) & 3;
             changed = true;
             apply_core_config();
             do_redraw();

@@ -58,11 +58,40 @@ void menu_input_loop() {
             continue;
         }
 
-        if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up
-            if (active > 0) active--;
+        if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up: wrap to the last item
+            if (menu_current()->move_cursor(-1)) {
+                // A scrolling menu redraws at once: the cursor can sit
+                // still while the list moves, so without an immediate
+                // redraw one tap would step twice. Debounce like a move.
+                menu_current()->render();
+                menu_current()->redraw = false;
+                options = menu_current()->get_options();
+                active = menu_current()->cursor_index();
+                suppress_held_buttons();    // one press, one step
+                delay(100);
+            } else if (active > 0) {
+                active--;
+                suppress_held_buttons();    // one press, one step
+            } else if (!options.empty()) {
+                active = options.size() - 1;
+                suppress_held_buttons();    // one press, one step
+            }
         }
-        if ((joy1 & 0x20) || (joy2 & 0x20)) {   // down
-            if (active < options.size()-1) active++;
+        if ((joy1 & 0x20) || (joy2 & 0x20)) {   // down: wrap to the first item
+            if (menu_current()->move_cursor(+1)) {
+                menu_current()->render();
+                menu_current()->redraw = false;
+                options = menu_current()->get_options();
+                active = menu_current()->cursor_index();
+                suppress_held_buttons();    // one press, one step
+                delay(100);
+            } else if (active < (int)options.size() - 1) {
+                active++;
+                suppress_held_buttons();    // one press, one step
+            } else {
+                active = 0;
+                suppress_held_buttons();    // one press, one step
+            }
         }
 
         for (int i = 0; i < options.size(); i++) {
@@ -92,6 +121,11 @@ void menu_input_loop() {
             if (menu_stack.size() != depth) {   // menu changed: start at its top
                 options = menu_current()->get_options();
                 active = last = 0;
+                // ...but a scrolling menu keeps its position when coming
+                // back from a submenu.
+                int ci = menu_current()->cursor_index();
+                if (ci >= 0 && ci < (int)options.size())
+                    active = last = ci;
                 menu_current()->do_redraw();
             }
         }
@@ -108,4 +142,58 @@ void menu_input_loop() {
     }
     dbg_log("menu loop: exit, depth=%d overlay=%d pending=%d",
             (int)menu_stack.size(), overlay_on() ? 1 : 0, (int)pending_action);
+}
+
+void ScrollMenu::render() {
+    int n = item_count();
+    if (selected < 0 || selected >= n) selected = 0;
+    if (scroll > selected) scroll = selected;
+    if (scroll + MENU_LIST_ROWS <= selected) scroll = selected - MENU_LIST_ROWS + 1;
+    if (scroll < 0) scroll = 0;
+    overlay_clear();
+    overlay_cursor(0, 6);
+    //              01234567890123456789012345678901
+    overlay_printf("%s", menu_title());
+    if (scroll > 0) {                 // more above
+        overlay_cursor(30, MENU_LIST_TOP - 1);
+        overlay_printf("^");
+    }
+    for (int i = 0; i < MENU_LIST_ROWS && scroll + i < n; i++) {
+        overlay_cursor(2, MENU_LIST_TOP + i);
+        overlay_printf("%s", item_text(scroll + i).c_str());
+    }
+    if (scroll + MENU_LIST_ROWS < n) {  // more below
+        overlay_cursor(30, MENU_LIST_TOP + MENU_LIST_ROWS);
+        overlay_printf("v");
+    }
+    render_footer();
+}
+
+std::vector<int> ScrollMenu::get_options() {
+    std::vector<int> rows;
+    int n = item_count();
+    for (int i = 0; i < MENU_LIST_ROWS && scroll + i < n; i++)
+        rows.push_back(MENU_LIST_TOP + i);
+    return rows;
+}
+
+bool ScrollMenu::on_choose(int idx) {
+    return item_chosen(scroll + idx);
+}
+
+bool ScrollMenu::move_cursor(int dir) {
+    int n = item_count();
+    if (n <= 0)
+        return true;
+    selected += dir;
+    if (selected < 0) selected = n - 1;    // wrap
+    if (selected >= n) selected = 0;
+    if (selected < scroll) scroll = selected;
+    if (selected >= scroll + MENU_LIST_ROWS) scroll = selected - MENU_LIST_ROWS + 1;
+    do_redraw();
+    return true;
+}
+
+int ScrollMenu::cursor_index() {
+    return selected - scroll;
 }

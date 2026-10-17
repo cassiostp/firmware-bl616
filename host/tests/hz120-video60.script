@@ -1,0 +1,31 @@
+# A 60 Hz build's Video menu has no BFI row, and game-menu navigation wraps:
+# Up on Resume goes to << Main menu, Down on << Main menu back to Resume.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core-file "smstang.bin"
+hold select+start+l 400ms
+expect-screen "Resume"
+press up
+expect-cursor-row 18
+press down
+expect-screen "Resume"
+expect-cursor-row 9
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-no-screen "BFI:"
+press down
+press down
+press down
+press down
+press a
+expect-screen "Resume"

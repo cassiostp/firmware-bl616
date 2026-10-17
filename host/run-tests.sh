@@ -135,6 +135,23 @@ open(sys.argv[1], 'wb').write(data)
 EOF
 }
 
+add_120hz() {
+    # $1 = dir: a 120 Hz build next to every game core's bitstream.
+    local dir="$1" c
+    for c in nestang snestang gbatang mdtang smstang; do
+        cp "$dir/cores/console138k/$c.bin" "$dir/cores/console138k/${c}_120hz.bin"
+    done
+}
+
+add_many() {
+    # $1 = dir: 30 numbered SMS ROMs, so the ROM browser spans two pages.
+    local dir="$1" i
+    mkdir -p "$dir/sms"
+    for i in $(seq -w 1 30); do
+        head -c 8192 /dev/zero > "$dir/sms/game$i.sms"
+    done
+}
+
 if [ -n "$RTL_CORE" ]; then
     case "$RTL_CORE" in
         nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; add_nes_plain "$1" plain.nes; } ;;
@@ -359,6 +376,8 @@ run_test() {
                         *) add_snes_variant "$sd" "${spec#snes:}" ;;
                     esac ;;
             sms:*) add_sms "$sd" "${spec#sms:}" ;;
+            hz120) add_120hz "$sd" ;;
+            manysms) add_many "$sd" ;;
             gba) add_gba "$sd" ;;
             gba-rtc) add_gba_rtc "$sd" AXVE FLASH1M_V ;;
             gba-rtc-sram) add_gba_rtc "$sd" AXVE SRAM_V ;;
@@ -429,6 +448,11 @@ run_test j-video-persist sms:cgame.sms
 run_test k-video-grid sms:cgame.sms sms:game.gg
 run_test l-video-grid-gba gba
 run_test o-video-scale sms:cgame.sms
+run_test hz120-display sms:cgame.sms hz120
+run_test hz120-fallback sms:cgame.sms
+run_test hz120-video sms:cgame.sms hz120
+run_test hz120-video60 sms:cgame.sms
+run_test menu-scroll manysms
 run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms

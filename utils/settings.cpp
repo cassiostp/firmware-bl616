@@ -58,6 +58,8 @@ void settings_defaults(Settings &s) {
     s.crt_mask_strength = 1;
     s.lcd_grid = false;
     s.lcd_grid_strength = 1;
+    s.display120 = false;         // 60 Hz (720p) until the user picks 120 Hz
+    s.bfi_mode = 1;               // black: every other refresh is black
     s.pause_in_menu = true;
     s.clock_unix = 0;
     s.clock_hbn = 0;
@@ -189,6 +191,22 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
     } else if (strcasecmp(key, "lcd_grid_strength") == 0) {
         long v = strtol(val, NULL, 10);
         if (v >= 0 && v <= 3) s.lcd_grid_strength = (uint8_t)v;
+    } else if (strcasecmp(key, "display") == 0) {
+        // 120 = the 120 Hz (480p) build, 60 = the 60 Hz (720p) build.
+        if (strcmp(val, "120") == 0 || strcmp(val, "1") == 0)
+            s.display120 = true;
+        else if (strcmp(val, "60") == 0 || strcmp(val, "0") == 0)
+            s.display120 = false;
+    } else if (strcasecmp(key, "bfi") == 0) {
+        // off/black/dim/rolling, with 0..3 accepted too.
+        if (strcasecmp(val, "off") == 0 || strcmp(val, "0") == 0)
+            s.bfi_mode = 0;
+        else if (strcasecmp(val, "black") == 0 || strcmp(val, "1") == 0)
+            s.bfi_mode = 1;
+        else if (strcasecmp(val, "dim") == 0 || strcmp(val, "2") == 0)
+            s.bfi_mode = 2;
+        else if (strcasecmp(val, "rolling") == 0 || strcmp(val, "3") == 0)
+            s.bfi_mode = 3;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
         s.pause_in_menu = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "clock_unix") == 0) {
@@ -276,6 +294,11 @@ bool settings_save() {
         "crt_mask_strength=%d\n"
         "lcd_grid=%d\n"
         "lcd_grid_strength=%d\n"
+        "# Display: 60 = the 60 Hz (720p) build, 120 = the 120 Hz (480p)\n"
+        "# build when one is on the card. BFI applies to the 120 Hz build:\n"
+        "# off, black, dim or rolling (video_config bits 21:20).\n"
+        "display=%s\n"
+        "bfi=%s\n"
         "# 0 keeps the game running while a menu is shown over it.\n"
         "pause_in_menu=%d\n"
         "# Wall clock anchor (Options -> Date & time): unix seconds and the\n"
@@ -290,6 +313,7 @@ bool settings_save() {
         settings.video_brightness, settings.video_contrast, settings.video_saturation,
         settings.video_gamma, settings.crt_mask, settings.crt_mask_strength,
         settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength,
+        settings.display120 ? "120" : "60", bfi_mode_name(settings.bfi_mode),
         settings.pause_in_menu ? 1 : 0,
         (unsigned long)settings.clock_unix, (unsigned long)settings.clock_hbn,
         settings.solar_pct);
@@ -346,8 +370,10 @@ uint32_t build_video_config() {
            ((uint32_t)(settings.crt_mask & 3) << VIDEO_CFG_MASK_SHIFT) |
            ((uint32_t)(settings.crt_mask_strength & 3) << VIDEO_CFG_MASK_STRENGTH_SHIFT) |
            (settings.lcd_grid && lcd_grid_offered() ? VIDEO_CFG_LCD_GRID : 0) |
-           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT);
-    // Bits 19:18 are unused and stay 0.
+           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT) |
+           ((uint32_t)(settings.bfi_mode & 3) << VIDEO_CFG_BFI_SHIFT);
+    // Bits 19:18 are unused and stay 0. The 60 Hz builds ignore the BFI
+    // bits, so this word is the same for both builds.
 }
 
 void core_config_preview(Preview p) {
@@ -357,4 +383,9 @@ void core_config_preview(Preview p) {
 
 int scanline_dark_percent(uint8_t dark) {
     return 25 * ((dark & 3) + 1);
+}
+
+const char *bfi_mode_name(uint8_t mode) {
+    static const char *names[] = {"Off", "Black", "Dim", "Rolling"};
+    return names[mode & 3];
 }

@@ -57,4 +57,4 @@ expect-screen "cgame.sms"
 press down
 press a
 expect-overlay off
-expect-video-config 0x12801
+expect-video-config 0x112801

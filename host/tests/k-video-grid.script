@@ -56,7 +56,7 @@ expect-screen "--- LCD grid ---"
 press a
 expect-screen "Grid: ON"
 expect-video-bit 15 1
-expect-video-config 0x1a000
+expect-video-config 0x11a000
 # The setting is saved, but a game without the grid (back to the .sms game)
 # never gets bit 15: it would switch the core to its integer-scale geometry.
 press down

@@ -1,7 +1,8 @@
 # Game menu > Video > Color: brightness/gamma changes send the right 0x13
 # word at once; Reset colors clears them; Preview adjusts brightness live
 # with LEFT/RIGHT and returns to the menu.
-# (Strengths default 1 with the effects off, so the idle word is 0x12000.)
+# (Strengths default 1 with the effects off and BFI defaults to Black, so
+# the idle word is 0x112000.)
 expect-screen "TangCore"
 press down
 press down
@@ -12,7 +13,7 @@ expect-screen "cgame.sms"
 press down
 press a
 expect-overlay off
-expect-video-config 0x12000
+expect-video-config 0x112000
 hold select+start+l 400ms
 expect-screen "Resume"
 press down
@@ -24,23 +25,23 @@ press a
 expect-screen "--- Color ---"
 press a
 expect-screen "Brightness: 1"
-expect-video-config 0x12001
+expect-video-config 0x112001
 press down
 press down
 press down
 press a
 expect-screen "Gamma: Darker"
-expect-video-config 0x12201
+expect-video-config 0x112201
 press down
 press a
 expect-screen "Brightness: 0"
-expect-video-config 0x12000
+expect-video-config 0x112000
 press down
 press a
 expect-overlay off
 expect-config-bit 17 1
 press left
-expect-video-config 0x12007
+expect-video-config 0x112007
 press b
 expect-screen "--- Color ---"
 expect-config-bit 17 1

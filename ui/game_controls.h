@@ -45,6 +45,10 @@ uint16_t mode_silence_ms(void);
 // A game (or a core from Cores) is loaded behind the menus. In main.cpp.
 bool game_loaded(void);
 
+// True if the running bitstream is a 120 Hz build (its file ends in
+// _120hz.bin). The Video menu shows the BFI row only then. In main.cpp.
+bool loaded_core_is_120hz(void);
+
 // Main menu "Options" screen
 void menu_options(void);
 
