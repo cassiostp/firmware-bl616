@@ -92,6 +92,9 @@ void set_churn(bool on);
 void set_save_channel(bool on);
 // Save-block requests received so far (wait-dump watches for a new one).
 uint64_t save_requests();
+// Full-blank overlay text lines received so far (only overlay_clear()
+// prints a 32-space line; the menu-quiet test watches for none while idle).
+uint64_t blank_lines();
 
 bool overlay_visible();
 uint64_t rom_bytes();

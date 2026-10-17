@@ -112,6 +112,10 @@ class FpgaBackend : public sim::Backend {
     virtual void set_save_channel(bool on) = 0;
     // Number of 0x12 save-block requests received (wait-dump watches it).
     virtual uint64_t save_requests() = 0;
+    // Number of full-blank overlay text lines received (a 32-space 0x05
+    // payload: only overlay_clear() prints one. The menu-quiet test
+    // watches an idle menu send none).
+    virtual uint64_t blank_lines() = 0;
 
     virtual bool overlay_visible() = 0;
     virtual uint64_t rom_bytes() = 0; // ROM payload bytes consumed

@@ -439,6 +439,7 @@ else
 fi
 
 run_test a-menu nes:test.nes
+run_test a-menu-quiet
 run_test b-hidden-message-mode gba
 run_test c-pause sms:cgame.sms
 run_test d-sms-save sms:game.sms

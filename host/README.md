@@ -79,6 +79,8 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   frame is lost (FPGA pads only report changes).
 - `expect-screen "text"` / `expect-no-screen "text"` — OSD contains (or for
   the whole timeout, never contains) the substring.
+- `expect-no-clear [timeout]` — no overlay_clear traffic for the whole
+  window (an idle menu never blanks; 2 s default).
 - `expect-cursor-row 9` — the `>` cursor is on that OSD row.
 - `expect-core smstang` — the programmed core (`monitor nestang snestang
   gbatang mdtang smstang pctang`).
@@ -184,6 +186,10 @@ bitstreams), and runs `host/tests/*.script`:
   cycle, reloaded in the opposite order.
 - `t-wedge-main` — a pad state stuck with 2 of 3 combo buttons stops
   blocking main-menu navigation after ~1.5 s, while still stuck.
+- `t-garbage-pads` — an 8-button garbage pad word (the J0f0f shape) is
+  dropped where frames enter: no combo fires, menus keep working.
+- `a-menu-quiet` — an idle main menu sends no overlay_clear for 7 s (the
+  5 s core-ID poll redraws only on change: no periodic blanking).
 - `w-wedge-scanlines` — the same stuck state in Video > Scanlines.
 - `x-monitor-cores` — loading `monitor.bin` (core ID 0) from Cores does
   not restart the firmware.
