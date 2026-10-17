@@ -4,7 +4,9 @@ name: host-sim
 # to master, and on demand for any branch
 # (gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>).
 # The rtl jobs run each core's co-simulation suite against that core's
-# Verilated interface logic, checked out from its cassiostp fork at core_ref.
+# Verilated interface logic, checked out from its cassiostp fork at core_ref
+# (by default the fork's default branch). A core with no sim/cosim there is
+# skipped.
 # No pull_request trigger: nobody else's code runs here.
 on:
   push:
@@ -12,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       core_ref:
-        description: Branch of the core repos with sim/cosim
-        default: feature/smoothing
+        description: Branch of the core repos with sim/cosim (empty = each repo's default branch)
+        default: ''
 
 concurrency:
   group: host-sim-${{ github.workflow }}-${{ github.ref }}
@@ -53,10 +55,10 @@ jobs:
       - name: Check the core ref exists
         id: ref
         env:
-          REF: ${{ inputs.core_ref || 'feature/smoothing' }}
+          REF: ${{ inputs.core_ref }}
           REPO: cassiostp/${{ matrix.core }}tang
         run: |
-          if git ls-remote --exit-code --heads "https://github.com/$REPO.git" "$REF" >/dev/null; then
+          if [ -z "$REF" ] || git ls-remote --exit-code --heads "https://github.com/$REPO.git" "$REF" >/dev/null; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::$REPO has no branch $REF; skipping"
@@ -67,10 +69,21 @@ jobs:
         if: steps.ref.outputs.ok == 'true'
         with:
           repository: cassiostp/${{ matrix.core }}tang
-          ref: ${{ inputs.core_ref || 'feature/smoothing' }}
+          ref: ${{ inputs.core_ref }}
           path: ${{ matrix.core }}tang
           persist-credentials: false
 
-      - name: Build the model and run the RTL suite
+      - name: Check the core has the co-simulation
+        id: cosim
         if: steps.ref.outputs.ok == 'true'
+        run: |
+          if [ -d ${{ matrix.core }}tang/sim/cosim ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::cassiostp/${{ matrix.core }}tang has no sim/cosim at this ref; skipping"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the model and run the RTL suite
+        if: steps.cosim.outputs.ok == 'true'
         run: bash firmware/host/run-tests.sh --rtl-${{ matrix.core }}
