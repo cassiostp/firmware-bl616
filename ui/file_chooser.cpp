@@ -6,6 +6,7 @@ extern "C" {
 }
 
 #include "file_chooser.h"
+#include "game_controls.h"
 #include "overlay.h"
 #include "utils.h"
 
@@ -33,11 +34,17 @@ bool FileChooser::list_files(string dir, vector<FileEntry> &files, int start, in
 
     FILINFO fno;
     while (f_readdir(&d, &fno) == FR_OK && fno.fname[0] != 0) {
+        heartbeat_bump();           // big directories take a while to list
+        bool is_dir = fno.fattrib & AM_DIR;
+        // Hide files no loader accepts (e.g. gba_bios.bin in the GBA folder).
+        // Directories are always shown so the user can navigate.
+        if (!is_dir && !has_any_ext(fno.fname, filter_exts.c_str()))
+            continue;
         (*count)++;
         if (start > 0) {
             start--;
         } else if (files.size() < len)
-            files.push_back({fno.fname, fno.fattrib & AM_DIR});
+            files.push_back({fno.fname, is_dir});
     }
     f_closedir(&d);
     return true;
@@ -68,7 +75,9 @@ bool FileChooser::choose_file(string &res) {
             }
             delay(300);
             while (1) {
-                int r = joy_choice(TOPLINE, files.size(), &active, OSD_KEY_CODE);
+                int r = joy_choice(TOPLINE, files.size(), &active);
+                if (pending_action != ACTION_NONE)              // combo or MODE in game
+                    return false;
                 if (r == 1 || r == 4) {
                     if (curdir == rootdir && page == 0 && active == 0) {// return to main menu
                         return false;

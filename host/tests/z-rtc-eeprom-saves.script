@@ -1,0 +1,68 @@
+# Cross-core save geometry in one session: a GBA RTC cart (SRAM_V, 64 blocks
+# plus the one-block RTC sector at byte 32768) and a Genesis serial-EEPROM
+# cart (one block) load back to back, each writes its save, and both survive
+# a power cycle, reloaded in the opposite order. The EEPROM file staying at
+# 512 bytes proves the GBA extra block did not leak into the next game; the
+# byte at 0x8010 proves the RTC sector itself round-trips.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+expect-clock "2026-10-13 12:34" flags 5
+poke-save 0x10 0x42
+poke-save 0x8010 0xA5
+expect-file saves/gba/game.sav size 33280
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "jamte.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+poke-save 0x20 0x7E
+expect-file saves/genesis/jamte.sav size 512
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "jamte.md"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x20 0x7E
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-save-ram 0x8010 0xA5

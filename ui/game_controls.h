@@ -1,0 +1,60 @@
+#pragma once
+
+#include <stdint.h>
+
+// Actions requested by the controller. Set by controls_poll() or a menu,
+// handled by the main menu loop.
+enum GameAction {
+    ACTION_NONE = 0,
+    ACTION_GAME_MENU,   // open the game menu over the running game
+    ACTION_RESUME,      // close the menus and go back to the game
+    ACTION_RESET,       // reset the running game
+    ACTION_CLOSE,       // close the game and show the main menu
+    ACTION_MODE_RELOAD, // MODE with the debug console on: reprogram the
+                        // menu core and redraw, without an MCU reset
+};
+
+extern volatile GameAction pending_action;
+
+// Watch the controller combos and the MODE button. Call controls_poll() on
+// every pass of an input loop, with the pad states (FPGA | USB) per player.
+// in_game: the overlay is off and input goes to the core.
+// game_loaded: a game (or a core from Cores) is loaded behind the menus.
+// Returns true when an action has been set and the loop should exit.
+// MODE reloads the FPGA from flash; when that's detected, this restarts the
+// MCU (and so everything) and doesn't return.
+bool controls_poll(uint16_t pad1, uint16_t pad2, bool in_game, bool game_loaded);
+
+// True while at least 2 buttons of a combo are held, so menus can ignore
+// navigation that's really the start of a combo. Time-boxed: a combo state
+// unchanged for ~1.5s (stuck pad bits) stops reporting true.
+bool combo_in_progress(uint16_t pad1, uint16_t pad2);
+
+// Forget combo and MODE state, e.g. after the FPGA was reprogrammed (a new
+// core is silent while it starts, which must not look like MODE).
+void controls_reset(void);
+
+// Record that a load-wait already saw the new core answer with this ID, so
+// the early-MODE rule only fires when nothing has answered yet.
+void controls_prime_core_id(int16_t id);
+
+// Longest silent gap (first miss to next answer) in ms, for the diagnostic
+// line, so reload times can be reported.
+uint16_t mode_silence_ms(void);
+
+// A game (or a core from Cores) is loaded behind the menus. In main.cpp.
+bool game_loaded(void);
+
+// Main menu "Options" screen
+void menu_options(void);
+
+// restart_mcu() for callers outside game_controls.cpp (the debug
+// console's reboot command, the watchdog task). Does not return.
+void tc_restart_mcu(bool flash_mode);
+
+// Game menu "Scanlines..." screen
+struct Menu;
+Menu *create_scanline_menu(void);
+
+// Game menu "Video..." screen (scanlines, color, CRT mask, LCD grid)
+Menu *create_video_menu(void);

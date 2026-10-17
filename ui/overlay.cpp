@@ -8,12 +8,15 @@ extern "C" {
 }
 #include "utils.h"
 #include "overlay.h"
+#include "game_controls.h"
+#include "settings.h"
 
 /////////////////////////////////////////////////////////////////////////////////
 // Overlay and other core control over UART
 
 
 int _overlay_on = 1;
+volatile uint32_t overlay_hide_count = 0;   // overlay on->off transitions (diagnostics)
 int overlay_on() {
     return _overlay_on;
 }
@@ -98,11 +101,11 @@ void overlay_message(const char *msg, int center) {
     for (int i = 0; i < 10; i++) {
         const char *eol = strchr(sol, '\n');
         if (eol) { // found \n
-            w[i] = std::min(eol - sol, 26);
+            w[i] = std::min<ptrdiff_t>(eol - sol, 26);
             maxw = std::max(w[i], maxw);
             sol = eol+1;
         } else {
-            w[i] = std::min(end - sol, 26);
+            w[i] = std::min<ptrdiff_t>(end - sol, 26);
             maxw = std::max(w[i], maxw);
             lines = i+1;
             break;
@@ -140,14 +143,21 @@ void overlay_message(const char *msg, int center) {
         }
         s++;
     }
-    // wait for a keypress
+    // wait for a keypress. Keep polling the controller combos and the MODE
+    // button while waiting: MODE reloads the FPGA from flash (detected inside
+    // controls_poll), and must restart the firmware instead of hanging here
+    // with no button able to dismiss the box. A pending action also ends the
+    // dialog; the caller must redraw and let the main loop handle the action.
     delay(300);
     for (;;) {
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
         joy1 |= hid1; joy2 |= hid2;
-        if ((joy1 & 0x1) || (joy1 & 0x100) || (joy2 & 0x1) || (joy2 & 0x100))
-            break;
+        if (controls_poll(joy1, joy2, false, game_loaded()))
+            break;                  // combo or MODE: the caller handles pending_action
+        if ((joy1 & 0x109) || (joy2 & 0x109))
+            break;                  // A, B or START dismisses the box
+        delay(20);
     }
     delay(300);
 }
@@ -155,9 +165,12 @@ void overlay_message(const char *msg, int center) {
 // turn overlay on/off
 void overlay(int state) {
     taskENTER_CRITICAL();
+    if (_overlay_on && !state)
+        overlay_hide_count++;
     _overlay_on = state;
     fpga_tx_header(0x08, 2);
     fpga_tx_byte(state);        
     taskEXIT_CRITICAL();
+    apply_core_config();        // a running game pauses while a menu is up
 }
 

@@ -1,0 +1,13 @@
+# An all-zero .smc is not a SNES ROM: the loader says so in a pop-up, does
+# not load (the overlay stays on), and dismissing it returns to the menu.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-screen "Not a SNES ROM file"
+expect-overlay on
+press a
+expect-screen "TangCore"
+expect-overlay on

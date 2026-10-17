@@ -1,0 +1,38 @@
+# Options toggles persist across a power cycle (Pause in game menu).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Pause in game menu: ON"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Pause in game menu: OFF"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Saved"
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Pause in game menu: OFF"

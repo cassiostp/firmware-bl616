@@ -4,6 +4,8 @@
 
 #include "utils.h"
 #include "console.h"
+#include "game_controls.h"
+#include "dbg_log.h"
 
 std::vector<std::unique_ptr<Menu>> menu_stack;
 
@@ -33,25 +35,27 @@ void menu_input_loop() {
     if (!menu_is_active())
         return;
 
+    dbg_log("menu loop: enter, depth=%d", (int)menu_stack.size());
     DEBUG("Menu input loop\n");
     std::vector<int> options = menu_current()->get_options();
     int last = 0, active = 0;
-    while (menu_is_active() && overlay_on()) {
+    while (menu_is_active() && overlay_on() && pending_action == ACTION_NONE) {
         if (menu_current()->redraw) {
             menu_current()->render();
             menu_current()->redraw = false;
         }
 
-        uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
+        uint16_t joy1=0, joy2=0, hid1=0, hid2=0;
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
+        draw_diag_line(joy1, joy2, hid1, hid2);   // render() cleared rows 0-1
         joy1 |= hid1;
         joy2 |= hid2;
 
-        // DEBUG("Joy1: %04x, Joy2: %04x\n", joy1, joy2);
-
-        if (joy1 == OSD_KEY_CODE || joy2 == OSD_KEY_CODE) {
-            overlay(0);    // turn off OSD
-            delay(300);
+        if (controls_poll(joy1, joy2, false, game_loaded()))   // menu combo: back to the game
+            break;
+        if (combo_in_progress(joy1, joy2)) {    // its buttons aren't navigation
+            delay(10);
+            continue;
         }
 
         if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up
@@ -73,19 +77,21 @@ void menu_input_loop() {
             (joy1 & 0x1) || (joy2 & 0x1))       // button B pressed
         {
             int depth = menu_stack.size();
+            suppress_held_buttons();            // one press, one choice
             bool r = menu_current()->on_choose(active);
             if (r) {
                 pop_menu();
                 if (!menu_is_active()) {
+                    dbg_log("menu loop: exit, stack empty, pending=%d",
+                            (int)pending_action);
                     delay(100);
                     return;
                 }
                 menu_current()->do_redraw();
             }
-            if (menu_stack.size() != depth) {   // menu changed
+            if (menu_stack.size() != depth) {   // menu changed: start at its top
                 options = menu_current()->get_options();
-                if (active >= options.size())
-                    active = options.size()-1;
+                active = last = 0;
                 menu_current()->do_redraw();
             }
         }
@@ -100,4 +106,6 @@ void menu_input_loop() {
             delay(100);
         last = active;
     }
+    dbg_log("menu loop: exit, depth=%d overlay=%d pending=%d",
+            (int)menu_stack.size(), overlay_on() ? 1 : 0, (int)pending_action);
 }

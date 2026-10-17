@@ -1,0 +1,8 @@
+# Short reload in the main menu: ~300ms of silence, then core 0, must
+# restart. The old 600ms/3-miss threshold missed this.
+expect-screen "TangCore"
+expect-cursor-row 9
+mode 300
+expect-screen "TangCore"
+expect-cursor-row 9
+expect-core monitor

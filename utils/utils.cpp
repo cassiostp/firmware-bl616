@@ -1,6 +1,9 @@
 #include "utils.h"
+#include "dbg_console.h"
+#include "dbg_log.h"
 
 void fpga_tx_header(int cmd, int len) {
+    dbg_sniff_note_tx((uint8_t)cmd);
     bflb_uart_putchar(uart1_dev, 0xAA);
     bflb_uart_putchar(uart1_dev, len >> 8);
     bflb_uart_putchar(uart1_dev, len & 0xFF);
@@ -20,16 +23,25 @@ uint32_t get_file_size(const char *fname) {
 
 // Send a romdata packet to core of len bytes in `fbuf`
 void send_fbuf_data(uint16_t len) {
+    send_data_frame(fbuf, len);
+}
+
+// Same, but the payload lives at p (a slice of a bigger SD read).
+void send_data_frame(const uint8_t *p, uint16_t len) {
     taskENTER_CRITICAL();
     fpga_tx_header(0x07, len+1);
     for (int i = 0; i < len; i ++) {
-        fpga_tx_byte(fbuf[i]);
+        fpga_tx_byte(p[i]);
     }
     taskEXIT_CRITICAL();
+    heartbeat_bump();               // ROM transfers call this in a tight loop
 }
 
 // set loading state
 void set_loading_state(int state) {
+    // a ROM load (or reset) mustn't run with the core paused
+    if (state && (get_core_config() & CORE_CFG_MENU_PAUSE))
+        set_core_config(get_core_config() & ~CORE_CFG_MENU_PAUSE);
     taskENTER_CRITICAL();
     fpga_tx_header(0x06, 2);
     fpga_tx_byte(state);        
@@ -46,6 +58,30 @@ void send_blank_packet(void) {
     taskEXIT_CRITICAL();
 }
 
+// Complete any partial frame the FPGA's receiver may be stuck in, so a
+// desynced byte stream (a dropped or flipped byte on the wire, raw bytes
+// spliced between frames) cannot leave it counting down a garbage
+// length of up to 2047 while polls are swallowed as parameters. 2048
+// zero bytes complete the longest frame iosys accepts, from any state:
+// in RECV_IDLE a zero is ignored (the frame byte is 0xAA), as a length
+// byte it makes a short frame, as a command it is unknown (parameters
+// just consumed), and as a parameter of the frame already in progress
+// the worst any command does with a zero is bounded and recoverable
+// (0x06 loading=0, the running state; 0x08 overlay off, redrawn by the
+// caller's resend; 0x09 no HID buttons; 0x12 one save-block fetch). The
+// one destructive case is a stuck 0x11, which would write zeros over at
+// most one save block in the FPGA's RAM -- but that frame was already
+// garbage writing garbage, and the last good dump is on the card. New
+// cores abandon a partial frame after 1 ms of silence on their own;
+// this is for older bitstreams, and for telling the two apart in the log.
+void fpga_link_flush(void) {
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 2048; i++)
+        fpga_tx_byte(0);
+    taskEXIT_CRITICAL();
+    heartbeat_bump();
+}
+
 #include <string>
 #include <algorithm>
 
@@ -59,16 +95,65 @@ const char *cstr_find_ignore_case(const char *str, const char *substr) {
     return str + (it - s.begin());
 }
 
+bool has_ext(const char *fname, const char *ext) {
+    if (!fname || !ext || !*ext) return false;
+    size_t fl = strlen(fname), el = strlen(ext);
+    if (fl < el) return false;
+    return strcasecmp(fname + fl - el, ext) == 0;
+}
+
+bool has_any_ext(const char *fname, const char *exts) {
+    if (!fname) return false;
+    if (!exts || !*exts) return true;   // no filter: accept everything
+    // `exts` is a ';'-separated list like ".bin;.md;.gen;.smd"
+    char one[16];
+    const char *p = exts;
+    while (*p) {
+        while (*p == ';') p++;
+        if (!*p) break;
+        size_t i = 0;
+        while (*p && *p != ';') {
+            if (i + 1 < sizeof(one)) one[i++] = *p;
+            p++;
+        }
+        one[i] = '\0';
+        if (i > 0 && has_ext(fname, one))
+            return true;
+    }
+    return false;
+}
+
 static uint32_t core_config;
+static uint32_t video_config;
 
 uint32_t get_core_config(void) {
     return core_config;
+}
+
+uint32_t get_video_config(void) {
+    return video_config;
+}
+
+void forget_core_config(void) {
+    core_config = 0;
+    video_config = 0;
 }
 
 void set_core_config(uint32_t config) {
     core_config = config;
     taskENTER_CRITICAL();
     fpga_tx_header(0x03, 5);
+    fpga_tx_byte(config >> 24);
+    fpga_tx_byte(config >> 16);
+    fpga_tx_byte(config >> 8);
+    fpga_tx_byte(config);
+    taskEXIT_CRITICAL();
+}
+
+void set_video_config(uint32_t config) {
+    video_config = config;
+    taskENTER_CRITICAL();
+    fpga_tx_header(0x13, 5);
     fpga_tx_byte(config >> 24);
     fpga_tx_byte(config >> 16);
     fpga_tx_byte(config >> 8);
@@ -83,17 +168,84 @@ volatile uint16_t joy2_state = 0;
 volatile uint16_t hid1_state = 0;
 volatile uint16_t hid2_state = 0;
 volatile int16_t core_id = -1;
+// Fast-load replies (core/fastload.cpp): stashed by uart1_rx_task (main.cpp)
+// for the loader thread, following the core_id pattern above.
+volatile int16_t fast_baud_ack = -1;
+volatile uint8_t fast_baud_max = 0;
+volatile uint32_t fast_load_crc = 0;
+volatile uint32_t fast_load_cnt = 0;
+volatile bool fast_load_crc_ready = false;
+
+void fast_reply_reset(void) {
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        fast_baud_ack = -1;
+        fast_baud_max = 0;
+        fast_load_crc = 0;
+        fast_load_cnt = 0;
+        fast_load_crc_ready = false;
+        xSemaphoreGive(state_mutex);
+    }
+}
 volatile uint8_t key_buf[4] = {0};
 SemaphoreHandle_t state_mutex;              // for all global state access
+volatile uint32_t heartbeat;                // last activity tick (watchdog)
+volatile bool dbg_wdtest_stall;             // console wdtest: freeze the heartbeat (a real-looking stall)
 
-// read joypad states
+// Count a beat, and feed the watchdog here too: some bump sites run inside
+// critical sections, where the watchdog task can't.
+// wdtest freezes this entirely (no beat, no feed), so the stall looks real.
+void heartbeat_bump(void) {
+    if (dbg_wdtest_stall)
+        return;
+    heartbeat++;
+    if (wdg_dev)   // NULL until main() sets the watchdog up
+        bflb_wdg_reset_countervalue(wdg_dev);
+}
+
+static uint16_t suppress_mask[4];   // per pad: buttons ignored until released
+
+// read joypad states, without suppressed buttons
 void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2)
 {
+    // The last raw words logged. Pads only report changes, so the last
+    // "pads" line before a hang says which frame the firmware last saw:
+    // stuck bits (a wedge) vs silence (a dead transport).
+    static uint16_t last_raw[4];
+    uint16_t raw[4] = {0, 0, 0, 0}, supp[4] = {0, 0, 0, 0};
+    bool changed = false;
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        uint16_t *pads[4] = {joy1, joy2, hid1, hid2};
         *joy1 = joy1_state;
         *joy2 = joy2_state;
         *hid1 = hid1_state;
         *hid2 = hid2_state;
+        for (int i = 0; i < 4; i++) {
+            raw[i] = *pads[i];
+            supp[i] = suppress_mask[i];
+            if (raw[i] != last_raw[i])
+                changed = true;
+            suppress_mask[i] &= *pads[i];       // released: stop ignoring
+            *pads[i] &= ~suppress_mask[i];
+        }
+        if (changed)
+            for (int i = 0; i < 4; i++)
+                last_raw[i] = raw[i];
+        xSemaphoreGive(state_mutex);
+    }
+    if (changed)            // outside the mutex: dbg_log formats text
+        dbg_log("pads J=%03x/%03x H=%03x/%03x supp=%03x/%03x/%03x/%03x",
+                raw[0] & 0xfff, raw[1] & 0xfff, raw[2] & 0xfff, raw[3] & 0xfff,
+                supp[0] & 0xfff, supp[1] & 0xfff, supp[2] & 0xfff, supp[3] & 0xfff);
+    heartbeat_bump();       // every menu/input loop calls this: alive
+}
+
+void suppress_held_buttons(void)
+{
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+        suppress_mask[0] |= joy1_state;
+        suppress_mask[1] |= joy2_state;
+        suppress_mask[2] |= hid1_state;
+        suppress_mask[3] |= hid2_state;
         xSemaphoreGive(state_mutex);
     }
 }
@@ -101,17 +253,23 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
 // query over UART to return if the correct core is loaded
 // return >= 0 if request is successful, -1 if timeout (200ms)
 int16_t get_core_id(void) {
+    return get_core_id_timeout(200);
+}
+
+int16_t get_core_id_timeout(uint32_t timeout_ms) {
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
         core_id = -1;
         xSemaphoreGive(state_mutex);
     }
 
     // send command 1
+    taskENTER_CRITICAL();
     fpga_tx_header(0x01, 1);
+    taskEXIT_CRITICAL();
 
     // TODO: use a queue for better performance
     uint64_t start = bflb_mtimer_get_time_ms();
-    while (bflb_mtimer_get_time_ms() - start < 200) {
+    while (bflb_mtimer_get_time_ms() - start < timeout_ms) {
         if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
             int16_t res = core_id;
             if (res >= 0) {
@@ -120,7 +278,7 @@ int16_t get_core_id(void) {
             }
             xSemaphoreGive(state_mutex);
         }
-        delay(10);
+        delay(5);
     }
     return -1;
 }

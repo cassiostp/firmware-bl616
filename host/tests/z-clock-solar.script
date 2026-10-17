@@ -1,0 +1,24 @@
+# Boktai (U3IE + EEPROM): RTC+solar flags and the game menu's Solar row set
+# the light level, resent at once in the clock frame.
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+expect-clock "2026-10-13 12:34" flags 7
+expect-clock "2026-10-13 12:34" solar 50
+hold select+start+l 400ms
+expect-screen "Solar: 50%"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Solar: 60%"
+expect-clock "2026-10-13 12:34" solar 60
+expect-file-contains tangcore.cfg "solar_pct=60"

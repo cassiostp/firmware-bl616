@@ -12,6 +12,7 @@
 #include "hidparser.h"
 
 #include "overlay.h"
+#include "dbg_log.h"
 
 #include <string>
 
@@ -100,6 +101,26 @@ void hid_release_joystick(uint8_t idx) {
     DEBUG("Release joystick %d (map=%02x)\n", idx, joystick_map);
 }
 
+// A pad that goes away must not leave its last buttons held forever (pads
+// only report changes); zero its slot under state_mutex, the same lock the
+// client threads write with. Only slots 0/1 are reported to the firmware.
+static void clear_hid_slot(int idx) {
+    if (idx < 0 || idx > 1)
+        return;
+    xSemaphoreTake(state_mutex, portMAX_DELAY);
+    if (idx == 0)
+        hid1_state = 0;
+    else
+        hid2_state = 0;
+    xSemaphoreGive(state_mutex);
+}
+
+// No hand holds more than 6 of these buttons at once; a report claiming
+// more is garbled, and accepting it can stick combo bits held forever.
+static bool pad_plausible(uint16_t s) {
+    return __builtin_popcount(s & 0xfff) <= 6;
+}
+
 uint8_t byteScaleAnalog(int16_t xbox_val)
 {
     // Scale the xbox value from [-32768, 32767] to [1, 255]
@@ -134,17 +155,19 @@ static void usbh_update(struct usb_config *usb) {
     // check status for tasks
     for (int i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; i++) {
         if (usb->hid_info[i].state != STATE_RUNNING) continue;
-        if (usb->hid_info[i].task_handle == NULL || 
+        if (usb->hid_info[i].task_handle == NULL ||
             eTaskGetState(usb->hid_info[i].task_handle) == eDeleted) {
             INFO("HID client #%d: task died unexpectedly\n", i);
+            dbg_log("usb host: HID client %d task died", i);
             usb->hid_info[i].state = STATE_NONE;
         }
     }
     for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
         if (usb->xbox_info[i].state != STATE_RUNNING) continue;
-        if (usb->xbox_info[i].task_handle == NULL || 
+        if (usb->xbox_info[i].task_handle == NULL ||
             eTaskGetState(usb->xbox_info[i].task_handle) == eDeleted) {
-            INFO("XBOX client #%d: task died unexpectedly\n", i);   
+            INFO("XBOX client #%d: task died unexpectedly\n", i);
+            dbg_log("usb host: Xinput client %d task died", i);
             usb->xbox_info[i].state = STATE_NONE;
         }
     }
@@ -161,6 +184,7 @@ static void usbh_update(struct usb_config *usb) {
         
         if(usb->hid_info[i].hid_class && usb->hid_info[i].state == STATE_NONE) {
             INFO("HID %d connected\n", i);
+            dbg_log("usb host: HID %d connected", i);
             print_usb_class_info(usb->hid_info[i].hid_class);
             bool skip = false;
             uint16_t vendor_id = usb->hid_info[i].hid_class->hport->device_desc.idVendor;
@@ -181,6 +205,7 @@ static void usbh_update(struct usb_config *usb) {
         
         else if(!usb->hid_info[i].hid_class && usb->hid_info[i].state != STATE_NONE) {
             INFO("HID %d disconnected\n", i);
+            dbg_log("usb host: HID %d disconnected", i);
             if (usb->hid_info[i].task_handle) {
                 vTaskDelete( usb->hid_info[i].task_handle );
                 usb->hid_info[i].task_handle = NULL;
@@ -190,7 +215,10 @@ static void usbh_update(struct usb_config *usb) {
 
             if(usb->hid_info[i].report.type == REPORT_TYPE_JOYSTICK) {
                 DEBUG("Joystick %d gone", usb->hid_info[i].hid_state.joystick.js_index);
+                clear_hid_slot(usb->hid_info[i].hid_state.joystick.js_index);
                 hid_release_joystick(usb->hid_info[i].hid_state.joystick.js_index);
+            } else if(usb->hid_info[i].report.type == REPORT_TYPE_KEYBOARD) {
+                clear_hid_slot(0);      // a keyboard doubles as pad 1
             }
         }
     }
@@ -207,12 +235,14 @@ static void usbh_update(struct usb_config *usb) {
         
         if(usb->xbox_info[i].hid_class && usb->xbox_info[i].state == STATE_NONE) {
             INFO("Xinput %d connected\n", i);
+            dbg_log("usb host: Xinput %d connected", i);
             print_usb_class_info(usb->xbox_info[i].hid_class);
             usb->xbox_info[i].state = STATE_DETECTED;
         }
         
         else if(!usb->xbox_info[i].hid_class && usb->xbox_info[i].state != STATE_NONE) {
             INFO("Xinput %d disconnected\n", i);
+            dbg_log("usb host: Xinput %d disconnected", i);
             if (usb->xbox_info[i].task_handle) {
                 vTaskDelete( usb->xbox_info[i].task_handle );
                 DEBUG("XBOX %d task deleted\n", i);
@@ -221,6 +251,7 @@ static void usbh_update(struct usb_config *usb) {
             usb->xbox_info[i].state = STATE_NONE;
 
             DEBUG("Joystick %d is gone", usb->xbox_info[i].js_index);
+            clear_hid_slot(usb->xbox_info[i].js_index);
             hid_release_joystick(usb->xbox_info[i].js_index);
         }
     }
@@ -334,13 +365,17 @@ static void usbh_hid_client_thread(void *arg) {
                         // SNES: R  L  X A RT LT DN UP ST SE Y  B
                         // HID:            Y  B  A  X  UP DN LT RT                     
                         // EXTRA:                ST SE       R  L
-                        *snes = (hid_state & 1) << 7 | (hid_state & 2) << 5 | (hid_state & 4) << 3 | (hid_state & 8) << 1 |
+                        uint16_t v = (hid_state & 1) << 7 | (hid_state & 2) << 5 | (hid_state & 4) << 3 | (hid_state & 8) << 1 |
                                 (hid_state & 0x10) << 5 | (hid_state & 0x20) << 3| (hid_state & 0x40) >> 6 | (hid_state & 0x80) >> 6 |
                                 (hid_extra & 0x01) << 10 | (hid_extra & 0x02) << 10 | (hid_extra & 0x10) >> 2 | (hid_extra & 0x20) >> 2;
+                        if (pad_plausible(v))
+                            *snes = v;
                         xSemaphoreGive(state_mutex);
                     } else if (hid->report.type == REPORT_TYPE_KEYBOARD) {
                         // allow keyboard to double as a gamepad
-                        hid1_state = kbd_to_joy(hid->buffer, hid->nbytes);
+                        uint16_t v = kbd_to_joy(hid->buffer, hid->nbytes);
+                        if (pad_plausible(v))
+                            hid1_state = v;
                     }
                 }
             }
@@ -418,15 +453,18 @@ static void usbh_xbox_client_thread(void *arg) {
                     // SNES: R  L  X A RT LT DN UP ST SE Y  B
                     // XBOX:           X  Y  A  B  UP DN LT RT
                     // EXTRA:                ST SE       R  L
-                    *snes = (state & 1) << 7 | (state & 2) << 5 | (state & 4) << 3 | (state & 8) << 1 |
+                    uint16_t v = (state & 1) << 7 | (state & 2) << 5 | (state & 4) << 3 | (state & 8) << 1 |
                             (state & 0x10) >> 4 | (state & 0x20) << 3| (state & 0x40) >> 5 | (state & 0x80) << 2 |
                             (state_extra & 0x01) << 10 | (state_extra & 0x02) << 10 | (state_extra & 0x10) >> 2 | (state_extra & 0x20) >> 2;
+                    if (pad_plausible(v))
+                        *snes = v;
                     xSemaphoreGive(state_mutex);
                 }
             } else {
                 error++;
                 if (xbox->nbytes == -USB_ERR_TIMEOUT) {
                     INFO("XBOX client #%d: timeout, reinit\n", xbox->index);
+                    dbg_log("usb host: Xinput %d URB timeout, reinit", xbox->index);
                     usbh_kill_urb(&xbox->hid_class->intin_urb);
                     // reinit if we timeout (device could've gone asleep)
                     xbox_init(xbox);
@@ -479,8 +517,14 @@ static void usbh_hid_thread(void *argument) {
                         usb->hid_info[i].report.report_size + (usb->hid_info[i].report.report_id_present ? 1:0),
                         0, usbh_hid_callback, &usb->hid_info[i]);     
 
-                xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
-                        &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle );
+                if (xTaskCreate(usbh_hid_client_thread, (char *)"hid_client_task", 2048,
+                        &usb->hid_info[i], configMAX_PRIORITIES-3, &usb->hid_info[i].task_handle ) != pdPASS) {
+                    INFO("HID %d: failed to create client task\n", i);
+                    dbg_log("usb host: HID client %d task not created (heap?)", i);
+                    usb->hid_info[i].task_handle = NULL;
+                    usb->hid_info[i].state = STATE_FAILED;
+                    hid_release_joystick(usb->hid_info[i].hid_state.joystick.js_index);
+                }
             }
         }
 
@@ -495,8 +539,14 @@ static void usbh_hid_thread(void *argument) {
                 usb->xbox_info[i].js_index = hid_allocate_joystick();
                 DEBUG("  -> joystick %d", usb->xbox_info[i].js_index);
 
-                xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
-                        &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle );
+                if (xTaskCreate(usbh_xbox_client_thread, (char *)"xbox_client_task", 2048,
+                        &usb->xbox_info[i], configMAX_PRIORITIES-3, &usb->xbox_info[i].task_handle ) != pdPASS) {
+                    INFO("Xinput %d: failed to create client task\n", i);
+                    dbg_log("usb host: Xinput client %d task not created (heap?)", i);
+                    usb->xbox_info[i].task_handle = NULL;
+                    usb->xbox_info[i].state = STATE_FAILED;
+                    hid_release_joystick(usb->xbox_info[i].js_index);
+                }
             }
         }
 
@@ -523,7 +573,8 @@ void usb_gamepad_init(void) {
         usb_config.hid_info[i].state = 0;
         usb_config.hid_info[i].buffer = hid_buffer[i];
         usb_config.hid_info[i].usb = &usb_config;
-        usb_config.hid_info[i].sem = xSemaphoreCreateBinary();
+        if (!usb_config.hid_info[i].sem)      // re-init after the debug console
+            usb_config.hid_info[i].sem = xSemaphoreCreateBinary();
     }
 
     for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
@@ -531,8 +582,44 @@ void usb_gamepad_init(void) {
         usb_config.xbox_info[i].state = 0;
         usb_config.xbox_info[i].buffer = xbox_buffer[i];
         usb_config.xbox_info[i].usb = &usb_config;
-        usb_config.xbox_info[i].sem = xSemaphoreCreateBinary();
+        if (!usb_config.xbox_info[i].sem)
+            usb_config.xbox_info[i].sem = xSemaphoreCreateBinary();
     }
 
-    xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle);
+    if (xTaskCreate(usbh_hid_thread, (char *)"usbh_hid_task", 4096, &usb_config, configMAX_PRIORITIES-3, &usb_handle) != pdPASS) {
+        INFO("Failed to create USB host task\n");
+        dbg_log("usb host: detector task not created (heap?), USB pads off");
+    }
+}
+
+unsigned usb_host_stack_free(void) {
+    return usb_handle ? (unsigned)uxTaskGetStackHighWaterMark(usb_handle) : 0;
+}
+
+// The client tasks wait forever on their URB semaphores, so they can only
+// be deleted from here. Their URBs die with the host stack in
+// usbh_deinitialize(), which the caller runs next.
+void usb_gamepad_stop(void) {
+    for (int i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; i++) {
+        if (usb_config.hid_info[i].task_handle) {
+            vTaskDelete(usb_config.hid_info[i].task_handle);
+            usb_config.hid_info[i].task_handle = NULL;
+        }
+        usb_config.hid_info[i].state = STATE_NONE;
+        usb_config.hid_info[i].hid_class = NULL;
+    }
+    for (int i = 0; i < CONFIG_USBHOST_MAX_XBOX_CLASS; i++) {
+        if (usb_config.xbox_info[i].task_handle) {
+            vTaskDelete(usb_config.xbox_info[i].task_handle);
+            usb_config.xbox_info[i].task_handle = NULL;
+        }
+        usb_config.xbox_info[i].state = STATE_NONE;
+        usb_config.xbox_info[i].hid_class = NULL;
+    }
+    if (usb_handle) {
+        vTaskDelete(usb_handle);
+        usb_handle = NULL;
+    }
+    joystick_map = 0;
+    joy_driver_map = 0;
 }

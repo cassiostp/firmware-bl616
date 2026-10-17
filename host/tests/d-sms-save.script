@@ -1,0 +1,29 @@
+# SMS battery save round trip: poke the save RAM, the dirty notice flushes it
+# past the 2 s debounce into saves/sms/game.sav (64 blocks = 32768 bytes), a
+# power cycle plus reload restores the same bytes.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+poke-save 0x10 0x42
+expect-file saves/sms/game.sav size 32768
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.sms"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-save-ram 0x00 0xFF

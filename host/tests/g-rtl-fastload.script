@@ -1,0 +1,17 @@
+# Fast ROM loading on the RTL GBA core: negotiate 8 Mbaud, stream ROM + BIOS
+# bit-exactly, then switch back to 2M. The firmware's CRC check passes first
+# try, so rom_bytes counts exactly one attempt of each window (16384 ROM +
+# 16384 BIOS + 3 region-3 bytes); a single flipped bit would force a full
+# 2M retry and a different count (see g-rtl-fastload-corrupt).
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+press down
+press a
+expect-overlay off
+expect-core gbatang
+expect-baud-max 8000000
+expect-baud 2000000
+expect-rom-bytes 32771

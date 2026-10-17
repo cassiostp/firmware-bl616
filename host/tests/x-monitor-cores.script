@@ -1,0 +1,28 @@
+# Loading monitor.bin (core ID 0) from Cores must not restart the firmware:
+# the load-wait already saw the new core answer, so the early-MODE rule
+# (#18) must not fire on its first ID-0 reply. A restart would lose
+# last_core_file and with it the main menu's "Game menu" row (#31).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 15
+press b
+expect-screen "console138k/"
+press down
+press a
+expect-screen "monitor.bin"
+press down
+press down
+press down
+press a
+expect-screen "Game menu"
+expect-core monitor
+wait 3s
+expect-screen "Game menu"
+wait 5s
+expect-screen "Game menu"
+expect-alive 2s

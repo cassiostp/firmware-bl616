@@ -1,18 +1,19 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <string.h>
 
 #include "utils.h"
 #include "cores.h"
+#include "saves.h"
 #include "overlay.h"
 
 int loadsms(const char *fname) {
     DEBUG("loadsms start\n");
     FRESULT r = FR_NO_FILE;
 
-    // check extension .bin
-    char *p = strcasestr(fname, ".sms");
-    if (p == NULL) {
-        overlay_message("Only .sms, .gg, and .sg supported", 1);
+    // check extension .sms/.sg/.gg (SG-1000 runs in the SMS VDP's legacy
+    // modes; .gg sets the core's Game Gear mode below)
+    if (!has_any_ext(fname, ".sms;.sg;.gg")) {
+        overlay_message("Only .sms, .sg and .gg supported", 1);
         return r;
     }
 
@@ -26,6 +27,12 @@ int loadsms(const char *fname) {
     off = size % 1024;          // skipping 512-byte header if there is one
 
     // load actual ROM
+    // .gg: ask the core for Game Gear mode (core_config[0], core specific),
+    // keeping the other bits. set_loading_state(1) resets the core, so the
+    // bit is in place before the game starts.
+    int is_gg = has_any_ext(fname, ".gg");
+    set_core_config((get_core_config() & ~1u) | (is_gg ? 1u : 0u));
+
     set_loading_state(1);		// enable game loading, this resets the core
     core_running = false;
 
@@ -47,6 +54,10 @@ int loadsms(const char *fname) {
 
     DEBUG("loadsms: %d bytes\n", total);
     overlay_status("Success");
+    // The game's save RAM goes in now, while the core is still held in the
+    // loading state: restore() sends the .sav, a recovered .sav.tmp, or the
+    // blank image, so the previous game's RAM cannot leak into this one.
+    saves_restore();
     core_running = true;
 
     overlay(0);		// turn off OSD

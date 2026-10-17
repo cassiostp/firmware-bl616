@@ -1,8 +1,10 @@
 #define _GNU_SOURCE
-#include <string.h>      // for strcasestr
+#include <stdio.h>
+#include <string.h>
 
 #include "utils.h"
 #include "cores.h"
+#include "saves.h"
 #include "overlay.h"
 // return 0 if snes header is successfully parsed at off
 // typ 0: LoROM, 1: HiROM, 2: ExHiROM
@@ -22,8 +24,6 @@ int parse_snes_header(FIL *fp, int pos, int file_size, int typ, unsigned char *h
     int reset = (hdr[61] << 8) + hdr[60];
     int size2 = 1024 << rom;
 
-    overlay_status("size=%d", size2);
-
     // calc heuristics score
     int score = 0;		
     if (size2 >= file_size) score++;
@@ -35,14 +35,20 @@ int parse_snes_header(FIL *fp, int pos, int file_size, int typ, unsigned char *h
             all_ascii = 0;
     score += all_ascii;
 
-    overlay_status("pos=%x, type=%d, map_ctrl=%d, rom=%d, ram=%d, checksum=%x, checksum_comp=%x, reset=%x, score=%d\n", 
-            pos, typ, mc, rom, ram, checksum, checksum_compliment, reset, score);
+    // SA-1 BW-RAM reaches 256 KB (ram byte 8); every other cartridge keeps
+    // the old cap, so the save code never sees a size it cannot handle yet.
+    // An SA-1 ROM is refused below, before any save block count is set.
+    int ram_ok = ram <= 7 || (ram == 8 && mc == 0x23 &&
+                (hdr[22] == 0x32 || hdr[22] == 0x34 || hdr[22] == 0x35));
 
-    if (rom < 14 && ram <= 7 && score >= 1 && 
+    if (rom < 14 && ram_ok && score >= 1 &&
         reset >= 0x8000 &&				// reset vector position correct
        ((typ == 0 && (mc & 3) == 0) || 	// normal LoROM
         (typ == 0 && mc == 0x53)    ||	// contra 3 has 0x53 and LoROM
+        (typ == 0 && mc == 0x23)    ||	// SA-1
         (typ == 1 && (mc & 3) == 1) ||	// HiROM
+        (typ == 1 && mc == 0x32)    ||	// S-DD1
+        (typ == 1 && mc == 0x3a)    ||	// SPC7110
         (typ == 2 && (mc & 3) == 2))) {	// ExHiROM
         *map_ctrl = mc;
         *rom_type_header = hdr[22];
@@ -54,17 +60,73 @@ int parse_snes_header(FIL *fp, int pos, int file_size, int typ, unsigned char *h
     return 1;
 }
 
-// TODO: implement bsram backup
+// Cartridge chips snestang does not implement yet, keyed on the same
+// (map_ctrl, chipset) pairs as the FPGA's src/smc_parser.v, so the loader
+// can say what is missing instead of streaming a ROM at a coprocessor that
+// is not there (the core falls back to the plain mapper and the game
+// hangs). Delete a row when the FPGA gains the chip. Entries smc_parser.v
+// cannot tell apart are noted inline. Super FX (GSU: map 0x20, chipset
+// 0x13/0x14/0x15/0x1a) is NOT listed on purpose: the GSU core is about to
+// be hardware-tested, so GSU ROMs must still load.
+static const struct { int map_ctrl; int chipset; const char *name; }
+unsupported_chips[] = {
+    {0x32, 0x43, "S-DD1"}, {0x32, 0x45, "S-DD1"},
+    {0x3a, 0xf5, "SPC7110"}, {0x3a, 0xf9, "SPC7110"},
+    {0x30, 0xf5, "ST018"},	// no smc_parser.v case (ST01x is 0xf6): plain-LoROM fallback
+};
+
+// BS-X (Satellaview) has no (map_ctrl, chipset) pair and no detection in
+// smc_parser.v at all: its cartridges reuse the same 64 bytes with a
+// different layout (byte 26 is 0x33 or 0xff, byte 21 is 0 or has bit 7
+// set with the low two bits clear, byte 24 holds a normal-bank value and
+// byte 22 is 0xff alongside byte 23 or a small multiple of 16; zero in
+// both 22 and 23 would be an empty flash pack, not a game). The BS-X
+// BIOS itself has a plain header, recognised by its title. A header that
+// passed parse_snes_header cannot match the flash-pack test, because its
+// byte 24 is a RAM size of at most 8.
+static int is_bsx_header(const unsigned char *hdr) {
+    if (memcmp(hdr, "Satellaview BS-X     ", 21) == 0)
+        return 1;
+    if ((hdr[26] == 0x33 || hdr[26] == 0xff) &&
+        (hdr[21] == 0 || (hdr[21] & 0x83) == 0x80) &&
+        (hdr[24] == 0x20 || hdr[24] == 0x21 || hdr[24] == 0x30 || hdr[24] == 0x31)) {
+        int m = hdr[22];
+        if ((m == 0xff && hdr[23] == 0xff) ||
+            ((m & 0x0f) == 0 && (m >> 4) <= 12 && !(m == 0 && hdr[23] == 0)))
+            return 1;
+    }
+    return 0;
+}
+
+// the table above, plus BS-X: NULL if the core can run this cartridge
+static const char *unsupported_snes_chip(int map_ctrl, int rom_type_header,
+                                         const unsigned char *hdr) {
+    for (unsigned i = 0; i < sizeof unsupported_chips / sizeof unsupported_chips[0]; i++)
+        if (unsupported_chips[i].map_ctrl == map_ctrl &&
+            unsupported_chips[i].chipset == rom_type_header)
+            return unsupported_chips[i].name;
+    if (is_bsx_header(hdr))
+        return "BS-X";
+    return NULL;
+}
+
+// read the 64 bytes at pos and test them as a BS-X header
+static int bsx_header_at(FIL *fp, int pos) {
+    unsigned char hdr[64];
+    unsigned int br;
+    if (f_lseek(fp, pos))
+        return 0;
+    f_read(fp, hdr, 64, &br);
+    return br == 64 && is_bsx_header(hdr);
+}
+
 // return 0 if successful
 int loadsnes(const char *fname) {
     int r = 1;
     DEBUG("loadsnes start");
 
     // check extension .sfc or .smc
-    char *p = strcasestr(fname, ".sfc");
-    if (p == NULL)
-        p = strcasestr(fname, ".smc");
-    if (p == NULL) {
+    if (!has_any_ext(fname, ".smc;.sfc")) {
         overlay_message("Only .smc or .sfc supported", 1);
         return r;
     }
@@ -88,10 +150,31 @@ int loadsnes(const char *fname) {
         if (parse_snes_header(&fcore, header_pos, size-off, 1, fbuf, &map_ctrl, &rom_type_header, &rom_size, &ram_size, &company)) {
             header_pos = 0x40ffc0 + off;
             if (parse_snes_header(&fcore, header_pos, size-off, 2, fbuf, &map_ctrl, &rom_type_header, &rom_size, &ram_size, &company)) {
-                overlay_status("Not a SNES ROM file");
-                delay(200);
+                // No ordinary header at any offset. A BS-X flash pack
+                // fails all three probes by design; name it rather than
+                // claim the file is not a SNES ROM at all.
+                if (bsx_header_at(&fcore, 0x7fc0 + off) ||
+                    bsx_header_at(&fcore, 0xffc0 + off))
+                    overlay_message("BS-X cartridge\nnot supported yet", 1);
+                else
+                    overlay_message("Not a SNES ROM file", 1);
+                r = 1;	// f_open left FR_OK in r: main.cpp must see this
+                        // load as failed, not record the ROM as running
                 goto loadsnes_close_file;
             }
+        }
+    }
+
+    // The header parses, but snestang may not have the cartridge's chip:
+    // say so and do not load, instead of hanging on a black screen.
+    {
+        const char *chip = unsupported_snes_chip(map_ctrl, rom_type_header, fbuf);
+        if (chip) {
+            char msg[48];
+            snprintf(msg, sizeof msg, "%s cartridge\nnot supported yet", chip);
+            overlay_message(msg, 1);
+            r = 1;	// as above: this load did not happen
+            goto loadsnes_close_file;
         }
     }
 
@@ -127,6 +210,45 @@ int loadsnes(const char *fname) {
     } while (br == 1024);
 
     overlay_status("Success");
+    // The game's save RAM goes in now, while the core is still held in the
+    // loading state. The size comes from the header's SRAM size byte (2^n KB,
+    // 0 = this game has no battery RAM): like MiSTer's SNES core, which gates
+    // its backup on the same byte (bk_ena <= |ram_mask). restore() sends the
+    // .sav, a recovered .sav.tmp, or the blank image, so the previous game's
+    // BSRAM cannot leak into this one.
+    //
+    // Super FX battery games (chipset 0x15: Yoshi's Island, 0x1A: Stunt Race
+    // FX; fullsnes chipset table, bsnes board DB) keep saves in the GSU's work
+    // RAM, so $FFD8 is 0 and the size is the expansion-RAM byte $FFBD instead
+    // (ares mia/medium/super-famicom.cpp expansionRamSize(); needs the later
+    // extended header, [FFDA]=0x33, else 32 KB like Star Fox's work RAM).
+    // Star Fox (0x13) and the other non-battery GSU games (0x14) get no save.
+    // The GSU rewrites that RAM every frame, so these games are menu-only
+    // (saves_set_menu_only): no dump on 0x0B, dumps on menu open and close.
+    // SA-1 BW-RAM (map 0x23) is likewise the SA-1's work RAM (fullsnes SA-1
+    // map: 2 KB I-RAM plus up-to-256 KB backup/work BW-RAM), so battery SA-1
+    // games are menu-only too.
+    {
+        bool gsu_battery = (rom_type_header == 0x15 || rom_type_header == 0x1a);
+        bool sa1_save = (map_ctrl == 0x23 && ram_size != 0);
+        if (gsu_battery) {
+            unsigned char exp = 0;
+            if (company == 0x33 && header_pos >= 3) {
+                unsigned int ebr = 0;
+                if (f_lseek(&fcore, header_pos - 3) == FR_OK)
+                    f_read(&fcore, &exp, 1, &ebr);
+                if (ebr != 1) exp = 0;
+                exp &= 7;
+            }
+            int save_bytes = exp ? (1024 << exp) : 32768;
+            saves_set_blocks((uint16_t)(save_bytes >> 9));
+            saves_set_menu_only(true);
+        } else {
+            saves_set_blocks(ram_size ? 2 << ram_size : 0);
+            saves_set_menu_only(sa1_save);
+        }
+    }
+    saves_restore();
     core_running = true;
 
     overlay(0);		// turn off OSD

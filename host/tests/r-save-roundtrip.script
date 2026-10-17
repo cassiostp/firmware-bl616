@@ -1,0 +1,24 @@
+# NES save round trip on the RTL core: a game-path WRAM burst dirties the
+# save, the 2 s debounce flushes it into saves/nes/game.sav (16 blocks =
+# 8192 bytes) through the real iosys save engine and SDRAM, a power cycle
+# wipes the FPGA, and the reload restores the same bytes from the file.
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+wram-burst 0x000 512 0xA5
+expect-file saves/nes/game.sav size 8192
+power-cycle
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x00 0xA5
+expect-save-ram 0x01 0xA6
+expect-save-ram 0x1FF 0xA4
+expect-save-ram 0x1000 0xFF

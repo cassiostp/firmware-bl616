@@ -1,0 +1,25 @@
+# Options > set combo: a stuck non-combo button must not keep the capture
+# screen alive forever (its 10s cancel deadline runs from entry, not from
+# the last input), and MODE must recover a capture in progress (#33).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "--- Options ---"
+press a
+expect-screen "Hold 3 buttons together"
+stuck x
+expect-screen "Cancelled" 15s
+unstuck
+expect-screen "--- Options ---"
+press a
+expect-screen "Hold 3 buttons together"
+mode 300
+expect-screen "TangCore"
+expect-alive 2s

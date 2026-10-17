@@ -1,0 +1,37 @@
+# GSU battery game (chip 0x15, $FFBD 5 = 32 KB, Yoshi's Island shape) is
+# menu-only: a dirty notice alone never dumps, opening the game menu dumps,
+# and closing the game dumps a write made while the menu was open. Reloading
+# restores both bytes.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+poke-save 0x10 0x42
+expect-no-file saves/snes/game.sav 3s
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-screen "Saved to card"
+expect-file saves/snes/game.sav size 32768
+poke-save 0x20 0x43
+expect-cursor-row 9
+press down
+press down
+press down
+press down
+press down
+expect-screen "Close game"
+press a
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-save-ram 0x20 0x43
+expect-save-ram 0x00 0xFF

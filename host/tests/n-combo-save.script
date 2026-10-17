@@ -1,0 +1,24 @@
+# Menu combo while a save dump is in progress, with the game writing BSRAM
+# continuously (churn): the dump, the pad frames, the overlay and the pause
+# bit must all get through each other on the real serial link -- and the
+# game's BSRAM writes contend with the dump's reads on the core's single
+# BSRAM port (SNES first, save bytes slip in between).
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+wram-burst 0x000 512 0x5A
+churn on
+poke-save 0x10 0x42
+wait-dump
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-config-bit 17 1
+churn off
+press a
+expect-overlay off
+expect-config-bit 17 0

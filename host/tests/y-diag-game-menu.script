@@ -1,0 +1,49 @@
+# With Diagnostics on, the diag rows (J.. H.. a.. c.. s.. #..) must show in
+# menus drawn by menu_input_loop too (game/Video/...), not only in the main
+# menu: a hang in the game menu is otherwise undiagnosable on screen (#32).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Diagnostics: OFF"
+press down
+press down
+press down
+press down
+press a
+expect-screen "Diagnostics: ON"
+press down
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Saved"
+press down
+press a
+expect-screen "TangCore"
+expect-screen "J000000 H000000"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Resume"
+expect-screen "J000000 H000000"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-screen "J000000 H000000"

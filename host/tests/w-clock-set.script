@@ -1,0 +1,137 @@
+# Options date/time editor: set 2026-10-13 12:34, persist, resume
+# after a power cycle (time stands still while off).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Date & time:"
+press down
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "--- Date & time ---"
+expect-screen "Year: 2000"
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press down
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press down
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press down
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press down
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+press right
+expect-screen "Tue 2026-10-13 12:34"
+press a
+expect-screen "Clock set"
+expect-screen "Date & time: 2026-10-13 12:34"
+expect-file-contains tangcore.cfg "clock_unix=179189484"
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Date & time:"
+expect-screen "Date & time: 2026-10-13 12:34"

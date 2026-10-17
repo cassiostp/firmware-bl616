@@ -5,8 +5,7 @@ extern "C" {
 
 #include "utils.h"
 #include "init.h"
-
-extern "C" void bflb_uart_set_console(struct bflb_device_s *dev);
+#include "uart_rx.h"
 
 void init_gpio_and_uart() {
     // turn of UART0
@@ -72,8 +71,14 @@ void init_gpio_and_uart() {
     uart1_dev = bflb_device_get_by_name("uart1");
     /* Initialize UART1 with the config */
     bflb_uart_init(uart1_dev, &uart1_cfg);
+    uart_rx_init();                         // the FIFO is only 32 bytes: an interrupt drains it
 
-    bflb_uart_set_console(uart1_dev);       // for debug
+    // Deliberately no bflb_uart_set_console(uart1_dev): the SDK console
+    // is where SDK/CherryUSB printf() and puts() go, as raw bytes with
+    // no framing and no critical section. On uart1 that splices ASCII
+    // into the framed FPGA link (CONFIG_USB_DBG_LEVEL is INFO, and the
+    // CDC device class logs class requests from the attached PC). With
+    // no console set, the SDK's printf discards instead.
 
     // set JTAG pins to high-Z
     // interrupts masked, SWGPIO mode, output off, input off, schmitt ON

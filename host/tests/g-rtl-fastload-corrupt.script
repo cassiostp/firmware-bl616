@@ -1,0 +1,16 @@
+# One flipped wire bit in the ROM stream: the core's 0x0D check must fail,
+# and the firmware must retry the whole load clean at 2M. rom_bytes counts
+# both ROM attempts plus BIOS and region 3 (2*16384 + 16384 + 3).
+expect-screen "TangCore"
+press down
+press down
+press b
+expect-screen "game.gba"
+corrupt-next-byte
+press down
+press a
+expect-overlay off
+expect-core gbatang
+expect-baud-max 8000000
+expect-baud 2000000
+expect-rom-bytes 49155

@@ -1,0 +1,20 @@
+# The game menu pauses the game (core_config bit 17) while "Pause in game
+# menu" is on (the default); Resume clears the bit. No save file may appear:
+# nothing wrote the save RAM.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-no-file saves/sms/cgame.sav
+hold select+start+l 400ms
+expect-screen "Resume"
+expect-config-bit 17 1
+press a
+expect-overlay off
+expect-config-bit 17 0

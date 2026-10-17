@@ -1,0 +1,32 @@
+# SNES SA-1 synthetic header (map 0x23, chipset 0x35, SRAM size byte 8 =
+# 256 KB BW-RAM) loads: SNES is the second main-menu entry, the game's own
+# row is below the file browser's return entry, and a loaded game turns the
+# overlay off on the SNES core.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+# BW-RAM is the SA-1's work RAM, so this game is menu-only: a dirty notice
+# alone never dumps (no async file after the debounce), and opening the game
+# menu dumps all 512 blocks (two fetch passes; allow it). A power cycle plus
+# reload restores the poked byte.
+poke-save 0x10 0x42
+expect-no-file saves/snes/game.sav 5s
+hold select+start+l 500ms
+expect-screen "Resume" 120s
+expect-screen "Saved to card"
+expect-file saves/snes/game.sav size 262144 60s
+power-cycle
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-save-ram 0x00 0xFF

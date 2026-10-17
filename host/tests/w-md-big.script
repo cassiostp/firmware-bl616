@@ -1,0 +1,19 @@
+# A 5 MB ROM (Super Street Fighter II size) streams whole: the loader has
+# no 4 MB cap, the ordinary "RA" sizing still applies, and no cart quirk is
+# sent for an unknown serial.
+expect-screen "TangCore"
+press down
+press down
+press down
+press b
+expect-screen "big.md"
+press down
+press a
+expect-overlay off
+expect-core mdtang
+expect-config-bit 0 0
+expect-config-bit 1 0
+expect-config-bit 2 0
+expect-config-bit 3 0
+poke-save 0x20 0x5A
+expect-file saves/genesis/big.sav size 16384

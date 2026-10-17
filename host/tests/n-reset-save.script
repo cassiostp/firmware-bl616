@@ -1,0 +1,18 @@
+# Reset combo while a save dump is in progress, with the game writing BSRAM
+# continuously (churn): the reset must settle (flush) the save, toggle the
+# loading state and come back to the running game.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+wram-burst 0x000 512 0x5A
+churn on
+poke-save 0x10 0x42
+wait-dump
+hold select+start+r 500ms
+expect-overlay off
+churn off
