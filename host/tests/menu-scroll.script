@@ -1,0 +1,123 @@
+# File browser: a 30-file dir spans two pages; Up/Down turn the page at the
+# edges while the cursor stays visible, ^ more / more v mark the window's
+# edges, and both ends wrap. Options: 13 items in a 12-row window scroll
+# with a ^ marker, and Up on the first item wraps to the last.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game01.sms"
+expect-screen "more v"
+expect-no-screen "^ more"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-screen "game20.sms"
+expect-cursor-row 22
+press down
+expect-screen "^ more"
+expect-screen "game21.sms"
+expect-no-screen "more v"
+press up
+expect-screen "more v"
+expect-screen "game20.sms"
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+press up
+expect-screen "game01.sms"
+# Up on the first item of the first page wraps to the last item.
+press up
+expect-screen "game30.sms"
+expect-screen "^ more"
+expect-cursor-row 11
+# Down on the last item wraps to the first.
+press down
+expect-screen "Return to main"
+expect-screen "more v"
+press b
+expect-screen "TangCore"
+# Options: Back is below the window until scrolled to.
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "--- Options ---"
+expect-no-screen "<< Back"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-screen "<< Back"
+expect-screen "^"
+press a
+expect-screen "TangCore"
+# Wrap: Up on the first Options item goes to the last.
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "--- Options ---"
+press up
+expect-screen "<< Back"
+expect-screen "^"
+press down
+expect-screen "Menu:"
+expect-no-screen "^"
+press up
+expect-screen "<< Back"
+press a
+expect-screen "TangCore"

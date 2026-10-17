@@ -52,7 +52,7 @@ expect-config-bit 17 0
 expect-config-bit 16 1
 # video_config (frame 0x13) reaches the real core: the idle word, then
 # Video > Color > Brightness +1.
-expect-video-config 0x12000
+expect-video-config 0x112000
 hold select+start+l 400ms
 expect-screen "Resume"
 press down
@@ -64,4 +64,4 @@ press a
 expect-screen "--- Color ---"
 press a
 expect-screen "Brightness: 1"
-expect-video-config 0x12001
+expect-video-config 0x112001

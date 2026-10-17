@@ -90,7 +90,12 @@ bool has_any_ext(const char *fname, const char *exts);
 // return true if core is ready. then core_id is set.
 // return false if timeout after 100ms
 bool get_core_status(void);
-extern int joy_choice(int start_line, int len, int *active);
+// joy_choice: navigate a vertical list of `len` rows starting at
+// `start_line`, drawing the `>` cursor at `start_line + *active`.
+// Up on the first item wraps to the last, Down on the last wraps to the
+// first. `wrapped` (may be NULL) reports the wrap: -1 wrapped up, +1
+// wrapped down, 0 no wrap, so paged lists can turn the page instead.
+extern int joy_choice(int start_line, int len, int *active, int *wrapped = NULL);
 // Diagnostic rows 0-1 (pads/action/core/silence/heartbeat + save counters),
 // drawn when Diagnostics is on; self-throttling, call from any menu loop.
 extern void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2);
@@ -204,8 +209,9 @@ extern void set_video_config(uint32_t config);
 // grey), bits 10:9 pick a gamma table (0 off, 1 darker, 2 brighter, 3 CRT),
 // bits 12:11 pick the CRT mask (0 off, 1 grille, 2 slot, 3 dot), bits 14:13
 // set how much the mask dims (1/4, 3/8, 1/2, 5/8), bit 15 turns the LCD grid
-// on, and bits 17:16 set how much the grid dims (1/8, 1/4, 3/8, 1/2).
-// Bits 19:18 are unused. Every core defaults them
+// on, bits 17:16 set how much the grid dims (1/8, 1/4, 3/8, 1/2), and bits
+// 21:20 pick the 120 Hz build's black-frame insertion (0 off, 1 black,
+// 2 dim, 3 rolling). Bits 19:18 are unused. Every core defaults them
 // to 0, and all-zero video_config leaves the picture unchanged.
 #define VIDEO_CFG_BRIGHT_SHIFT 0
 #define VIDEO_CFG_CONTRAST_SHIFT 3
@@ -215,5 +221,7 @@ extern void set_video_config(uint32_t config);
 #define VIDEO_CFG_MASK_STRENGTH_SHIFT 13
 #define VIDEO_CFG_LCD_GRID (1u << 15)
 #define VIDEO_CFG_GRID_STRENGTH_SHIFT 16
+#define VIDEO_CFG_BFI_SHIFT 20
+#define VIDEO_CFG_BFI_MASK (3u << VIDEO_CFG_BFI_SHIFT)
 
 extern const char *cstr_find_ignore_case(const char *str, const char *substr);

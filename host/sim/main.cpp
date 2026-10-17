@@ -418,6 +418,9 @@ bool c_cursor(void *a) {
 bool c_core(void *a) {
     return fpga::programmed_id() == *(int *)a;
 }
+bool c_corefile(void *a) {
+    return fpga::programmed_file().find(*(const std::string *)a) != std::string::npos;
+}
 bool c_bit(void *a) {
     CondBit *c = (CondBit *)a;
     return (int)((fpga::last_config() >> c->bit) & 1) == c->val;
@@ -592,6 +595,15 @@ int run_script() {
             printf("[%d] expect-core %s\n", lineno, t[1].c_str());
             if (!poll_until(to, c_core, &id))
                 script_fail(lineno, "core never became " + t[1]);
+        } else if (cmd == "expect-core-file") {
+            uint64_t to = 10000;
+            if (t.size() < 2 || t.size() > 3)
+                script_fail(lineno, "usage: expect-core-file <substr> [timeout]");
+            if (t.size() == 3 && !parse_dur(t[2], to))
+                script_fail(lineno, "bad timeout");
+            printf("[%d] expect-core-file %s\n", lineno, t[1].c_str());
+            if (!poll_until(to, c_corefile, &t[1]))
+                script_fail(lineno, "programmed file never contained " + t[1]);
         } else if (cmd == "expect-config-bit") {
             long bit, val;
             uint64_t to = 10000;

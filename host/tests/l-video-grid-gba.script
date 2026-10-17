@@ -29,4 +29,4 @@ expect-screen "--- LCD grid ---"
 press a
 expect-screen "Grid: ON"
 expect-video-bit 15 1
-expect-video-config 0x1a000
+expect-video-config 0x11a000

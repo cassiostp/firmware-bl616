@@ -10,6 +10,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
 #include <vector>
 
@@ -181,6 +182,28 @@ static void send_hid_state(uint16_t hid1, uint16_t hid2) {
     taskEXIT_CRITICAL();
 }
 
+// The 120 Hz build of a core file: "nestang.bin" -> "nestang_120hz.bin",
+// side by side in cores/console138k/.
+static std::string hz120_core_name(const char *core_file) {
+    std::string s = core_file ? core_file : "";
+    size_t dot = s.rfind('.');
+    if (dot == std::string::npos)
+        return s + "_120hz";
+    return s.substr(0, dot) + "_120hz" + s.substr(dot);
+}
+
+// True if the running bitstream is a 120 Hz build (its file ends in
+// _120hz.bin), whether it came from a game launch or the Cores browser
+// (which loads the exact file the user picked).
+bool loaded_core_is_120hz(void) {
+    static const char suffix[] = "_120hz.bin";
+    if (last_core_file.size() < sizeof(suffix) - 1)
+        return false;
+    std::string s = last_core_file.substr(last_core_file.size() - (sizeof(suffix) - 1));
+    for (auto &c : s) c = (char)tolower(c);
+    return s == suffix;
+}
+
 // Load `rom` on `core`, programming the core's bitstream first if it isn't
 // running (or always, with force_program). Returns 1 if the ROM was loaded,
 // -1 on error.
@@ -202,7 +225,21 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
 
     if (force_program || active_core != core->id) {
         string fname_core;
-        if (find_core_for_board(fname_core, core->core_file)) {
+        // Options -> Display 120 Hz: a game launch loads the 120 Hz build
+        // when one is on the card, and the 60 Hz build (with one status
+        // line) when it isn't. A core picked in the Cores browser loads
+        // verbatim: the user chose that exact file.
+        bool found = false;
+        if (settings.display120)
+            found = find_core_for_board(fname_core, hz120_core_name(core->core_file).c_str());
+        if (!found) {
+            if (settings.display120) {
+                overlay_status("No 120 Hz core, using 60 Hz");
+                delay(800);       // the load's own status overwrites this
+            }
+            found = find_core_for_board(fname_core, core->core_file);
+        }
+        if (found) {
             program_fpga(fname_core.c_str());
             forget_game();                  // new bitstream, nothing loaded yet
             last_core_file = fname_core;
@@ -389,11 +426,13 @@ void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t hid2) 
 // // (R L X A RT LT DN UP START SELECT Y B)
 // Return: 1 button B pressed, 4: button A pressed, 2: next page, 3: previous page
 // active is the entry chosen
-int joy_choice(int start_line, int len, int *active) {
+int joy_choice(int start_line, int len, int *active, int *wrapped) {
     if (*active < 0 || *active >= len)
         *active = 0;
     uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
     int last = *active;
+    if (wrapped)
+        *wrapped = 0;
 
     get_joypad_states(&joy1, &joy2, &hid1, &hid2);
     if (overlay_on())
@@ -419,11 +458,23 @@ int joy_choice(int start_line, int len, int *active) {
         return 0;
     }
 
-    if ((joy1 & 0x10) || (joy2 & 0x10)) {
-        if (*active > 0) (*active)--;
+    if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up: wrap to the last item
+        if (*active > 0) {
+            (*active)--;
+        } else if (len > 0) {
+            *active = len - 1;
+            if (wrapped)
+                *wrapped = -1;
+        }
     }
-    if ((joy1 & 0x20) || (joy2 & 0x20)) {
-        if (*active < len-1) (*active)++;
+    if ((joy1 & 0x20) || (joy2 & 0x20)) {   // down: wrap to the first item
+        if (*active < len-1) {
+            (*active)++;
+        } else if (len > 0) {
+            *active = 0;
+            if (wrapped)
+                *wrapped = +1;
+        }
     }
     if ((joy1 & 0x40) || (joy2 & 0x40))
         return 3;      // previous page
@@ -441,8 +492,12 @@ int joy_choice(int start_line, int len, int *active) {
         overlay_printf(" ");
         overlay_cursor(0, start_line + (*active));
         overlay_printf(">");
-        delay(100);     // button debounce
-    }    
+        // A wrap turns the page below, whose own redraw + settle follows:
+        // no debounce needed here (and it would push that redraw into the
+        // next press's snapshot).
+        if (!wrapped || !*wrapped)
+            delay(100);     // button debounce
+    }
     return 0;
 }
 

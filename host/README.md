@@ -82,6 +82,8 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
 - `expect-cursor-row 9` — the `>` cursor is on that OSD row.
 - `expect-core smstang` — the programmed core (`monitor nestang snestang
   gbatang mdtang smstang pctang`).
+- `expect-core-file smstang_120hz` — the programmed bitstream's path
+  contains the substring (which 60/120 Hz build was loaded).
 - `expect-config-bit 17 1` — a bit of the last `core_config` word (on the
   RTL backend this reads the core's real register).
 - `expect-video-bit 15 1` — a bit of the last `video_config` word (frame

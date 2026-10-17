@@ -1,0 +1,43 @@
+# Options -> Display 120 Hz with no 120 Hz build on the card: one status
+# line, then the 60 Hz core.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "Display: 60 Hz (720p)"
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Display: 120 Hz (480p)"
+press down
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Saved"
+press down
+press a
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-screen "No 120 Hz core, using 60 Hz"
+expect-overlay off
+expect-core smstang
+expect-core-file "smstang.bin"

@@ -10,7 +10,9 @@ extern "C" {
 #include "overlay.h"
 #include "utils.h"
 
-#define PAGESIZE 22
+// The file list scrolls inside rows 2..22 (21 entries): rows 25-26 sit
+// under the cores' logo, so row 23 carries the scroll markers instead.
+#define PAGESIZE 21
 #define TOPLINE 2
 
 // void FileChooser::set_fs(FATFS *fs) {
@@ -73,11 +75,36 @@ bool FileChooser::choose_file(string &res) {
                         overlay_printf("/");
                 }
             }
+            // Scroll markers at the window's bottom edge: more above/below.
+            if (page > 0) {
+                overlay_cursor(2, TOPLINE+PAGESIZE);
+                overlay_printf("^ more");
+            }
+            if (page < pages-1) {
+                overlay_cursor(24, TOPLINE+PAGESIZE);
+                overlay_printf("more v");
+            }
+            // The cursor sits on the current row through the settle delay
+            // below, so the next press never snapshots a cursor-less list
+            // (its tap would end on the cursor reappearing, selecting
+            // nothing).
+            overlay_cursor(0, TOPLINE + active);
+            overlay_printf(">");
             delay(300);
             while (1) {
-                int r = joy_choice(TOPLINE, files.size(), &active);
+                int wrapped = 0;
+                int r = joy_choice(TOPLINE, files.size(), &active, &wrapped);
                 if (pending_action != ACTION_NONE)              // combo or MODE in game
                     return false;
+                if (wrapped < 0) {              // up past the top: previous page,
+                    page = (page > 0) ? page-1 : pages-1;   // wrapping to the last
+                    active = PAGESIZE;          // (clamped to its last row below)
+                    break;
+                } else if (wrapped > 0) {       // down past the bottom: next page,
+                    page = (page < pages-1) ? page+1 : 0;   // wrapping to the first
+                    active = 0;
+                    break;
+                }
                 if (r == 1 || r == 4) {
                     if (curdir == rootdir && page == 0 && active == 0) {// return to main menu
                         return false;

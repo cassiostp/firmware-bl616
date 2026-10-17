@@ -1,0 +1,82 @@
+# With a 120 Hz build running, Video offers BFI: Off/Black/Dim/Rolling on
+# video_config bits 21:20, live and persisted in tangcore.cfg (default Black).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Display: 120 Hz (480p)"
+press down
+press down
+press down
+press down
+press down
+press down
+press a
+expect-screen "Saved"
+press down
+press a
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core-file "_120hz"
+expect-video-config 0x112000
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-screen "BFI: Black"
+press down
+press down
+press down
+press down
+press a
+expect-screen "BFI: Dim"
+expect-video-config 0x212000
+press a
+expect-screen "BFI: Rolling"
+expect-video-config 0x312000
+press a
+expect-screen "BFI: Off"
+expect-video-config 0x012000
+press a
+expect-screen "BFI: Black"
+expect-video-config 0x112000
+press a
+expect-screen "BFI: Dim"
+press down
+press a
+expect-screen "Resume"
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core-file "_120hz"
+expect-video-config 0x212000
