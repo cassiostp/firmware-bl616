@@ -26,6 +26,7 @@ static uint8_t ring[RING_SIZE];
 static volatile uint32_t ring_head;     // next slot the interrupt fills
 static volatile uint32_t ring_tail;     // next slot the task reads
 static volatile uint32_t ring_lost;     // bytes dropped because the ring was full
+static volatile uint32_t ring_errs;     // interrupts that saw an RX error bit
 
 void uart_rx_ring_reset(void) {
     ring_head = 0;
@@ -56,6 +57,19 @@ uint32_t uart_rx_ring_dropped(void) {
     return ring_lost;
 }
 
+uint32_t uart_rx_err_count(void) {
+    return ring_errs;
+}
+
+uint32_t uart_rx_intsts(void) {
+    return bflb_uart_get_intstatus(uart1_dev);
+}
+
+uint32_t uart_rx_ring_level(void) {
+    return __atomic_load_n(&ring_head, __ATOMIC_ACQUIRE) -
+           __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE);
+}
+
 bool uart_rx_get(uint8_t *ch) {
     return uart_rx_ring_get(ch);
 }
@@ -76,8 +90,20 @@ bool uart_rx_fifo_overflowed(void) {
 extern "C" void uart_rx_isr(int irq, void *arg) {
     (void)irq;
     (void)arg;
-    if (bflb_uart_get_intstatus(uart1_dev) & UART_INTSTS_RTO)
+    uint32_t st = bflb_uart_get_intstatus(uart1_dev);
+    if (st & UART_INTSTS_RTO)
         bflb_uart_int_clear(uart1_dev, UART_INTCLR_RTO);
+    // RX error bits (parity, framing, line-sync): their interrupts stay
+    // masked (bflb_uart_init masks everything, uart_rx_init unmasks only
+    // FIFO+RTO), so a latched error can neither storm nor block receive
+    // interrupts. Count and clear them so link diagnostics can tell a
+    // framing-error burst from a silent FPGA.
+    uint32_t err = st & (UART_INTSTS_PCE | UART_INTSTS_RX_FER |
+                         UART_INTSTS_RX_LSE);
+    if (err) {
+        ring_errs++;
+        bflb_uart_int_clear(uart1_dev, err);
+    }
     while (bflb_uart_rxavailable(uart1_dev))
         uart_rx_ring_put((uint8_t)bflb_uart_getchar(uart1_dev));
 }

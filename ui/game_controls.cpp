@@ -19,6 +19,7 @@ extern "C" {
 #include "dbg_console.h"
 #include "usb_console.h"
 #include "saves.h"
+#include "uart_rx.h"
 
 // Before a deliberate restart: the watchdog mustn't fire in whatever runs
 // next (the ROM flashing loader in flash mode).
@@ -56,6 +57,8 @@ static int16_t last_id;             // the last core ID it answered
 static int misses;                  // polls in a row without an answer
 static uint64_t silent_since;       // start of the first unanswered poll (0 = answering)
 static uint64_t miss_log_at;        // last poll that logged a miss line (0 = none this streak)
+static bool link_flushed;           // this silence already got an RX flush
+static uint64_t link_flush_at;      // when it was sent
 static uint32_t gate_sig;           // combo bits (both pads) doing the gating
 static uint64_t gate_since;         // when that gating state last changed
 static uint16_t mode_max_silence_ms;  // longest silent gap seen (diagnostic line)
@@ -230,6 +233,7 @@ static void check_mode_button(bool in_game, bool game_loaded) {
                     (unsigned long)gap, misses);
         misses = 0;
         silent_since = 0;
+        link_flushed = false;
     }
 
     uint32_t timeout = in_game ? 200 : MODE_TIMEOUT_MENU;
@@ -246,6 +250,28 @@ static void check_mode_button(bool in_game, bool game_loaded) {
                 miss_log_at = poll_start;
                 dbg_log("mode: miss %d (gap %lums, last=%d)",
                         misses, (unsigned long)gap, last_id);
+            }
+            // A game core silent for 1 s is not a reload (MODE answers as
+            // core 0 within ~300 ms): its receiver may be counting down a
+            // garbage frame length, swallowing these polls as parameters
+            // (older bitstreams have no RX timeout). Complete that frame
+            // harmlessly and say what this side's UART saw, so the log
+            // distinguishes a desync (answers as itself right after the
+            // flush) from an FPGA-side transmitter wedge (stays silent,
+            // and a framing-error burst here would say the wire is bad).
+            if (!link_flushed && game_loaded &&
+                silent_since && poll_start - silent_since >= 1000) {
+                link_flushed = true;
+                link_flush_at = bflb_mtimer_get_time_ms();
+                dbg_log("link: fpga silent %lums with a game loaded, flushing rx "
+                        "(ringdrop %lu fifovf %d uarerr %lu intsts %08lx ring %lu)",
+                        (unsigned long)(poll_start - silent_since),
+                        (unsigned long)uart_rx_ring_dropped(),
+                        uart_rx_fifo_overflowed() ? 1 : 0,
+                        (unsigned long)uart_rx_err_count(),
+                        (unsigned long)uart_rx_intsts(),
+                        (unsigned long)uart_rx_ring_level());
+                fpga_link_flush();
             }
         }
         return;
@@ -272,6 +298,22 @@ static void check_mode_button(bool in_game, bool game_loaded) {
     if (silent_ms >= 600)
         dbg_log("link: fpga silent %lums, back as core %d%s",
                 (unsigned long)silent_ms, id, reloaded ? " (MODE)" : "");
+    if (link_flushed) {
+        bool same = !reloaded && id == last_id;
+        dbg_log("link: fpga back %lums after flush as core %d "
+                "(ringdrop %lu fifovf %d uarerr %lu intsts %08lx): %s",
+                (unsigned long)(now - link_flush_at), id,
+                (unsigned long)uart_rx_ring_dropped(),
+                uart_rx_fifo_overflowed() ? 1 : 0,
+                (unsigned long)uart_rx_err_count(),
+                (unsigned long)uart_rx_intsts(),
+                same ? "answered as itself, rx desync confirmed"
+                     : "not the running core, flush not the cure");
+        link_flushed = false;
+        if (same)
+            overlay(overlay_on());   // resend overlay state + core_config:
+                                      // a garbage frame may have clobbered both
+    }
     if (reloaded) {
         dprint("FPGA back as core %d after %lums silent: MODE pressed, restarting",
                id, (unsigned long)silent_ms);

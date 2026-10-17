@@ -53,6 +53,30 @@ void send_blank_packet(void) {
     taskEXIT_CRITICAL();
 }
 
+// Complete any partial frame the FPGA's receiver may be stuck in, so a
+// desynced byte stream (a dropped or flipped byte on the wire, raw bytes
+// spliced between frames) cannot leave it counting down a garbage
+// length of up to 2047 while polls are swallowed as parameters. 2048
+// zero bytes complete the longest frame iosys accepts, from any state:
+// in RECV_IDLE a zero is ignored (the frame byte is 0xAA), as a length
+// byte it makes a short frame, as a command it is unknown (parameters
+// just consumed), and as a parameter of the frame already in progress
+// the worst any command does with a zero is bounded and recoverable
+// (0x06 loading=0, the running state; 0x08 overlay off, redrawn by the
+// caller's resend; 0x09 no HID buttons; 0x12 one save-block fetch). The
+// one destructive case is a stuck 0x11, which would write zeros over at
+// most one save block in the FPGA's RAM -- but that frame was already
+// garbage writing garbage, and the last good dump is on the card. New
+// cores abandon a partial frame after 1 ms of silence on their own;
+// this is for older bitstreams, and for telling the two apart in the log.
+void fpga_link_flush(void) {
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 2048; i++)
+        fpga_tx_byte(0);
+    taskEXIT_CRITICAL();
+    heartbeat_bump();
+}
+
 #include <string>
 #include <algorithm>
 
