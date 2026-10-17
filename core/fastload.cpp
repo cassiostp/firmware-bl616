@@ -47,6 +47,7 @@ bool fast_set_baud(uint32_t baud) {
     bflb_uart_feature_control(uart1_dev, UART_CMD_CLR_RX_FIFO, 0);
 #endif
     uart_rx_ring_reset();       // bytes sampled at the old rate are garbage
+    uart_rx_request_parser_reset();     // and so is a frame begun at it
     s_baud = baud;
     taskEXIT_CRITICAL();
     return true;
