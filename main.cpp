@@ -505,13 +505,14 @@ static void watchdog_task(void *pvParameters)
         bflb_wdg_reset_countervalue(wdg_dev);
         if (now - last_snap >= 30000) {
             last_snap = now;
-            dbg_log("watchdog: beat %lu heap %ld stk main %u rx %u saves %u usb %u ringdrop %lu fifovf %d",
+            dbg_log("watchdog: beat %lu heap %ld stk main %u rx %u saves %u usb %u ringdrop %lu fifovf %d uarerr %lu",
                     (unsigned long)last_beat, (long)dbg_log_heap_free(),
                     stack_free_words(main_task_handle),
                     stack_free_words(uart1_rx_task_handle),
                     saves_stack_free(), usb_host_stack_free(),
                     (unsigned long)uart_rx_ring_dropped(),
-                    uart_rx_fifo_overflowed() ? 1 : 0);
+                    uart_rx_fifo_overflowed() ? 1 : 0,
+                    (unsigned long)uart_rx_err_count());
         }
         vTaskDelay(pdMS_TO_TICKS(500));
     }

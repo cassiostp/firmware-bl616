@@ -30,6 +30,9 @@ struct bflb_uart_config_s {
 
 #define UART_INTSTS_RX_FIFO (1 << 3)
 #define UART_INTSTS_RTO (1 << 4)
+#define UART_INTSTS_PCE (1 << 5)
+#define UART_INTSTS_RX_FER (1 << 7)
+#define UART_INTSTS_RX_LSE (1 << 8)
 #define UART_INTCLR_RTO (1 << 4)
 
 void bflb_uart_init(struct bflb_device_s *dev, const struct bflb_uart_config_s *cfg);

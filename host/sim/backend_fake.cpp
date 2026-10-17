@@ -27,6 +27,17 @@ class FakeBackend : public FpgaBackend {
 
     void tx_push(uint8_t b) override {
         std::lock_guard<std::recursive_mutex> lk(m_);
+        if (rx_stuck_) {
+            // Counting down a garbage frame length: the byte is a
+            // parameter now. 2048 of them complete any frame iosys
+            // accepts, and parsing resumes.
+            if (++rx_stuck_bytes_ >= 2048) {
+                rx_stuck_ = false;
+                if (verbose_.load())
+                    fprintf(stderr, "[fpga] rx unstuck after 2048 bytes\n");
+            }
+            return;
+        }
         step_frame(b);
     }
 
@@ -166,6 +177,8 @@ class FakeBackend : public FpgaBackend {
             return; // hardware only reports changes
         pad1_ = p1;
         pad2_ = p2;
+        if (rx_stuck_)
+            return; // the stalled core says nothing at all (QA4 shape)
         uint8_t payload[4] = {(uint8_t)(p1 >> 8), (uint8_t)(p1 & 0xff),
                               (uint8_t)(p2 >> 8), (uint8_t)(p2 & 0xff)};
         rx_push_frame(0x03, payload, sizeof(payload));
@@ -173,6 +186,11 @@ class FakeBackend : public FpgaBackend {
 
     void set_churn(bool) override {} // no game model on the fake
     void set_save_channel(bool on) override { save_channel_ = on; }
+    void set_rx_stuck(bool on) override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        rx_stuck_ = on;
+        rx_stuck_bytes_ = 0;
+    }
 
     uint64_t save_requests() override {
         return save_reqs_.load(std::memory_order_relaxed);
@@ -255,6 +273,8 @@ class FakeBackend : public FpgaBackend {
     uint16_t pad1_ = 0, pad2_ = 0;
     std::vector<uint8_t> save_ram_;
     bool save_channel_ = true;
+    bool rx_stuck_ = false;
+    uint32_t rx_stuck_bytes_ = 0;
     std::atomic<uint64_t> save_reqs_{0};
     std::atomic<bool> verbose_{false};
     std::vector<std::string> log_;
@@ -577,6 +597,9 @@ void trigger_mode(int silence_ms) {
 }
 void drop_ids(int n) {
     g_active->drop_ids(n);
+}
+void set_rx_stuck(bool on) {
+    g_active->set_rx_stuck(on);
 }
 void set_churn(bool on) {
     g_active->set_churn(on);

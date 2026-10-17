@@ -795,6 +795,12 @@ int run_script() {
                 script_fail(lineno, "usage: drop-id <count>");
             printf("[%d] drop-id %ld (drop next core-ID replies)\n", lineno, n);
             fpga::drop_ids((int)n);
+        } else if (cmd == "rx-stuck") {
+            if (t.size() != 2 || (t[1] != "on" && t[1] != "off"))
+                script_fail(lineno, "usage: rx-stuck on|off");
+            printf("[%d] rx-stuck %s (core RX swallows bytes, silent)\n",
+                   lineno, t[1].c_str());
+            fpga::set_rx_stuck(t[1] == "on");
         } else if (cmd == "power-cycle") {
             printf("[%d] power-cycle: rebooting\n", lineno);
             fflush(stdout);

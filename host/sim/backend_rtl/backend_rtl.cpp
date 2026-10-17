@@ -301,6 +301,7 @@ class RtlBackend : public FpgaBackend {
         if (n > 0)
             drop_core_ids.fetch_add(n, std::memory_order_relaxed);
     }
+    void set_rx_stuck(bool) override {} // fake-only fault; the real RX has a timeout
     bool overlay_visible() override {
         return overlay_cached.load(std::memory_order_relaxed);
     }

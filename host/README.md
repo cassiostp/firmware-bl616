@@ -112,6 +112,9 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   firmware's first poll of a freshly programmed core.
 - `drop-id <count>` — drop the next <count> core-ID replies (a colliding
   joypad frame on hardware): one dropped reply must not restart.
+- `rx-stuck on|off` — the fake core's receiver is stuck mid-frame: it
+  swallows MCU bytes and stays silent until 2048 bytes complete the
+  garbage frame (an old bitstream with no RX timeout, QA4's NES stall).
 - `power-cycle` — reboot the sim with the same SD; the script resumes after
   this line.
 - `host-rm <relpath>` — delete a file from the virtual SD mid-run.
@@ -163,6 +166,8 @@ bitstreams), and runs `host/tests/*.script`:
   restarts.
 - `u-mode-drop-once` — one dropped core-ID reply in the menu does not
   restart.
+- `u-link-resync` — a core stuck mid-frame in game (silent, `rx-stuck`)
+  comes back via the 1 s RX flush, without a restart, menu working.
 - `v-mode-fresh-silent` — a freshly programmed (still silent) core does not
   restart.
 - `p-save-fail` — a save whose block requests go unanswered is reported in the

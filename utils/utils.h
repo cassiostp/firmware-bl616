@@ -149,6 +149,8 @@ extern uint32_t get_file_size(const char *fname);
 // Send a romdata packet to core of len bytes in `fbuf`
 extern void send_fbuf_data(uint16_t len);
 extern void send_blank_packet(void);
+// 2048 zero bytes: harmlessly complete any partial FPGA RX frame (utils.cpp)
+extern void fpga_link_flush(void);
 
 extern SemaphoreHandle_t state_mutex;              
 extern volatile uint16_t joy1_state;
