@@ -10,12 +10,16 @@ press down
 press a
 expect-overlay off
 expect-core snestang
-# Save sizing: the header's SRAM byte sizes 512 blocks, so poking the save
-# RAM flushes saves/snes/game.sav with 512 x 512 = 262144 bytes past the
-# 2 s debounce (a 512-block dump takes a while: two fetch passes; allow it);
-# a power cycle plus reload restores the poked byte.
+# BW-RAM is the SA-1's work RAM, so this game is menu-only: a dirty notice
+# alone never dumps (no async file after the debounce), and opening the game
+# menu dumps all 512 blocks (two fetch passes; allow it). A power cycle plus
+# reload restores the poked byte.
 poke-save 0x10 0x42
-expect-file saves/snes/game.sav size 262144 180s
+expect-no-file saves/snes/game.sav 5s
+hold select+start+l 500ms
+expect-screen "Resume" 120s
+expect-screen "Saved to card"
+expect-file saves/snes/game.sav size 262144 60s
 power-cycle
 expect-screen "TangCore"
 press down

@@ -22,6 +22,15 @@
 //     never be dumped under the old name.
 //   - a dump that fails (a block never arrives, the card refuses the file) is
 //     retried every 3 s, up to 5 times.
+//
+// MENU-ONLY GAMES (Super FX battery RAM, SA-1 BW-RAM: the save RAM is the
+// coprocessor's work RAM, rewritten every frame). The SNES loader sets them
+// with saves_set_menu_only(): a 0x0B only marks dirty, never wakes the save
+// task, so there are no async dumps and no mid-game pauses. saves_settle()
+// dumps them unconditionally (fetch + compare, write only if changed), so the
+// game menu and Close both capture the save, and the status line reflects the
+// just-finished dump. A save not followed by a menu open is lost at power-off
+// (MODE still discards without flushing).
 // MODE is the one way to lose a save: it reloads the FPGA, which drops the
 // MCU's UART and restarts the firmware with no chance to flush. A write made
 // less than the delay above (1 s + the dump, ~0.1-0.3 s) before MODE is lost.
@@ -149,6 +158,9 @@ static volatile uint16_t sv_rx_blk = 0xFFFF;
 // Set only by the FPGA's 0x0B notice. Gates every dump, so a core without the
 // save channel (or an old bitstream) is never asked for blocks it cannot send.
 static volatile bool sv_dirty = false;
+// Menu-only (Super FX battery, SA-1): 0x0B marks dirty but never dumps; the
+// settle paths do. Set by the SNES loader, reset by saves_set_game.
+static volatile bool sv_menu_only = false;
 // The ROM loaded by the core's loader: iNES has no way to tell us at set_game
 // time, so loadnes() calls saves_set_battery() once it has read the header.
 // False: the WRAM under $6000-$7FFF is volatile scratch — restore still wipes
@@ -211,6 +223,8 @@ void saves_rx_dirty(void) {
                 (unsigned)sv_chan_core);
     }
     sv_dirty = true;
+    if (sv_menu_only)
+        return;                           // settle dumps it (game menu, close)
     if (sv_live && sv_task)                 // menu up: the settle flushes it instead
         xTaskNotifyGive(sv_task);
 }
@@ -262,6 +276,10 @@ static bool sv_dump_and_write(void);
 static bool sv_flush_locked(void) {
     if (!sv_geom || !sv_path[0]) return true;
     if (!sv_battery) {                      // volatile scratch: never make a file
+        sv_dirty = false;
+        return true;
+    }
+    if (!sv_total()) {                      // no save RAM in this ROM: nothing to fetch
         sv_dirty = false;
         return true;
     }
@@ -372,6 +390,7 @@ void saves_set_game(const char *fname, uint16_t core_id) {
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
     sv_geom = NULL;
     sv_battery = true;                      // loaders without a battery flag (SMS) default to saving
+    sv_menu_only = false;                   // the loader re-arms it for coprocessor work RAM
     sv_path[0] = '\0';
     for (unsigned i = 0; i < N_GEOMS; i++) {
         if (save_geoms[i].core_id == core_id) { sv_geom = &save_geoms[i]; break; }
@@ -427,6 +446,11 @@ void saves_set_extra_blocks(uint16_t extra) {
     if (xSemaphoreTake(sv_mutex, portMAX_DELAY) != pdTRUE) return;
     if (sv_geom) sv_extra = extra;
     xSemaphoreGive(sv_mutex);
+}
+
+void saves_set_menu_only(bool menu_only) {
+    sv_menu_only = menu_only;
+    dprint("saves: menu-only %s", menu_only ? "on" : "off");
 }
 
 void saves_set_blank(uint8_t blank) {
@@ -503,7 +527,12 @@ void saves_settle(void) {
     // card is current. The status line then says "up to date".
     bool verify = sv_chan_seen && sv_geom && sv_path[0] && sv_battery &&
                   sv_blocks && sv_total() <= SV_VERIFY_MAX_BLOCKS;
-    if (sv_dirty || verify)
+    // Menu-only games (coprocessor work RAM) never dump async, so settle is
+    // their only dump: check the whole save even when clean. Gated on the
+    // channel like verify, so an old bitstream never costs a per-block timeout.
+    bool force = sv_menu_only && sv_chan_seen && sv_geom && sv_path[0] &&
+                 sv_battery && sv_blocks;
+    if ((sv_dirty || verify || force) && sv_total())
         sv_flush_locked();
     xSemaphoreGive(sv_mutex);
 }
@@ -549,7 +578,10 @@ static void saves_task(void *pvParameters) {
         for (unsigned attempt = 0;; attempt++) {
             bool ok = true;
             if (xSemaphoreTake(sv_mutex, portMAX_DELAY) == pdTRUE) {
-                if (sv_live && sv_dirty)    // a settle may have flushed it meanwhile
+                // Menu-only games never dump here (the notice only marked
+                // dirty); the settle paths flush them. Keep dirty so the
+                // menu finds it.
+                if (sv_live && sv_dirty && !sv_menu_only)
                     ok = sv_flush_locked();
                 xSemaphoreGive(sv_mutex);
             }

@@ -246,7 +246,12 @@ add_snes_variant() {
     # crafted bytes are the 64-byte header core/snes.cpp parses: ASCII title,
     # map_ctrl/chipset for the variant, a checksum pair summing to 0xFFFF
     # (as the firmware reads it) and reset vector 0x8000. No battery RAM
-    # (ram byte 0) except sa1, whose 256 KB BW-RAM byte (8) must also parse.
+    # (ram byte 0) except sa1 (256 KB BW-RAM byte 8), lorobatt (2 KB battery
+    # LoROM) and the gsu battery games, whose size is the expansion-RAM byte
+    # $FFBD with the later extended header ([FFDA]=0x33): gsu15b (chip 0x15,
+    # $FFBD 5 = 32 KB, like Yoshi's Island), gsu1ab (chip 0x1A, $FFBD 6 =
+    # 64 KB, like Stunt Race FX). gsu13/14 are the non-battery GSU headers
+    # (Star Fox shape: ram 0, no extended header, no save).
     # exhirom follows snes.cpp's typ-2 rule as it stands: a header at
     # 0x40FFC0 with (map_ctrl & 3) == 2. bsx carries a BS-X flash header at
     # 0x7FC0 (normal parse rejects it: no reset vector, byte 24 is a bank
@@ -256,20 +261,24 @@ add_snes_variant() {
     python3 - "$dir/snes/game.smc" "$variant" <<'EOF'
 import sys
 path, variant = sys.argv[1], sys.argv[2]
-# variant: (header_pos, map_ctrl, chipset, rom_size, ram_size, total_size)
+# variant: (header_pos, map_ctrl, chipset, rom_size, ram_size, total_size,
+#           company, exp_ram) -- company/exp_ram None = no extended header.
 V = {
-    'lorom':   (0x7FC0,   0x20, 0x00, 5,  0, 32768),
-    'hirom':   (0xFFC0,   0x21, 0x00, 6,  0, 65536),
-    'exhirom': (0x40FFC0, 0x22, 0x00, 12, 0, 0x410000),
-    'gsu13':   (0x7FC0,   0x20, 0x13, 5,  0, 32768),
-    'gsu14':   (0x7FC0,   0x20, 0x14, 5,  0, 32768),
-    'gsu15':   (0x7FC0,   0x20, 0x15, 5,  0, 32768),
-    'gsu1a':   (0x7FC0,   0x20, 0x1A, 5,  0, 32768),
-    'sa1':     (0x7FC0,   0x23, 0x35, 5,  8, 32768),
-    'sdd1':    (0xFFC0,   0x32, 0x43, 6,  0, 65536),
-    'spc7110': (0xFFC0,   0x3A, 0xF5, 6,  0, 65536),
-    'cx4':     (0x7FC0,   0x20, 0xF3, 5,  0, 32768),
-    'st018':   (0x7FC0,   0x30, 0xF5, 5,  0, 32768),
+    'lorom':    (0x7FC0,   0x20, 0x00, 5,  0, 32768, None, None),
+    'lorobatt': (0x7FC0,   0x20, 0x02, 5,  1, 32768, None, None),
+    'hirom':    (0xFFC0,   0x21, 0x00, 6,  0, 65536, None, None),
+    'exhirom':  (0x40FFC0, 0x22, 0x00, 12, 0, 0x410000, None, None),
+    'gsu13':    (0x7FC0,   0x20, 0x13, 5,  0, 32768, None, None),
+    'gsu14':    (0x7FC0,   0x20, 0x14, 5,  0, 32768, None, None),
+    'gsu15':    (0x7FC0,   0x20, 0x15, 5,  0, 32768, None, None),
+    'gsu1a':    (0x7FC0,   0x20, 0x1A, 5,  0, 32768, None, None),
+    'gsu15b':   (0x7FC0,   0x20, 0x15, 5,  0, 32768, 0x33, 5),
+    'gsu1ab':   (0x7FC0,   0x20, 0x1A, 5,  0, 32768, 0x33, 6),
+    'sa1':      (0x7FC0,   0x23, 0x35, 5,  8, 32768, None, None),
+    'sdd1':     (0xFFC0,   0x32, 0x43, 6,  0, 65536, None, None),
+    'spc7110':  (0xFFC0,   0x3A, 0xF5, 6,  0, 65536, None, None),
+    'cx4':      (0x7FC0,   0x20, 0xF3, 5,  0, 32768, None, None),
+    'st018':    (0x7FC0,   0x30, 0xF5, 5,  0, 32768, None, None),
 }
 if variant == 'notrom':
     open(path, 'wb').write(bytes(32768))
@@ -283,13 +292,17 @@ if variant == 'bsx':
     d[p + 26] = 0x33    # BS-X header byte 26
     open(path, 'wb').write(bytes(d))
     sys.exit(0)
-pos, mc, chip, rom, ram, total = V[variant]
+pos, mc, chip, rom, ram, total, company, expram = V[variant]
 d = bytearray(total)
 d[pos:pos + 21] = ('CHIP TEST ' + variant.upper()).encode().ljust(21, b' ')[:21]
 d[pos + 21] = mc        # map_ctrl
 d[pos + 22] = chip      # chipset (rom_type_header)
 d[pos + 23] = rom       # ROM size: 1024 << rom bytes
 d[pos + 24] = ram       # SRAM size byte
+if company is not None:
+    d[pos + 26] = company   # [FFDA]: later extended header present
+if expram is not None:
+    d[pos - 3] = expram    # [FFBD]: expansion RAM size (1 SHL n) KBytes
 d[pos + 28:pos + 30] = b'\x00\x00'    # checksum
 d[pos + 30:pos + 32] = b'\xff\xff'    # complement (pair sums to 0xFFFF)
 d[pos + 60:pos + 62] = b'\x00\x80'    # reset vector 0x8000
@@ -436,6 +449,10 @@ run_test t-snes-gsu13 snes:gsu13
 run_test t-snes-gsu14 snes:gsu14
 run_test t-snes-gsu15 snes:gsu15
 run_test t-snes-gsu1a snes:gsu1a
+run_test t-snes-gsubatt-save snes:gsu15b
+run_test t-snes-gsu1ab-save snes:gsu1ab
+run_test t-snes-gsunosave snes:gsu13
+run_test t-snes-lorobatt-save snes:lorobatt
 run_test t-snes-sa1 snes:sa1
 run_test t-snes-sdd1 snes:sdd1
 run_test t-snes-spc7110 snes:spc7110
