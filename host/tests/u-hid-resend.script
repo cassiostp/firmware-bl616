@@ -1,0 +1,22 @@
+# One dropped 0x09 HID frame must not stick buttons in the core (#34): the
+# firmware re-sends the HID state every ~100 ms even when nothing changed,
+# so the next resend heals the loss. With a game running and no input
+# changing, several identical frames must still reach the core.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+expect-hid-frames 3 2s
+# The resend traffic must not disturb the game: the menu combo still opens
+# the game menu, and Resume still turns the overlay off.
+hold select+start+l 400ms
+expect-screen "Resume"
+press a
+expect-overlay off

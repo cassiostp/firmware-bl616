@@ -106,6 +106,8 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   ignores it.
 - `wait-dump [timeout]` — returns once a save-block request (`0x12`) is
   seen, i.e. a dump is in progress, so a held combo races it.
+- `expect-hid-frames <n> [timeout]` — at least <n> `0x09` HID frames
+  reached the core (the resend test watches unchanged state get re-sent).
 - `expect-alive 5s` — the watchdog heartbeat keeps moving.
 - `mode [silence-ms]` — press the MODE button: the FPGA goes silent, then
   answers as core 0, and the firmware reboots. The script resumes after this
@@ -169,6 +171,8 @@ bitstreams), and runs `host/tests/*.script`:
   restarts.
 - `u-mode-drop-once` — one dropped core-ID reply in the menu does not
   restart.
+- `u-hid-resend` — unchanged HID state is re-sent about every 100 ms in
+  game, so one dropped `0x09` frame cannot stick buttons.
 - `u-link-resync` — a core stuck mid-frame in game (silent, `rx-stuck`)
   comes back via the 1 s RX flush, without a restart, menu working.
 - `v-mode-fresh-silent` — a freshly programmed (still silent) core does not

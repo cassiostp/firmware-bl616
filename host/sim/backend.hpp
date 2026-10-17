@@ -112,6 +112,8 @@ class FpgaBackend : public sim::Backend {
     virtual void set_save_channel(bool on) = 0;
     // Number of 0x12 save-block requests received (wait-dump watches it).
     virtual uint64_t save_requests() = 0;
+    // Number of 0x09 HID frames received (the HID-resend test watches it).
+    virtual uint64_t hid_frames() = 0;
 
     virtual bool overlay_visible() = 0;
     virtual uint64_t rom_bytes() = 0; // ROM payload bytes consumed
