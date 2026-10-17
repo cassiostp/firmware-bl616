@@ -24,16 +24,49 @@ namespace {
 
 class FakeBackend : public FpgaBackend {
   public:
-    void run_until(uint64_t) override {}
+    void run_until(uint64_t target) override {
+        if (!pad_churn_)
+            return;
+        // Joy frames every 40 ms: under the firmware's 50 ms gap, so a
+        // parser stuck inside a long frame never self-heals on silence.
+        uint64_t now = sim::now_ticks();
+        if (pad_next_ == 0)
+            pad_next_ = now;
+        while (pad_next_ <= target) {
+            uint16_t p1;
+            bool stuck;
+            {
+                std::lock_guard<std::recursive_mutex> lk(m_);
+                pad1_ ^= 0x080; // right: not part of the menu combo
+                p1 = pad1_;
+                stuck = rx_stuck_;
+            }
+            if (!stuck) {
+                uint8_t payload[4] = {(uint8_t)(p1 >> 8), (uint8_t)(p1 & 0xff), 0, 0};
+                rx_push_frame(0x03, payload, 4);
+            }
+            pad_next_ += 40ull * sim::TICKS_PER_MS;
+        }
+    }
 
     void tx_push(uint8_t b) override {
         std::lock_guard<std::recursive_mutex> lk(m_);
         if (rx_stuck_) {
             // Counting down a garbage frame length: the byte is a
-            // parameter now. 2048 of them complete any frame iosys
-            // accepts, and parsing resumes.
+            // parameter now. 2048 zeros (the old flush) complete any frame
+            // iosys accepts. A 0x17 link-resync does it in one command.
+            stuck_hist_ = (stuck_hist_ << 8) | b;
+            if (stuck_hist_ == 0xAA000117u) {
+                rx_stuck_ = false;
+                pst_ = 0;
+                rx_stuck_bytes_ = 0;
+                if (verbose_.load())
+                    fprintf(stderr, "[fpga] rx unstuck on 0x17\n");
+                return;
+            }
             if (++rx_stuck_bytes_ >= 2048) {
                 rx_stuck_ = false;
+                pst_ = 0;
                 if (verbose_.load())
                     fprintf(stderr, "[fpga] rx unstuck after 2048 bytes\n");
             }
@@ -191,6 +224,24 @@ class FakeBackend : public FpgaBackend {
         std::lock_guard<std::recursive_mutex> lk(m_);
         rx_stuck_ = on;
         rx_stuck_bytes_ = 0;
+        stuck_hist_ = 0;
+    }
+
+    void inject_rx(const uint8_t *b, size_t n) override {
+        if (!b || !n)
+            return;
+        {
+            std::lock_guard<std::mutex> lk(rx_m_);
+            for (size_t i = 0; i < n; i++)
+                rx_.push_back(b[i]);
+        }
+        fpga::rx_notify();
+    }
+
+    void set_pad_churn(bool on) override {
+        pad_churn_ = on;
+        if (on)
+            pad_next_ = 0; // first frame on the next step
     }
 
     uint64_t save_requests() override {
@@ -304,6 +355,9 @@ class FakeBackend : public FpgaBackend {
     bool save_channel_ = true;
     bool rx_stuck_ = false;
     uint32_t rx_stuck_bytes_ = 0;
+    uint32_t stuck_hist_ = 0; // last four MCU bytes, for the 0x17 unstick
+    bool pad_churn_ = false;
+    uint64_t pad_next_ = 0;
     std::atomic<uint64_t> save_reqs_{0};
     std::atomic<bool> verbose_{false};
     std::vector<std::string> log_;
@@ -650,6 +704,24 @@ void drop_ids(int n) {
 }
 void set_rx_stuck(bool on) {
     g_active->set_rx_stuck(on);
+}
+void inject_rx(const uint8_t *b, size_t n) {
+    g_active->inject_rx(b, n);
+}
+void set_pad_churn(bool on) {
+    g_active->set_pad_churn(on);
+}
+void wire_drop(int n) {
+    g_active->wire_drop(n);
+}
+void wire_flip() {
+    g_active->wire_flip();
+}
+void wire_burst(int n) {
+    g_active->wire_burst(n);
+}
+void wire_stall(int ms) {
+    g_active->wire_stall(ms);
 }
 void set_churn(bool on) {
     g_active->set_churn(on);

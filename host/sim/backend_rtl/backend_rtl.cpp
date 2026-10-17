@@ -342,6 +342,34 @@ class RtlBackend : public FpgaBackend {
             drop_core_ids.fetch_add(n, std::memory_order_relaxed);
     }
     void set_rx_stuck(bool) override {} // fake-only fault; the real RX has a timeout
+    void inject_rx(const uint8_t *b, size_t n) override {
+        if (!b || !n)
+            return;
+        {
+            std::lock_guard<std::mutex> lk(rx_m);
+            for (size_t i = 0; i < n; i++)
+                rx_queue.push_back(b[i]);
+        }
+        fpga::rx_notify();
+    }
+    void set_pad_churn(bool on) override {
+        pad_churn.store(on, std::memory_order_relaxed);
+    }
+    void wire_drop(int n) override {
+        if (n > 0)
+            req_drop.store(n, std::memory_order_relaxed);
+    }
+    void wire_flip() override {
+        req_flip.store(1, std::memory_order_relaxed);
+    }
+    void wire_burst(int n) override {
+        if (n > 0)
+            req_burst.store(n, std::memory_order_relaxed);
+    }
+    void wire_stall(int ms) override {
+        if (ms > 0)
+            req_stall_ms.store(ms, std::memory_order_relaxed);
+    }
     bool overlay_visible() override {
         return overlay_cached.load(std::memory_order_relaxed);
     }
@@ -394,6 +422,11 @@ class RtlBackend : public FpgaBackend {
     // Cross-thread inputs / cached outputs.
     std::atomic<uint16_t> joy1{0}, joy2{0};
     std::atomic<bool> churn{false};
+    std::atomic<bool> pad_churn{false};
+    uint64_t pad_flip_at = 0; // stepper only
+    std::atomic<int> req_drop{0}, req_flip{0}, req_burst{0}, req_stall_ms{0};
+    int drop_left = 0, burst_left = 0, raw_left = 0;
+    uint64_t stall_until = 0;
     std::atomic<uint16_t> core_id{1};
     std::atomic<uint32_t> last_config_cached{0};
     std::atomic<uint32_t> last_video_cached{0};
@@ -449,7 +482,17 @@ class RtlBackend : public FpgaBackend {
     void step_batch(uint64_t batch_end) {
         uint64_t now = pos.load(std::memory_order_relaxed);
 
-        // Latch cross-thread inputs.
+        // Latch cross-thread inputs. Pad churn flips a button every 30 ms
+        // so iosys (joy interval ~46 ms at this clock) emits a frame on
+        // every interval. Dead air must not be jumped: a jump would deliver
+        // no bytes and the firmware's gap resync would hide a stuck parser.
+        if (pad_churn.load(std::memory_order_relaxed)) {
+            if (now >= pad_flip_at) {
+                joy1.store(joy1.load(std::memory_order_relaxed) ^ 0x080,
+                           std::memory_order_relaxed);
+                pad_flip_at = now + 30ull * sim::TICKS_PER_MS;
+            }
+        }
         pins.joy1 = joy1.load(std::memory_order_relaxed);
         pins.joy2 = joy2.load(std::memory_order_relaxed);
         pins.churn = churn.load(std::memory_order_relaxed);
@@ -491,6 +534,7 @@ class RtlBackend : public FpgaBackend {
         }
         if (sched.empty() && tx_high_streak >= QUIET_HIGH_TICKS && !poke_pending() &&
             dec_idle && fpos == 0 && !pins.tx_pending &&
+            !pad_churn.load(std::memory_order_relaxed) &&
             now >= reset_until.load(std::memory_order_relaxed)) {
             pos.store(batch_end, std::memory_order_relaxed); // dead air: jump
             tx_high_streak = 0; // re-qualify after landing (line unsampled mid-jump)
@@ -598,9 +642,68 @@ class RtlBackend : public FpgaBackend {
             dec_bit++;
         }
         if (dec_bit == 8 && tick >= dec_start + (uint64_t)llround(9.5 * ticks_per_bit.load(std::memory_order_relaxed))) {
-            frame_byte(dec_byte);
+            deliver_byte(dec_byte, tick);
             dec_idle = true;
         }
+    }
+
+    // Faults are consumed on the stepper thread. A drop, flip, or burst is
+    // followed by raw bytes so the firmware's parser sees the shifted
+    // stream; the bridge's own framer is reset and does not also hand it a
+    // reassembled frame.
+    void deliver_byte(uint8_t b, uint64_t tick) {
+        int stall_ms = req_stall_ms.exchange(0, std::memory_order_relaxed);
+        if (stall_ms > 0) {
+            stall_until = tick + (uint64_t)stall_ms * sim::TICKS_PER_MS;
+            fpos = 0;
+            frame_pending.clear();
+        }
+        if (tick < stall_until)
+            return;
+        int burst = req_burst.exchange(0, std::memory_order_relaxed);
+        if (burst > 0)
+            burst_left = burst;
+        if (burst_left > 0) {
+            burst_left--;
+            fpos = 0;
+            frame_pending.clear();
+            if (burst_left == 0)
+                raw_left = 80;
+            return;
+        }
+        int drop = req_drop.exchange(0, std::memory_order_relaxed);
+        if (drop > 0) {
+            drop_left = drop;
+        }
+        if (drop_left > 0) {
+            drop_left--;
+            fpos = 0;
+            frame_pending.clear();
+            if (drop_left == 0)
+                raw_left = 80;
+            return;
+        }
+        if (req_flip.exchange(0, std::memory_order_relaxed)) {
+            b ^= 0x01;
+            raw_left = 80;
+            fpos = 0;
+            frame_pending.clear();
+        }
+        if (raw_left > 0) {
+            push_raw(b);
+            raw_left--;
+            fpos = 0;
+            return;
+        }
+        frame_byte(b);
+    }
+
+    void push_raw(uint8_t b) {
+        {
+            std::lock_guard<std::mutex> lk(rx_m);
+            rx_queue.push_back(b);
+        }
+        fpga::rx_notify();
     }
 
     void frame_byte(uint8_t b) {

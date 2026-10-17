@@ -252,18 +252,18 @@ static void check_mode_button(bool in_game, bool game_loaded) {
                         misses, (unsigned long)gap, last_id);
             }
             // A game core silent for 1 s is not a reload (MODE answers as
-            // core 0 within ~300 ms): its receiver may be counting down a
-            // garbage frame length, swallowing these polls as parameters
-            // (older bitstreams have no RX timeout). Complete that frame
-            // harmlessly and say what this side's UART saw, so the log
-            // distinguishes a desync (answers as itself right after the
-            // flush) from an FPGA-side transmitter wedge (stays silent,
-            // and a framing-error burst here would say the wire is bad).
+            // core 0 within ~300 ms). The FPGA may be mid-frame, or our
+            // parser may be swallowing its traffic inside a bad length
+            // (joy frames arrive faster than the 50 ms gap, so silence
+            // alone never resyncs). Send 0x17 and reset the parser, and
+            // say what this side's UART saw, so the log distinguishes a
+            // desync (answers as itself right after) from a core that
+            // stays silent.
             if (!link_flushed && game_loaded &&
                 silent_since && poll_start - silent_since >= 1000) {
                 link_flushed = true;
                 link_flush_at = bflb_mtimer_get_time_ms();
-                dbg_log("link: fpga silent %lums with a game loaded, flushing rx "
+                dbg_log("link: fpga silent %lums with a game loaded, resync "
                         "(ringdrop %lu fifovf %d uarerr %lu intsts %08lx ring %lu)",
                         (unsigned long)(poll_start - silent_since),
                         (unsigned long)uart_rx_ring_dropped(),
@@ -300,7 +300,7 @@ static void check_mode_button(bool in_game, bool game_loaded) {
                 (unsigned long)silent_ms, id, reloaded ? " (MODE)" : "");
     if (link_flushed) {
         bool same = !reloaded && id == last_id;
-        dbg_log("link: fpga back %lums after flush as core %d "
+        dbg_log("link: fpga back %lums after resync as core %d "
                 "(ringdrop %lu fifovf %d uarerr %lu intsts %08lx): %s",
                 (unsigned long)(now - link_flush_at), id,
                 (unsigned long)uart_rx_ring_dropped(),
@@ -308,7 +308,7 @@ static void check_mode_button(bool in_game, bool game_loaded) {
                 (unsigned long)uart_rx_err_count(),
                 (unsigned long)uart_rx_intsts(),
                 same ? "answered as itself, rx desync confirmed"
-                     : "not the running core, flush not the cure");
+                     : "not the running core, resync not the cure");
         link_flushed = false;
         if (same)
             overlay(overlay_on());   // resend overlay state + core_config:

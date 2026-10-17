@@ -1,10 +1,11 @@
 # A core whose receiver is stuck mid-frame (QA4 NES stall shape: no
 # core-ID replies, no pad frames) must come back by itself: after 1 s of
-# silence with a game loaded the firmware flushes 2048 zero bytes, which
-# complete the garbage frame, and the link answers again -- no restart,
-# game still running, and the game menu works afterwards. Without the
-# flush the fake stays stuck (polls alone need ~128 s to feed it 2048
-# bytes) and the menu never opens.
+# silence with a game loaded the firmware sends 0x17 and resets its
+# parser. The fake unsticks on that command (a 2048-zero flood still
+# unsticks it too). The link answers again -- no restart, game still
+# running, and the game menu works afterwards. Without the resync the
+# fake stays stuck (polls alone need ~128 s to feed it 2048 bytes) and
+# the menu never opens.
 expect-screen "TangCore"
 press down
 press down

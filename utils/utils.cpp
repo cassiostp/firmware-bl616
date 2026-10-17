@@ -1,6 +1,7 @@
 #include "utils.h"
 #include "dbg_console.h"
 #include "dbg_log.h"
+#include "uart_rx.h"
 
 void fpga_tx_header(int cmd, int len) {
     dbg_sniff_note_tx((uint8_t)cmd);
@@ -58,27 +59,21 @@ void send_blank_packet(void) {
     taskEXIT_CRITICAL();
 }
 
-// Complete any partial frame the FPGA's receiver may be stuck in, so a
-// desynced byte stream (a dropped or flipped byte on the wire, raw bytes
-// spliced between frames) cannot leave it counting down a garbage
-// length of up to 2047 while polls are swallowed as parameters. 2048
-// zero bytes complete the longest frame iosys accepts, from any state:
-// in RECV_IDLE a zero is ignored (the frame byte is 0xAA), as a length
-// byte it makes a short frame, as a command it is unknown (parameters
-// just consumed), and as a parameter of the frame already in progress
-// the worst any command does with a zero is bounded and recoverable
-// (0x06 loading=0, the running state; 0x08 overlay off, redrawn by the
-// caller's resend; 0x09 no HID buttons; 0x12 one save-block fetch). The
-// one destructive case is a stuck 0x11, which would write zeros over at
-// most one save block in the FPGA's RAM -- but that frame was already
-// garbage writing garbage, and the last good dump is on the card. New
-// cores abandon a partial frame after 1 ms of silence on their own;
-// this is for older bitstreams, and for telling the two apart in the log.
+// Bring a desynced link back. A flood of zero bytes used to complete
+// whatever frame the FPGA was counting down, but a run of zeros is also a
+// legal 0x12 save-fetch (and the 2048-byte critical section overflows the
+// 32-byte UART FIFO if the core answers). Wait out the core's own RX gap
+// timeout instead, then send 0x17. New nestang drops its TX state on 0x17;
+// older iosys treats an unknown len=1 command as nothing. Then drop our
+// own parser state and the bytes already queued, so a frame we were
+// swallowing cannot stay open across the recovery.
 void fpga_link_flush(void) {
+    delay(2);
     taskENTER_CRITICAL();
-    for (int i = 0; i < 2048; i++)
-        fpga_tx_byte(0);
+    fpga_tx_header(0x17, 1);
     taskEXIT_CRITICAL();
+    delay(2);
+    uart_rx_request_parser_reset();
     heartbeat_bump();
 }
 

@@ -523,16 +523,144 @@ static void watchdog_task(void *pvParameters)
     }
 }
 
+// len counts the command byte plus the payload. 0 has no command byte.
+// 1024 is above a save/floppy frame (515) and below a minutes-long swallow.
+static const uint16_t RX_LEN_MAX = 1024;
+
+static void rx_gap_resync(uint8_t type, uint16_t pos, uint16_t len, uint64_t gap) {
+    if (type == 0x0A && pos >= 4)
+        saves_rx_bad_frame();
+    dbg_log("uart resync: gap %lums mid-frame (type=%02x pos=%u len=%u)",
+            (unsigned long)gap, type, (unsigned)pos, (unsigned)len);
+}
+
+// Side effects of one payload byte. `idx` is 0 for the first payload byte.
+// Declared length is the frame boundary for every type: a fixed-size type
+// used to ignore it and desync, and a short length on type 2/0x0C/0x0D
+// never reached its end condition.
+static void rx_payload_byte(uint8_t type, uint16_t len, uint16_t idx, uint8_t ch,
+                            uint8_t *buffer, uint16_t *sv_blk, bool *sv_bad) {
+    switch (type) {
+    case 1:
+    case 5:
+        if (idx < 2)
+            buffer[idx] = ch;
+        break;
+    case 3:
+        if (idx < 4)
+            buffer[idx] = ch;
+        break;
+    case 4:
+        if (idx < 2)
+            buffer[idx] = ch;
+        else if ((size_t)(idx - 2) < sizeof(fbuf))
+            fbuf[idx - 2] = ch;
+        break;
+    case 0x0A:
+        if (idx == 0 && len != 1 + 2 + 512 && !*sv_bad) {
+            saves_rx_bad_frame();
+            *sv_bad = true;
+        }
+        if (len != 1 + 2 + 512)
+            break;
+        if (idx == 0)
+            *sv_blk = (uint16_t)ch << 8;
+        else if (idx == 1)
+            *sv_blk |= ch;
+        else if (idx < 2 + 512)
+            saves_rx_byte(*sv_blk, idx - 2, ch);
+        break;
+    case 0x0C:
+        if (idx < 2)
+            buffer[idx] = ch;
+        break;
+    case 0x0D:
+        if (idx < 8)
+            buffer[idx] = ch;
+        break;
+    default:
+        break;
+    }
+}
+
+static void rx_frame_done(uint8_t type, uint16_t len, const uint8_t *buffer, uint16_t sv_blk) {
+    if (type == 1 && len == 2) {
+        if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+            core_id = buffer[0];
+            xSemaphoreGive(state_mutex);
+        }
+    } else if (type == 3 && len == 5) {
+        uint16_t joy1 = ((uint16_t)buffer[0] << 8) | buffer[1];
+        uint16_t joy2 = ((uint16_t)buffer[2] << 8) | buffer[3];
+        // Drop implausible words (a garbled frame, e.g. 0x0f0f): no hand
+        // holds more than 6 of these buttons at once.
+        if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+            if (combo_count(joy1) <= 6)
+                joy1_state = joy1;
+            if (combo_count(joy2) <= 6)
+                joy2_state = joy2;
+            xSemaphoreGive(state_mutex);
+        }
+    } else if (type == 4 && len == 515) {
+        uint16_t drive = buffer[0] >> 7;
+        uint16_t sector = (buffer[0] & 0x7f) << 8 | buffer[1];
+        if (floppy[drive]) {
+            UINT br;
+            f_lseek(&f_floppy[drive], sector * 512);
+            if (f_write(&f_floppy[drive], fbuf, 512, &br) != FR_OK)
+                overlay_status("Failed to write floppy");
+        }
+    } else if (type == 5 && len == 3) {
+        uint16_t drive = buffer[0] >> 7;
+        uint16_t sector = (buffer[0] & 0x7f) << 8 | buffer[1];
+        if (floppy[drive]) {
+            UINT br;
+            f_lseek(&f_floppy[drive], sector * 512);
+            if (f_read(&f_floppy[drive], fbuf, 512, &br) == FR_OK) {
+                taskENTER_CRITICAL();
+                fpga_tx_header(0x0a, br + 1);
+                for (UINT i = 0; i < br; i++)
+                    fpga_tx_byte(fbuf[i]);
+                taskEXIT_CRITICAL();
+            } else {
+                overlay_status("Failed to read floppy");
+            }
+        }
+    } else if (type == 0x0A && len == 1 + 2 + 512) {
+        saves_rx_block_done(sv_blk);
+    } else if (type == 0x0B && len == 2) {
+        saves_rx_dirty();
+    } else if (type == 0x0C && len >= 3) {
+        if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+            fast_baud_ack = buffer[0];
+            fast_baud_max = buffer[1];
+            xSemaphoreGive(state_mutex);
+        }
+    } else if (type == 0x0D && len >= 9) {
+        if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+            fast_load_crc = ((uint32_t)buffer[0] << 24) | ((uint32_t)buffer[1] << 16) |
+                            ((uint32_t)buffer[2] << 8) | buffer[3];
+            fast_load_cnt = ((uint32_t)buffer[4] << 24) | ((uint32_t)buffer[5] << 16) |
+                            ((uint32_t)buffer[6] << 8) | buffer[7];
+            fast_load_crc_ready = true;
+            xSemaphoreGive(state_mutex);
+        }
+    }
+}
+
 // Receive joypad updates and other UART responses from the FPGA
 static void uart1_rx_task(void *pvParameters)
 {
     uint8_t buffer[8];              // biggest fixed reply: 0x0D's CRC32+count
-    uint16_t pos = 0;
+    uint16_t pos = 0;               // 0=AA, 1=lenH, 2=lenL, 3=type, then payload
     uint8_t type = 0;
-    uint16_t len = 0;
-    uint16_t sv_blk = 0;                // block number of a save-RAM response
+    uint16_t len = 0;               // type byte + payload
+    uint16_t got = 0;               // payload bytes taken
+    uint16_t sv_blk = 0;
+    bool sv_bad = false;
     uint64_t last_byte = 0;
-    
+    uint32_t seen_epoch = uart_rx_epoch();
+
     while (1) {
         // drain everything waiting before sleeping: one byte per 1 ms tick
         // capped replies at ~1 KB/s and overflowed the UART FIFO on 515-byte
@@ -541,158 +669,90 @@ static void uart1_rx_task(void *pvParameters)
         // stream, and the hardware FIFO behind the interrupt holds only 32.
         uint8_t ch;
         while (uart_rx_get(&ch)) {
-            uint64_t now = bflb_mtimer_get_time_ms();
-            // a frame's bytes arrive back to back at 2 Mbaud. A long gap means
-            // the rest was lost (e.g. the FPGA was reconfigured): resync. The
-            // margin covers this task being starved while ROM data is sent.
-            if (pos != 0 && now - last_byte > 50) {
+            uint32_t ep = uart_rx_epoch();
+            if (ep != seen_epoch) {
                 if (type == 0x0A && pos >= 4)
-                    saves_rx_bad_frame();       // a save block cut short
-                dbg_log("uart resync: gap %lums mid-frame (type=%02x pos=%u len=%u)",
-                        (unsigned long)(now - last_byte), type,
-                        (unsigned)pos, (unsigned)len);
+                    saves_rx_bad_frame();
+                seen_epoch = ep;
                 pos = 0;
+                got = 0;
+                sv_bad = false;
+                uart_rx_ring_discard();
+                continue;
+            }
+            uint64_t now = bflb_mtimer_get_time_ms();
+            // A frame's bytes arrive back to back at 2 Mbaud. A long gap
+            // means the rest was lost. The margin covers this task being
+            // starved while ROM data is sent. Joy frames on NES arrive
+            // about every 46 ms, so this does not fire on a live pad.
+            if (pos != 0 && now - last_byte > 50) {
+                rx_gap_resync(type, pos, len, now - last_byte);
+                pos = 0;
+                got = 0;
+                sv_bad = false;
             }
             last_byte = now;
-            
-            if (pos == 0) {          // expecting 0xAA
-                if (ch == 0xAA) 
-                    pos++;
-            } else if (pos == 1) {   // len msb
+
+            if (pos == 0) {
+                if (ch == 0xAA)
+                    pos = 1;
+            } else if (pos == 1) {
                 len = (uint16_t)ch << 8;
-                pos++;
-            } else if (pos == 2) {   // len lsb
-                len += ch;
-                pos++;
-            } else if (pos == 3) {   // command type
+                pos = 2;
+            } else if (pos == 2) {
+                len = (uint16_t)(len + ch);
+                if (len == 0 || len > RX_LEN_MAX) {
+                    dbg_log("uart resync: length %u", (unsigned)len);
+                    pos = 0;
+                    got = 0;
+                } else {
+                    pos = 3;
+                }
+            } else if (pos == 3) {
                 type = ch;
                 dbg_sniff_note_rx(type);
-                pos++;
-
-            ////// pos >= 4 //////
-            } else if (type == 1) {     // response to command 1 (get core ID)
-                if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-                    core_id = ch;
-                    xSemaphoreGive(state_mutex);
+                got = 0;
+                sv_bad = false;
+                if (len == 1) {
+                    rx_frame_done(type, len, buffer, sv_blk);
+                    pos = 0;
+                } else {
+                    pos = 4;
                 }
-                pos = 0;
-            } else if (type == 2) {                 // config string
-                // skip for now
-                if (pos == len+2)
-                    pos = 0;
-                else
-                    pos++;
-            } else if (type == 3) {                 // periodic joypad state
-                buffer[pos-4] = ch;
-                // Complete packet received
-                if (pos == 7) {
-                    // Combine bytes into 16-bit values
-                    uint16_t joy1 = (buffer[0] << 8) | buffer[1];
-                    uint16_t joy2 = (buffer[2] << 8) | buffer[3];
-
-                    // Drop implausible words (a garbled frame, e.g. 0x0f0f):
-                    // no hand holds more than 6 of these buttons at once,
-                    // and accepting one can stick combo bits held forever.
-                    // Update global state with mutex protection
-                    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-                        if (combo_count(joy1) <= 6)
-                            joy1_state = joy1;
-                        if (combo_count(joy2) <= 6)
-                            joy2_state = joy2;
-                        xSemaphoreGive(state_mutex);
-                    }
-                    pos = 0; // Reset for next packet
-                } else
-                    pos++;
-            } else if (type == 4) {              // floppy write
-                if (pos < 6)
-                    buffer[pos-4] = ch;
-                else
-                    fbuf[pos-6] = ch;
-                if (pos == 6+511) {
-                    uint16_t drive = buffer[0] >> 7;
-                    uint16_t sector = (buffer[0] & 0x7f) << 8 | buffer[1];
-                    if (floppy[drive]) {
-                        UINT br;
-                        f_lseek(&f_floppy[drive], sector * 512);
-                        if (f_write(&f_floppy[drive], fbuf, 512, &br) != FR_OK) {
-                            overlay_status("Failed to write floppy");
-                        }
-                    }
-                    pos = 0;   // reset for next packet
-                } else
-                    pos++;
-            } else if (type == 5) {              // floppy read
-                buffer[pos-4] = ch;
-                if (pos == 5) {
-                    uint16_t drive = buffer[0] >> 7;
-                    uint16_t sector = (buffer[0] & 0x7f) << 8 | buffer[1];
-                    if (floppy[drive]) {
-                        UINT br;
-                        f_lseek(&f_floppy[drive], sector * 512);
-                        if (f_read(&f_floppy[drive], fbuf, 512, &br) == FR_OK) {
-                            taskENTER_CRITICAL();   // don't interleave with main_task's frames
-                            fpga_tx_header(0x0a, br+1);
-                            for (UINT i = 0; i < br; i++) {
-                                fpga_tx_byte(fbuf[i]);
-                            }
-                            taskEXIT_CRITICAL();
-                        } else {
-                            overlay_status("Failed to read floppy");
-                        }
-                    }
-                    pos = 0;   // reset for next packet
-                } else
-                    pos++;
-
-            } else if (type == 0x0A) {           // save-RAM block: blk[15:0] + 512 bytes
-                uint16_t k = pos - 4;            // no SD I/O here: buffer and signal
-                if (k == 0 && len != 1 + 2 + 512)
-                    saves_rx_bad_frame();
-                if (k == 0)
-                    sv_blk = (uint16_t)ch << 8;
-                else if (k == 1)
-                    sv_blk |= ch;
-                else
-                    saves_rx_byte(sv_blk, k - 2, ch);
-                if (k == 2 + 511) {
-                    saves_rx_block_done(sv_blk);
-                    pos = 0;   // reset for next packet
-                } else
-                    pos++;
-            } else if (type == 0x0B) {           // the game wrote save RAM (1 pad byte)
-                saves_rx_dirty();
-                pos = 0;
-
-            } else if (type == 0x0C) {           // fast-load baud answer: accepted + max
-                buffer[pos-4] = ch;
-                if (pos == len+2) {
-                    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-                        fast_baud_ack = buffer[0];
-                        fast_baud_max = buffer[1];
-                        xSemaphoreGive(state_mutex);
-                    }
-                    pos = 0;
-                } else
-                    pos++;
-            } else if (type == 0x0D) {           // fast-load check values: CRC32 + count
-                buffer[pos-4] = ch;
-                if (pos == len+2) {
-                    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-                        fast_load_crc = ((uint32_t)buffer[0] << 24) | ((uint32_t)buffer[1] << 16) |
-                                        ((uint32_t)buffer[2] << 8) | buffer[3];
-                        fast_load_cnt = ((uint32_t)buffer[4] << 24) | ((uint32_t)buffer[5] << 16) |
-                                        ((uint32_t)buffer[6] << 8) | buffer[7];
-                        fast_load_crc_ready = true;
-                        xSemaphoreGive(state_mutex);
-                    }
-                    pos = 0;
-                } else
-                    pos++;
             } else {
-                dbg_log("uart resync: unknown type %02x (len=%u)", type,
-                        (unsigned)len);
-                pos = 0; // Reset if we get out of sync
+                rx_payload_byte(type, len, got, ch, buffer, &sv_blk, &sv_bad);
+                got++;
+                pos++;
+                if (got == (uint16_t)(len - 1)) {
+                    rx_frame_done(type, len, buffer, sv_blk);
+                    pos = 0;
+                    got = 0;
+                    sv_bad = false;
+                }
+            }
+        }
+
+        // The gap check above only runs when a byte arrives. A stream
+        // faster than 50 ms (NES joy frames) would otherwise stay inside
+        // a bad frame until its declared length was filled.
+        {
+            uint32_t ep = uart_rx_epoch();
+            if (ep != seen_epoch) {
+                if (type == 0x0A && pos >= 4)
+                    saves_rx_bad_frame();
+                seen_epoch = ep;
+                pos = 0;
+                got = 0;
+                sv_bad = false;
+                uart_rx_ring_discard();
+            } else if (pos != 0) {
+                uint64_t now = bflb_mtimer_get_time_ms();
+                if (now - last_byte > 50) {
+                    rx_gap_resync(type, pos, len, now - last_byte);
+                    pos = 0;
+                    got = 0;
+                    sv_bad = false;
+                }
             }
         }
 

@@ -25,3 +25,11 @@ void uart_rx_ring_put(uint8_t ch);
 bool uart_rx_ring_get(uint8_t *ch);
 uint32_t uart_rx_ring_dropped(void);
 void uart_rx_ring_reset(void);
+// Drop bytes still in the ring. The parser task calls this when it honours
+// a reset; it is the ring's only consumer.
+void uart_rx_ring_discard(void);
+
+// Ask the parser task to drop its frame state and the bytes already queued.
+// The counter is what the task observes; the task itself discards the ring.
+void uart_rx_request_parser_reset(void);
+uint32_t uart_rx_epoch(void);

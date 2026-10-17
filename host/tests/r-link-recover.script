@@ -1,0 +1,21 @@
+# Same stall as u-link-poison, against verilated nestang. iosys sends a
+# joy frame about every 46 ms (JOY_UPDATE_INTERVAL assumes 50 MHz; this
+# core's iosys clock is ~21.5 MHz), which is under the firmware's 50 ms
+# gap. pad-churn flips a button every 30 ms so that interval always sees
+# a change. The menu must open without a MODE restart.
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+wait 300ms
+inject-rx aa020302
+pad-churn on
+wait 1500ms
+hold select+start+l 400ms
+pad-churn off
+expect-screen "Close game"
+expect-core nestang
+expect-overlay on

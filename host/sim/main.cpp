@@ -170,6 +170,21 @@ bool parse_num(const std::string &s, long &v) {
     return end && *end == 0;
 }
 
+bool parse_hex_bytes(const std::string &s, std::vector<uint8_t> &out) {
+    if (s.empty() || (s.size() % 2) != 0)
+        return false;
+    out.clear();
+    for (size_t i = 0; i < s.size(); i += 2) {
+        char buf[3] = {s[i], s[i + 1], 0};
+        char *end = nullptr;
+        long v = strtol(buf, &end, 16);
+        if (end != buf + 2)
+            return false;
+        out.push_back((uint8_t)v);
+    }
+    return !out.empty();
+}
+
 bool parse_btns(const std::string &s, uint16_t &bits) {
     bits = 0;
     size_t i = 0;
@@ -795,6 +810,40 @@ int run_script() {
                 script_fail(lineno, "usage: drop-id <count>");
             printf("[%d] drop-id %ld (drop next core-ID replies)\n", lineno, n);
             fpga::drop_ids((int)n);
+        } else if (cmd == "inject-rx") {
+            std::vector<uint8_t> bytes;
+            if (t.size() != 2 || !parse_hex_bytes(t[1], bytes))
+                script_fail(lineno, "usage: inject-rx <hex>");
+            printf("[%d] inject-rx %s (%zu bytes)\n", lineno, t[1].c_str(), bytes.size());
+            fpga::inject_rx(bytes.data(), bytes.size());
+        } else if (cmd == "pad-churn") {
+            if (t.size() != 2 || (t[1] != "on" && t[1] != "off"))
+                script_fail(lineno, "usage: pad-churn on|off");
+            printf("[%d] pad-churn %s\n", lineno, t[1].c_str());
+            fpga::set_pad_churn(t[1] == "on");
+        } else if (cmd == "wire-drop") {
+            long n;
+            if (t.size() != 2 || !parse_num(t[1], n) || n <= 0)
+                script_fail(lineno, "usage: wire-drop <n>");
+            printf("[%d] wire-drop %ld\n", lineno, n);
+            fpga::wire_drop((int)n);
+        } else if (cmd == "wire-flip") {
+            if (t.size() != 1)
+                script_fail(lineno, "usage: wire-flip");
+            printf("[%d] wire-flip\n", lineno);
+            fpga::wire_flip();
+        } else if (cmd == "wire-burst") {
+            long n;
+            if (t.size() != 2 || !parse_num(t[1], n) || n <= 0)
+                script_fail(lineno, "usage: wire-burst <n>");
+            printf("[%d] wire-burst %ld\n", lineno, n);
+            fpga::wire_burst((int)n);
+        } else if (cmd == "wire-stall") {
+            long ms;
+            if (t.size() != 2 || !parse_num(t[1], ms) || ms <= 0)
+                script_fail(lineno, "usage: wire-stall <ms>");
+            printf("[%d] wire-stall %ldms\n", lineno, ms);
+            fpga::wire_stall((int)ms);
         } else if (cmd == "rx-stuck") {
             if (t.size() != 2 || (t[1] != "on" && t[1] != "off"))
                 script_fail(lineno, "usage: rx-stuck on|off");
