@@ -817,10 +817,13 @@ int run_script() {
             printf("[%d] inject-rx %s (%zu bytes)\n", lineno, t[1].c_str(), bytes.size());
             fpga::inject_rx(bytes.data(), bytes.size());
         } else if (cmd == "pad-churn") {
-            if (t.size() != 2 || (t[1] != "on" && t[1] != "off"))
-                script_fail(lineno, "usage: pad-churn on|off");
+            if (t.size() != 2 || (t[1] != "on" && t[1] != "off" && t[1] != "raw"))
+                script_fail(lineno, "usage: pad-churn on|off|raw");
             printf("[%d] pad-churn %s\n", lineno, t[1].c_str());
-            fpga::set_pad_churn(t[1] == "on");
+            if (t[1] == "raw")
+                fpga::set_pad_raw(true);
+            else
+                fpga::set_pad_churn(t[1] == "on");
         } else if (cmd == "wire-drop") {
             long n;
             if (t.size() != 2 || !parse_num(t[1], n) || n <= 0)

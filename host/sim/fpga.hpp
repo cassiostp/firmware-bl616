@@ -81,6 +81,7 @@ void set_rx_stuck(bool on);
 // firmware's 50 ms frame gap. Wire faults are RTL-only.
 void inject_rx(const uint8_t *b, size_t n);
 void set_pad_churn(bool on);
+void set_pad_raw(bool on);
 void wire_drop(int n);
 void wire_flip();
 void wire_burst(int n);

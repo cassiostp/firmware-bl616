@@ -243,6 +243,9 @@ class FakeBackend : public FpgaBackend {
         if (on)
             pad_next_ = 0; // first frame on the next step
     }
+    void set_pad_raw(bool on) override {
+        set_pad_churn(on); // the fake's churn is already a 40 ms raw frame
+    }
 
     uint64_t save_requests() override {
         return save_reqs_.load(std::memory_order_relaxed);
@@ -710,6 +713,9 @@ void inject_rx(const uint8_t *b, size_t n) {
 }
 void set_pad_churn(bool on) {
     g_active->set_pad_churn(on);
+}
+void set_pad_raw(bool on) {
+    g_active->set_pad_raw(on);
 }
 void wire_drop(int n) {
     g_active->wire_drop(n);

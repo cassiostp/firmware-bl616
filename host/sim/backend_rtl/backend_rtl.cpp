@@ -354,6 +354,15 @@ class RtlBackend : public FpgaBackend {
     }
     void set_pad_churn(bool on) override {
         pad_churn.store(on, std::memory_order_relaxed);
+        if (!on)
+            pad_raw.store(false, std::memory_order_relaxed);
+    }
+    void set_pad_raw(bool on) override {
+        pad_raw.store(on, std::memory_order_relaxed);
+        if (on) {
+            pad_churn.store(true, std::memory_order_relaxed);
+            raw_pad_at = 0; // first frame on the next step, same timestamp
+        }
     }
     void wire_drop(int n) override {
         if (n > 0)
@@ -423,7 +432,9 @@ class RtlBackend : public FpgaBackend {
     std::atomic<uint16_t> joy1{0}, joy2{0};
     std::atomic<bool> churn{false};
     std::atomic<bool> pad_churn{false};
+    std::atomic<bool> pad_raw{false};
     uint64_t pad_flip_at = 0; // stepper only
+    uint64_t raw_pad_at = 0;
     std::atomic<int> req_drop{0}, req_flip{0}, req_burst{0}, req_stall_ms{0};
     int drop_left = 0, burst_left = 0, raw_left = 0;
     uint64_t stall_until = 0;
@@ -492,6 +503,22 @@ class RtlBackend : public FpgaBackend {
                            std::memory_order_relaxed);
                 pad_flip_at = now + 30ull * sim::TICKS_PER_MS;
             }
+        }
+        // A raw frame every 40 ms, starting at this step. The core's own
+        // joy interval can leave a >50 ms hole after an injected header,
+        // and that hole is exactly what lets the old parser resync.
+        if (pad_raw.load(std::memory_order_relaxed) &&
+            (raw_pad_at == 0 || now >= raw_pad_at)) {
+            uint16_t p = joy1.load(std::memory_order_relaxed);
+            uint8_t fr[8] = {0xAA, 0x00, 0x05, 0x03,
+                             (uint8_t)(p >> 8), (uint8_t)p, 0, 0};
+            {
+                std::lock_guard<std::mutex> lk(rx_m);
+                for (uint8_t b : fr)
+                    rx_queue.push_back(b);
+            }
+            fpga::rx_notify();
+            raw_pad_at = now + 40ull * sim::TICKS_PER_MS;
         }
         pins.joy1 = joy1.load(std::memory_order_relaxed);
         pins.joy2 = joy2.load(std::memory_order_relaxed);
