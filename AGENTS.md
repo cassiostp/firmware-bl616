@@ -34,7 +34,7 @@ bash host/run-tests.sh                           # fake backend
 bash host/run-tests.sh --rtl-<core>              # Verilated core backend (nes|snes|md|sms|gba), default dir ../../<core>tang/sim/cosim
 ```
 
-CI: `gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>`; its `core_ref` input picks which core branches the RTL suites build (defaults to `feature/smoothing`). Suites: interactive fake-backend scripts (`a-menu` … `z-*`) plus per-core `r-*`/`n-*`/`m-*`/`s-*`/`g-rtl-*` RTL suites, all `*.script` under `host/tests/` with the `wait/press/expect-*/poke-*/churn/mode/power-cycle` verbs; three unit tests (`dbg_log`, `sim_time`, `uart_rx_model`) run in `run-tests.sh`.
+CI: `gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>`; its `core_ref` input picks which core branch the RTL suites build (by default each core's default branch; a core with no `sim/cosim` there is skipped). Suites: interactive fake-backend scripts (`a-menu` … `z-*`) plus per-core `r-*`/`n-*`/`m-*`/`s-*`/`g-rtl-*` RTL suites, all `*.script` under `host/tests/` with the `wait/press/expect-*/poke-*/churn/mode/power-cycle` verbs; three unit tests (`dbg_log`, `sim_time`, `uart_rx_model`) run in `run-tests.sh`.
 
 ## UART framed protocol
 
