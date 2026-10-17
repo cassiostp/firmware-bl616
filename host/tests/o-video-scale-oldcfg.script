@@ -1,0 +1,16 @@
+# An old tangcore.cfg (scanline_full=0, written by every save of the old
+# firmware, and a smoothing= line) boots at Scale Full, and nothing in
+# video_config bits 19:18.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-config-bit 21 1
+expect-video-bit 18 0
+expect-video-bit 19 0

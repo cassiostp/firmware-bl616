@@ -1,0 +1,51 @@
+# Game menu > Video > Scale: Full/Integer toggles core_config bit 21 at once,
+# whether scanlines are on or off, and the choice survives a power cycle.
+# The default is Full.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-config-bit 21 1
+hold select+start+l 400ms
+expect-screen "Resume"
+press down
+press down
+press a
+expect-screen "--- Video ---"
+expect-screen "Scale: Full"
+press down
+press down
+press down
+press a
+expect-screen "Scale: Integer"
+expect-config-bit 21 0
+press a
+expect-screen "Scale: Full"
+expect-config-bit 21 1
+press a
+expect-screen "Scale: Integer"
+expect-config-bit 21 0
+press down
+press a
+expect-screen "Resume"
+press a
+expect-overlay off
+expect-config-bit 21 0
+power-cycle
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-config-bit 21 0

@@ -39,7 +39,7 @@ CI: `gh workflow run host-sim.yml -R cassiostp/firmware-bl616 --ref <branch>`; i
 ## UART framed protocol
 
 Documented in `tangcore/doc/dev.md` (linked from `README.md`) with the wire details in code: header `AA lenHi lenLo cmd` (`utils/utils.cpp:fpga_tx_header`), 2 Mbaud 8N1 (`utils/init.cpp`), RX gap resync including when the reader is idle, length rejected outside 1..1024, and `0x17` link resync (`main.cpp`, `utils/utils.cpp:fpga_link_flush`). MCU->FPGA: `0x01` core-ID poll, `0x03` core_config, `0x13` video_config, `0x05` printf/OSD text, `0x06` loading, `0x07` ROM data, `0x08` overlay, `0x09` HID, `0x11/0x12` save write/fetch, `0x14` clock, `0x15/0x16` fast-UART, `0x17` link resync; FPGA->MCU: `0x01` core ID, `0x02` config string, `0x03` pad, `0x04/0x05` floppy, `0x0A` save block, `0x0B` dirty, `0x0C/0x0D` fast-UART answers.
-Core IDs (`core/cores.cpp`): 1 NES, 2 SNES, 3 GBA, 4 MegaDrive, 5 SMS, 6 PCXT; monitor core is 0. Shared config bits are in `utils/utils.h` (`[16]` scanlines, `[17]` menu pause, `[19:18]` dark, `[20]` thick, `[21]` full, `[22]` mute-pads; `video_config` bright/contrast/sat/gamma/mask/grid/smoothing).
+Core IDs (`core/cores.cpp`): 1 NES, 2 SNES, 3 GBA, 4 MegaDrive, 5 SMS, 6 PCXT; monitor core is 0. Shared config bits are in `utils/utils.h` (`[16]` scanlines, `[17]` menu pause, `[19:18]` dark, `[20]` thick, `[21]` scale full, `[22]` mute-pads; `video_config` bright/contrast/sat/gamma/mask/grid).
 
 ## Saves, USB console, flashing
 

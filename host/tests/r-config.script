@@ -1,6 +1,6 @@
 # core_config and video_config reach the real core: the game menu's Video > Scanlines
-# screen drives bits 16/19:18/20/21 of the actual iosys core_config register, Pause
-# sets bit 17 while the menu is up, and Resume clears it.
+# screen drives bits 16/19:18/20 of the actual iosys core_config register, Video >
+# Scale drives bit 21, Pause sets bit 17 while the menu is up, and Resume clears it.
 expect-screen "TangCore"
 press b
 expect-screen "game.nes"
@@ -31,16 +31,15 @@ press a
 expect-screen "Lines: Thick"
 expect-config-bit 20 1
 press down
-press a
-expect-screen "Scale: Full"
-expect-config-bit 21 1
-press down
 press down
 press a
 expect-screen "--- Video ---"
 press down
 press down
 press down
+press a
+expect-screen "Scale: Integer"
+expect-config-bit 21 0
 press down
 press a
 expect-screen "Resume"

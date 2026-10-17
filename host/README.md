@@ -150,7 +150,8 @@ bitstreams), and runs `host/tests/*.script`:
 - `g-mode-early` — MODE pressed right after a game loads, before the
   firmware has polled the new core, still restarts.
 - `h-scanlines` — game menu Video > Scanlines screen drives `core_config`
-  bits 16/19:18/20/21 live, with preview; choice survives a power cycle.
+  bits 16/19:18/20 live, with preview; choice survives a power cycle
+  (the Full default, bit 21, is asserted at load and after).
 - `i-video-color` — Video > Color drives the `video_config` word
   (brightness, gamma, reset), with a Preview round-trip.
 - `j-video-persist` — brightness and CRT mask choices saved to
@@ -158,8 +159,8 @@ bitstreams), and runs `host/tests/*.script`:
 - `k-video-grid` — no LCD grid row for `.sms`, one for `.gg` (Game Gear
   mode); Grid ON sets `video_config` bit 15.
 - `l-video-grid-gba` — LCD grid row for GBA; Grid ON sets bit 15.
-- `o-video-smoothing` — Video > Smoothing cycles Off, Sharp, Soft (bits
-  19:18) and survives a power cycle.
+- `o-video-scale` — Video > Scale toggles Full/Integer (bit 21) live and
+  survives a power cycle; the default is Full.
 - `p-mode-game-short` — short reload in game (core 0 after the game core
   with no silence) restarts.
 - `q-mode-menu-short` — short reload in the main menu (~300 ms silence)

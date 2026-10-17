@@ -1,5 +1,6 @@
 # core_config and video_config reach the real core: the game menu's Video > Scanlines
-# screen drives bits 16/19:18/20/21 of the actual iosys core_config register,
+# screen drives bits 16/19:18/20 of the actual iosys core_config register, Video >
+# Scale drives bit 21,
 # the Preview screen sets bit 22 (the MegaDrive's pad mute) while it runs the
 # game with the menu hidden -- the pads the bridge drives must still reach
 # the FIRMWARE (the option changes prove that) while cosim_top asserts they
@@ -37,10 +38,6 @@ press down
 press a
 expect-screen "Lines: Thick"
 expect-config-bit 20 1
-press down
-press a
-expect-screen "Scale: Full"
-expect-config-bit 21 1
 # Preview: menu hidden, game live, pads muted toward the game (bit 22) but
 # still polled by the firmware. RIGHT (darkness is already capped at 100%)
 # is pressed THROUGH the muted core for 300 ms of it.
@@ -60,6 +57,9 @@ expect-screen "--- Video ---"
 press down
 press down
 press down
+press a
+expect-screen "Scale: Integer"
+expect-config-bit 21 0
 press down
 press a
 expect-screen "Resume"
