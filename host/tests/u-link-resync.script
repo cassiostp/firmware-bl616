@@ -1,0 +1,28 @@
+# A core whose receiver is stuck mid-frame (QA4 NES stall shape: no
+# core-ID replies, no pad frames) must come back by itself: after 1 s of
+# silence with a game loaded the firmware flushes 2048 zero bytes, which
+# complete the garbage frame, and the link answers again -- no restart,
+# game still running, and the game menu works afterwards. Without the
+# flush the fake stays stuck (polls alone need ~128 s to feed it 2048
+# bytes) and the menu never opens.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+wait 2s
+rx-stuck on
+wait 6s
+# no restart happened and the game is still the running core
+expect-core smstang
+expect-overlay off
+# the link answers again: pad frames flow and the menu opens
+hold select+start+l 400ms
+expect-screen "Close game"
+expect-overlay on
