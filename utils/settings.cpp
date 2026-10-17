@@ -49,7 +49,7 @@ void settings_defaults(Settings &s) {
     s.scanlines = false;
     s.scanline_dark = 2;            // 75 %
     s.scanline_thick = false;
-    s.scanline_full = false;
+    s.scale_full = true;
     s.video_brightness = 0;
     s.video_contrast = 0;
     s.video_saturation = 0;
@@ -58,7 +58,6 @@ void settings_defaults(Settings &s) {
     s.crt_mask_strength = 1;
     s.lcd_grid = false;
     s.lcd_grid_strength = 1;
-    s.smoothing = 0;
     s.pause_in_menu = true;
     s.clock_unix = 0;
     s.clock_hbn = 0;
@@ -131,6 +130,10 @@ static std::string settings_path() {
     return std::string(drv) + SETTINGS_FILE;
 }
 
+// Set while parsing one file when a scale= line is seen, so an old
+// scanline_full= line only counts when no scale= line set the value.
+static bool scale_key_seen;
+
 static void apply_setting(Settings &s, const char *key, const char *val) {
     if (strcasecmp(key, "menu_combo") == 0) {
         uint16_t c = combo_from_string(val);
@@ -152,8 +155,17 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         if (v >= 25 && v <= 100) s.scanline_dark = (uint8_t)((v + 12) / 25 - 1);
     } else if (strcasecmp(key, "scanline_thick") == 0) {
         s.scanline_thick = strtol(val, NULL, 10) != 0;
+    } else if (strcasecmp(key, "scale") == 0) {
+        // full/integer, with 1/0 accepted too. Seen at file scope below.
+        if (strcasecmp(val, "full") == 0 || strcmp(val, "1") == 0)
+            s.scale_full = true;
+        else if (strcasecmp(val, "integer") == 0 || strcmp(val, "0") == 0)
+            s.scale_full = false;
+        scale_key_seen = true;
     } else if (strcasecmp(key, "scanline_full") == 0) {
-        s.scanline_full = strtol(val, NULL, 10) != 0;
+        // The old key: only counts when no scale= line set the value.
+        if (!scale_key_seen)
+            s.scale_full = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "video_brightness") == 0) {
         long v = strtol(val, NULL, 10);
         if (v >= -4 && v <= 3) s.video_brightness = (int8_t)v;
@@ -177,9 +189,6 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
     } else if (strcasecmp(key, "lcd_grid_strength") == 0) {
         long v = strtol(val, NULL, 10);
         if (v >= 0 && v <= 3) s.lcd_grid_strength = (uint8_t)v;
-    } else if (strcasecmp(key, "smoothing") == 0) {
-        long v = strtol(val, NULL, 10);
-        if (v >= 0 && v <= 2) s.smoothing = (uint8_t)v;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
         s.pause_in_menu = strtol(val, NULL, 10) != 0;
     } else if (strcasecmp(key, "clock_unix") == 0) {
@@ -195,6 +204,7 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
 void settings_load() {
     Settings s;
     settings_defaults(s);
+    scale_key_seen = false;
     std::string path = settings_path();
     UINT br = 0;
     if (f_open(&fcfg, path.c_str(), FA_READ) == FR_OK) {
@@ -248,15 +258,16 @@ bool settings_save() {
         "close_hold_ms=%lu\n"
         "# 1 shows two diagnostic lines at the top of menus (pads and battery saves).\n"
         "diag=%d\n"
-        "# Scanlines: 1 = on; darkness 25, 50, 75 or 100 (%%); thick 1 = thick lines;\n"
-        "# full 1 = full-size picture (0 = integer scale, evenly spaced lines).\n"
+        "# Scanlines: 1 = on; darkness 25, 50, 75 or 100 (%%); thick 1 = thick lines.\n"
         "scanlines=%d\n"
         "scanline_darkness=%d\n"
         "scanline_thick=%d\n"
-        "scanline_full=%d\n"
+        "# Scale: full keeps the full-size picture, integer gives every source\n"
+        "# line the same height with a border (also without scanlines).\n"
+        "scale=%s\n"
         "# Video filters: brightness/contrast/saturation -4..3, gamma 0..3\n"
         "# (off, darker, brighter, CRT), mask 0..3 (off, grille, slot, dot),\n"
-        "# strengths 0..3, grid 1 = on, smoothing 0..2 (off, sharp, soft).\n"
+        "# strengths 0..3, grid 1 = on.\n"
         "video_brightness=%d\n"
         "video_contrast=%d\n"
         "video_saturation=%d\n"
@@ -265,7 +276,6 @@ bool settings_save() {
         "crt_mask_strength=%d\n"
         "lcd_grid=%d\n"
         "lcd_grid_strength=%d\n"
-        "smoothing=%d\n"
         "# 0 keeps the game running while a menu is shown over it.\n"
         "pause_in_menu=%d\n"
         "# Wall clock anchor (Options -> Date & time): unix seconds and the\n"
@@ -276,10 +286,10 @@ bool settings_save() {
         menu.c_str(), reset.c_str(), settings.reset_enabled ? 1 : 0,
         (unsigned long)settings.close_hold_ms, settings.diag ? 1 : 0,
         settings.scanlines ? 1 : 0, scanline_dark_percent(settings.scanline_dark),
-        settings.scanline_thick ? 1 : 0, settings.scanline_full ? 1 : 0,
+        settings.scanline_thick ? 1 : 0, settings.scale_full ? "full" : "integer",
         settings.video_brightness, settings.video_contrast, settings.video_saturation,
         settings.video_gamma, settings.crt_mask, settings.crt_mask_strength,
-        settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength, settings.smoothing,
+        settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength,
         settings.pause_in_menu ? 1 : 0,
         (unsigned long)settings.clock_unix, (unsigned long)settings.clock_hbn,
         settings.solar_pct);
@@ -307,7 +317,7 @@ void apply_core_config() {
                     (settings.scanlines ? CORE_CFG_SCANLINES : 0) |
                     ((uint32_t)(settings.scanline_dark & 3) << CORE_CFG_SCANLINE_DARK_SHIFT) |
                     (settings.scanline_thick ? CORE_CFG_SCANLINE_THICK : 0) |
-                    (settings.scanline_full ? CORE_CFG_SCANLINE_FULL : 0) |
+                    (settings.scale_full ? CORE_CFG_SCANLINE_FULL : 0) |
                     (pause ? CORE_CFG_MENU_PAUSE : 0) |
                     (mute ? CORE_CFG_MUTE_PADS : 0));
     // The filters go out with every core_config: same value semantics (they
@@ -336,8 +346,8 @@ uint32_t build_video_config() {
            ((uint32_t)(settings.crt_mask & 3) << VIDEO_CFG_MASK_SHIFT) |
            ((uint32_t)(settings.crt_mask_strength & 3) << VIDEO_CFG_MASK_STRENGTH_SHIFT) |
            (settings.lcd_grid && lcd_grid_offered() ? VIDEO_CFG_LCD_GRID : 0) |
-           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT) |
-           ((uint32_t)(settings.smoothing & 3) << VIDEO_CFG_SMOOTH_SHIFT);
+           ((uint32_t)(settings.lcd_grid_strength & 3) << VIDEO_CFG_GRID_STRENGTH_SHIFT);
+    // Bits 19:18 are unused and stay 0.
 }
 
 void core_config_preview(Preview p) {

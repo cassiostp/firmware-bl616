@@ -428,7 +428,7 @@ run_test i-video-color sms:cgame.sms
 run_test j-video-persist sms:cgame.sms
 run_test k-video-grid sms:cgame.sms sms:game.gg
 run_test l-video-grid-gba gba
-run_test o-video-smoothing nes:game.nes
+run_test o-video-scale sms:cgame.sms
 run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms

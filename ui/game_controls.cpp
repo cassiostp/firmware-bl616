@@ -785,8 +785,6 @@ static bool scanline_preview(void) {
             settings.scanline_thick = !settings.scanline_thick;
         else if (p & BTN_SELECT)
             settings.scanlines = !settings.scanlines;
-        else if (p & BTN_START)
-            settings.scanline_full = !settings.scanline_full;
         else if (p & (BTN_A | BTN_B))
             break;
         else
@@ -828,36 +826,28 @@ struct ScanlineMenu: Menu {
         overlay_cursor(2, 11);
         overlay_printf("Lines: %s", settings.scanline_thick ? "Thick" : "Thin");
         overlay_cursor(2, 12);
-        overlay_printf("Scale: %s", settings.scanline_full ? "Full" : "Integer");
-        overlay_cursor(2, 13);
         overlay_printf("Preview");
-        overlay_cursor(2, 15);
+        overlay_cursor(2, 14);
         overlay_printf("<< Back");
-        overlay_cursor(2, 17);
+        overlay_cursor(2, 16);
         //                01234567890123456789012345678901
-        overlay_printf("Integer: even lines, smaller");
-        overlay_cursor(2, 18);
-        overlay_printf("picture. Full: full size.");
-        overlay_cursor(2, 20);
         overlay_printf("Preview hides this menu:");
-        overlay_cursor(2, 21);
+        overlay_cursor(2, 17);
         overlay_printf(" LEFT/RIGHT  darkness");
-        overlay_cursor(2, 22);
+        overlay_cursor(2, 18);
         overlay_printf(" UP/DOWN     thin/thick");
-        overlay_cursor(2, 23);
-        overlay_printf(" START       scale");
-        overlay_cursor(2, 24);
+        overlay_cursor(2, 19);
         overlay_printf(" SELECT      on/off");
-        overlay_cursor(2, 25);
+        overlay_cursor(2, 20);
         overlay_printf(" A or B      back here");
         if (!message.empty()) {
-            overlay_cursor(2, 27);
+            overlay_cursor(2, 22);
             overlay_printf("%s", message.c_str());
         }
     }
 
     std::vector<int> get_options() override {
-        return {9, 10, 11, 12, 13, 15};
+        return {9, 10, 11, 12, 14};
     }
 
     bool on_choose(int idx) override {
@@ -875,10 +865,6 @@ struct ScanlineMenu: Menu {
             settings.scanlines = true;
             break;
         case 3:
-            settings.scanline_full = !settings.scanline_full;
-            settings.scanlines = true;
-            break;
-        case 4:
             changed |= scanline_preview();
             do_redraw();
             return false;
@@ -1231,14 +1217,6 @@ struct LcdGridMenu: Menu {
     }
 };
 
-static const char *smoothing_name(uint8_t s) {
-    switch (s) {
-    case 1:  return "Sharp";
-    case 2:  return "Soft";
-    default: return "Off";
-    }
-}
-
 struct VideoMenu: Menu {
     std::vector<int> rows;
     bool changed = false;
@@ -1270,7 +1248,7 @@ struct VideoMenu: Menu {
             overlay_printf("LCD grid...");
         }
         overlay_cursor(2, 13);
-        overlay_printf("Smoothing: %s", smoothing_name(settings.smoothing));
+        overlay_printf("Scale: %s", settings.scale_full ? "Full" : "Integer");
         overlay_cursor(2, 15);
         overlay_printf("<< Back");
         if (!message.empty()) {
@@ -1298,8 +1276,8 @@ struct VideoMenu: Menu {
         } else if (row == 12) {
             push_menu(std::unique_ptr<Menu>(new LcdGridMenu()));
             return false;
-        } else if (row == 13) {         // Off, Sharp, Soft
-            settings.smoothing = (settings.smoothing + 1) % 3;
+        } else if (row == 13) {         // Full, Integer
+            settings.scale_full = !settings.scale_full;
             changed = true;
             apply_core_config();
             do_redraw();

@@ -1,6 +1,8 @@
 # Game menu > Video > Scanlines: each change reaches the core at once (bit 16 on,
-# bits 19:18 darkness, bit 20 thick, bit 21 full size); Preview hides the menu with the game
+# bits 19:18 darkness, bit 20 thick); Preview hides the menu with the game
 # paused (SMS) and steps darkness with LEFT/RIGHT; the choice survives a power cycle.
+# Scale lives in the Video menu now (o-video-scale); the default Full (bit 21)
+# is asserted here at load and after the power cycle.
 expect-screen "TangCore"
 press down
 press down
@@ -12,6 +14,7 @@ press down
 press a
 expect-overlay off
 expect-config-bit 16 0
+expect-config-bit 21 1
 hold select+start+l 400ms
 expect-screen "Resume"
 press down
@@ -33,13 +36,6 @@ press down
 press a
 expect-screen "Lines: Thick"
 expect-config-bit 20 1
-press down
-press a
-expect-screen "Scale: Full"
-expect-config-bit 21 1
-press a
-expect-screen "Scale: Integer"
-expect-config-bit 21 0
 press down
 press a
 expect-overlay off
@@ -75,3 +71,4 @@ expect-config-bit 16 1
 expect-config-bit 19 1
 expect-config-bit 18 0
 expect-config-bit 20 1
+expect-config-bit 21 1
