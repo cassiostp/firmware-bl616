@@ -1,0 +1,29 @@
+# GSU battery game (chip 0x1A, $FFBD 6 = 64 KB, Stunt Race FX shape) is
+# menu-only: a dirty notice alone never dumps, opening the game menu dumps
+# all 128 blocks, and reloading restores the poked byte.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+poke-save 0x10 0x42
+poke-save 0x7FFF 0x43
+expect-no-file saves/snes/game.sav 3s
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-screen "Saved to card"
+expect-file saves/snes/game.sav size 65536
+power-cycle
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-save-ram 0x7FFF 0x43
+expect-save-ram 0x00 0xFF

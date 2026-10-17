@@ -1,0 +1,23 @@
+# Ordinary battery LoROM (ram byte 1 = 2 KB) is unchanged: the dirty notice
+# dumps it past the debounce with no menu involved, and a power cycle plus
+# reload restores the byte.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+poke-save 0x10 0x42
+expect-file saves/snes/game.sav size 2048
+power-cycle
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-save-ram 0x00 0xFF

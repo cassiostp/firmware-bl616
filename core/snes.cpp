@@ -216,7 +216,38 @@ int loadsnes(const char *fname) {
     // its backup on the same byte (bk_ena <= |ram_mask). restore() sends the
     // .sav, a recovered .sav.tmp, or the blank image, so the previous game's
     // BSRAM cannot leak into this one.
-    saves_set_blocks(ram_size ? 2 << ram_size : 0);
+    //
+    // Super FX battery games (chipset 0x15: Yoshi's Island, 0x1A: Stunt Race
+    // FX; fullsnes chipset table, bsnes board DB) keep saves in the GSU's work
+    // RAM, so $FFD8 is 0 and the size is the expansion-RAM byte $FFBD instead
+    // (ares mia/medium/super-famicom.cpp expansionRamSize(); needs the later
+    // extended header, [FFDA]=0x33, else 32 KB like Star Fox's work RAM).
+    // Star Fox (0x13) and the other non-battery GSU games (0x14) get no save.
+    // The GSU rewrites that RAM every frame, so these games are menu-only
+    // (saves_set_menu_only): no dump on 0x0B, dumps on menu open and close.
+    // SA-1 BW-RAM (map 0x23) is likewise the SA-1's work RAM (fullsnes SA-1
+    // map: 2 KB I-RAM plus up-to-256 KB backup/work BW-RAM), so battery SA-1
+    // games are menu-only too.
+    {
+        bool gsu_battery = (rom_type_header == 0x15 || rom_type_header == 0x1a);
+        bool sa1_save = (map_ctrl == 0x23 && ram_size != 0);
+        if (gsu_battery) {
+            unsigned char exp = 0;
+            if (company == 0x33 && header_pos >= 3) {
+                unsigned int ebr = 0;
+                if (f_lseek(&fcore, header_pos - 3) == FR_OK)
+                    f_read(&fcore, &exp, 1, &ebr);
+                if (ebr != 1) exp = 0;
+                exp &= 7;
+            }
+            int save_bytes = exp ? (1024 << exp) : 32768;
+            saves_set_blocks((uint16_t)(save_bytes >> 9));
+            saves_set_menu_only(true);
+        } else {
+            saves_set_blocks(ram_size ? 2 << ram_size : 0);
+            saves_set_menu_only(sa1_save);
+        }
+    }
     saves_restore();
     core_running = true;
 

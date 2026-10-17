@@ -1,0 +1,19 @@
+# Star-Fox-shaped GSU header (chip 0x13, ram 0, no extended header) has no
+# battery RAM: nothing is ever saved, even across a dirty notice and a menu
+# open, and the game menu says so.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+poke-save 0x10 0x42
+expect-no-file saves/snes/game.sav 3s
+hold select+start+l 500ms
+expect-screen "Resume"
+expect-screen "No save RAM in this ROM"
+expect-no-file saves/snes/game.sav 2s
+press a
+expect-overlay off

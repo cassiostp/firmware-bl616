@@ -15,6 +15,12 @@ void saves_set_battery(bool battery);
 // The ROM loader: the game's own save RAM size, in 512-byte blocks (the SNES
 // header's SRAM size byte). 0 = no battery RAM. For per-game cores only.
 void saves_set_blocks(uint16_t blocks);
+// The SNES loader: this game's save RAM is also its coprocessor's work RAM
+// (Super FX battery games, SA-1 BW-RAM), so the 0x0B notice fires constantly
+// and async dumps would pause the game every few seconds. Menu-only: 0x0B
+// only marks dirty; dumps happen in saves_settle (game menu, close, load).
+// Reset by saves_set_game; call before saves_restore.
+void saves_set_menu_only(bool menu_only);
 // Extra 512-byte blocks stored after the save RAM in the same .sav file and
 // exchanged with the core as blocks [blocks, blocks+extra). The GBA loader
 // asks for 1 on RTC games: the core's MiSTer-compatible "RT" RTC sector.
