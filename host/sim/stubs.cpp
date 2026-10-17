@@ -27,6 +27,7 @@
 #include "fatfs_diskio_register.h"
 #include "programmer.h"
 #include "usb_gamepad.h"
+#include "fastload.h"
 #include "uart_rx.h"
 #include "usb_console.h"
 #include "dbg_console.h"
@@ -138,6 +139,20 @@ uint32_t bflb_uart_get_intstatus(struct bflb_device_s *dev) {
 void bflb_uart_int_clear(struct bflb_device_s *dev, uint32_t int_clear) {
     (void)dev;
     (void)int_clear;
+}
+int bflb_uart_feature_control(struct bflb_device_s *dev, int cmd, size_t arg) {
+    (void)dev;
+    if (cmd == UART_CMD_SET_BAUD_RATE)
+        fpga::set_baud((uint32_t)arg);
+    return 0; // CLR_RX_FIFO and the rest are no-ops: the sim has no FIFO
+}
+int bflb_uart_wait_tx_done(struct bflb_device_s *dev) {
+    (void)dev;
+    return 0; // putchar delivers synchronously in the sim
+}
+bool bflb_uart_txempty(struct bflb_device_s *dev) {
+    (void)dev;
+    return true;
 }
 
 // ---- timers/clocks: the virtual simulation clock ----
@@ -251,6 +266,12 @@ void init_gpio_and_uart() {
     extern struct bflb_device_s *uart1_dev;
     uart1_dev = bflb_device_get_by_name("uart1");
     uart_rx_init();
+}
+
+// core/fastload.cpp (TANGCORE_HOST): the MCU switched baud; the backend's
+// bit-level serialiser (RTL) or rate tracker (fake) follows.
+void sim_uart_set_baud(uint32_t baud) {
+    fpga::set_baud(baud);
 }
 
 // ---- USB gamepads: none attached; pads are driven by the sim ----

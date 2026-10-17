@@ -62,6 +62,22 @@ class FpgaBackend : public sim::Backend {
     // MODE button: silent for silence_ms sim ms, then answer as core 0.
     virtual void trigger_mode(int silence_ms) = 0;
 
+    // Fast ROM loading (GBA): the MCU calls set_baud when it switches the
+    // link rate; baud_rate reports the backend's current bit rate (the RTL
+    // bridge really serialises/decodes at it, the fake just records it).
+    virtual void set_baud(uint32_t baud) = 0;
+    virtual uint32_t baud_rate() = 0;
+    // Highest set_baud seen (latched): the fastload scripts assert the link
+    // really ran at 8M, without racing the brief fast window.
+    virtual uint32_t baud_max() = 0;
+    // Flip one bit in the next 0x07 payload byte on the wire (fastload CRC
+    // test): the core's stream differs from the file, so its 0x0D check
+    // must fail and the firmware must retry clean at 2M.
+    virtual void corrupt_next_byte() = 0;
+    // MODE once rom_bytes() reaches n (fastload MODE-during-load test):
+    // deterministic mid-load silence, like trigger_mode from then on.
+    virtual void silence_when_rom(uint64_t n, int silence_ms) = 0;
+
     // Drop the next n core-ID replies (a colliding joypad frame on hardware).
     virtual void drop_ids(int n) = 0;
 

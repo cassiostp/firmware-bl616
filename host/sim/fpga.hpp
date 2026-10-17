@@ -63,6 +63,14 @@ void set_pads(uint16_t p1, uint16_t p2);
 // MODE button: go silent for silence_ms, then answer as core 0 again.
 void trigger_mode(int silence_ms);
 
+// Fast ROM loading: the MCU's current link baud (2M unless negotiated up).
+void set_baud(uint32_t baud);
+uint32_t baud_rate();
+uint32_t baud_max();    // highest set_baud seen (latched, for the scripts)
+// Fault injection for the fastload tests (RTL only; the fake ignores them).
+void corrupt_next_byte();   // flip a bit in the next 0x07 payload byte
+void silence_when_rom(uint64_t n, int silence_ms); // MODE once rom_bytes hits n
+
 // Drop the next n core-ID replies (a colliding joypad frame on hardware).
 void drop_ids(int n);
 

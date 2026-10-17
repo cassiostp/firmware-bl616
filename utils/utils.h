@@ -148,9 +148,21 @@ extern uint32_t get_file_size(const char *fname);
 
 // Send a romdata packet to core of len bytes in `fbuf`
 extern void send_fbuf_data(uint16_t len);
+// Same, but the bytes come from p (a slice of a bigger SD read).
+extern void send_data_frame(const uint8_t *p, uint16_t len);
 extern void send_blank_packet(void);
 // 2048 zero bytes: harmlessly complete any partial FPGA RX frame (utils.cpp)
 extern void fpga_link_flush(void);
+
+// Fast-load replies (core/fastload.cpp): the 0x0C baud answer and the 0x0D
+// load check values, stashed by uart1_rx_task for the loader to collect
+// (same shape as core_id above).
+extern volatile int16_t fast_baud_ack;    // accepted code, -1 = none yet
+extern volatile uint8_t fast_baud_max;    // highest code the core offers
+extern volatile uint32_t fast_load_crc;   // last 0x0D CRC-32
+extern volatile uint32_t fast_load_cnt;   // last 0x0D byte count
+extern volatile bool fast_load_crc_ready; // a 0x0D arrived since the reset
+void fast_reply_reset(void);              // clear the stash before asking
 
 extern SemaphoreHandle_t state_mutex;              
 extern volatile uint16_t joy1_state;

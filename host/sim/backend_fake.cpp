@@ -8,6 +8,7 @@
 // time, so firmware timeouts only fire when an answer is truly missing.
 // All times are sim ticks (see sim_time.hpp).
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -207,6 +208,30 @@ class FakeBackend : public FpgaBackend {
         silence_until_ = sim::now_ticks() + (uint64_t)silence_ms * sim::TICKS_PER_MS;
     }
 
+    // Fast ROM loading: the fake never answers 0x15/0x16 (no FAST_UART), so
+    // the firmware always falls back to 2M here -- that fallback is what the
+    // fake-suite GBA tests prove. Baud is recorded for expect-baud.
+    void set_baud(uint32_t baud) override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        baud_ = baud;
+        if (baud > baud_max_)
+            baud_max_ = baud;
+    }
+    uint32_t baud_rate() override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        return baud_;
+    }
+    uint32_t baud_max() override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        return baud_max_;
+    }
+    void corrupt_next_byte() override {} // no wire model: nothing to flip
+    void silence_when_rom(uint64_t n, int silence_ms) override {
+        std::lock_guard<std::recursive_mutex> lk(m_);
+        silence_rom_at_ = n;
+        silence_rom_ms_ = silence_ms;
+    }
+
     void drop_ids(int n) override {
         std::lock_guard<std::recursive_mutex> lk(m_);
         if (n > 0)
@@ -261,6 +286,10 @@ class FakeBackend : public FpgaBackend {
     std::deque<uint8_t> rx_;
     Osd osd_;
     int core_id_ = -1;
+    uint32_t baud_ = 2000000;   // last set_baud (the fake never switches)
+    uint32_t baud_max_ = 2000000;
+    uint64_t silence_rom_at_ = UINT64_MAX;  // silence_when_rom threshold
+    int silence_rom_ms_ = 0;
     std::string core_file_;
     uint64_t program_tick_ = 0;
     uint64_t silence_until_ = 0;
@@ -378,6 +407,12 @@ class FakeBackend : public FpgaBackend {
             break;
         case 0x07: // ROM data
             rom_bytes_ += p.size();
+            if (silence_rom_at_ != UINT64_MAX && rom_bytes_ >= silence_rom_at_) {
+                silence_rom_at_ = UINT64_MAX;   // fire once, like a MODE press
+                core_id_ = 0;
+                core_file_ = "<flash>";
+                silence_until_ = sim::now_ticks() + (uint64_t)silence_rom_ms_ * sim::TICKS_PER_MS;
+            }
             break;
         case 0x08: // overlay on/off
             if (!p.empty())
@@ -594,6 +629,21 @@ void set_pads(uint16_t p1, uint16_t p2) {
 }
 void trigger_mode(int silence_ms) {
     g_active->trigger_mode(silence_ms);
+}
+void set_baud(uint32_t baud) {
+    g_active->set_baud(baud);
+}
+uint32_t baud_rate() {
+    return g_active->baud_rate();
+}
+uint32_t baud_max() {
+    return g_active->baud_max();
+}
+void corrupt_next_byte() {
+    g_active->corrupt_next_byte();
+}
+void silence_when_rom(uint64_t n, int silence_ms) {
+    g_active->silence_when_rom(n, silence_ms);
 }
 void drop_ids(int n) {
     g_active->drop_ids(n);
