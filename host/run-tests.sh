@@ -335,6 +335,11 @@ open(sys.argv[1], 'w').write("clock_unix=%d\nclock_hbn=0\nsolar_pct=50\n" % u)
 EOF
 }
 
+seed_old_scale() {
+    # $1 = dir: a tangcore.cfg as the firmware before Scale moved wrote it.
+    printf 'scanline_full=0\nsmoothing=1\n' > "$1/tangcore.cfg"
+}
+
 # (add_md is defined up with the RTL fixtures: both suites use it.)
 
 PASS=0
@@ -364,6 +369,7 @@ run_test() {
             gba-rtc-sram) add_gba_rtc "$sd" AXVE SRAM_V ;;
             gba-solar) add_gba_rtc "$sd" U3IE EEPROM_V ;;
             cfg-clock) seed_clock "$sd" ;;
+            cfg-oldscale) seed_old_scale "$sd" ;;
             md:*) add_md "$sd" "${spec#md:}" ;;
             mdjam:*) add_md_quirk "$sd" "${spec#mdjam:}" 'T-81406 ' ;;
             mdwb:*) add_md_quirk "$sd" "${spec#mdwb:}" 'G-4060  ' ;;
@@ -429,6 +435,7 @@ run_test j-video-persist sms:cgame.sms
 run_test k-video-grid sms:cgame.sms sms:game.gg
 run_test l-video-grid-gba gba
 run_test o-video-scale sms:cgame.sms
+run_test o-video-scale-oldcfg cfg-oldscale sms:cgame.sms
 run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms

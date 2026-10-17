@@ -130,10 +130,6 @@ static std::string settings_path() {
     return std::string(drv) + SETTINGS_FILE;
 }
 
-// Set while parsing one file when a scale= line is seen, so an old
-// scanline_full= line only counts when no scale= line set the value.
-static bool scale_key_seen;
-
 static void apply_setting(Settings &s, const char *key, const char *val) {
     if (strcasecmp(key, "menu_combo") == 0) {
         uint16_t c = combo_from_string(val);
@@ -161,11 +157,10 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
             s.scale_full = true;
         else if (strcasecmp(val, "integer") == 0 || strcmp(val, "0") == 0)
             s.scale_full = false;
-        scale_key_seen = true;
     } else if (strcasecmp(key, "scanline_full") == 0) {
-        // The old key: only counts when no scale= line set the value.
-        if (!scale_key_seen)
-            s.scale_full = strtol(val, NULL, 10) != 0;
+        // The old key, written on every save with 0 as the default, so it
+        // can't tell a chosen Integer from an untouched one: ignored, and
+        // Scale starts at Full until the user sets it.
     } else if (strcasecmp(key, "video_brightness") == 0) {
         long v = strtol(val, NULL, 10);
         if (v >= -4 && v <= 3) s.video_brightness = (int8_t)v;
@@ -204,7 +199,6 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
 void settings_load() {
     Settings s;
     settings_defaults(s);
-    scale_key_seen = false;
     std::string path = settings_path();
     UINT br = 0;
     if (f_open(&fcfg, path.c_str(), FA_READ) == FR_OK) {
