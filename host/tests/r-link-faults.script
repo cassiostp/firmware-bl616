@@ -1,0 +1,28 @@
+# Wire faults on verilated nestang, with pad frames closer than 50 ms so
+# a shifted header cannot hide behind the gap resync. Each fault must
+# leave the game core answering and the menu able to open.
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+wait 300ms
+pad-churn on
+wire-drop 1
+wait 1500ms
+expect-core nestang
+wire-flip
+wait 1500ms
+expect-core nestang
+wire-burst 32
+wait 1500ms
+expect-core nestang
+pad-churn off
+wire-stall 50
+wait 800ms
+expect-core nestang
+hold select+start+l 400ms
+expect-screen "Close game"
+expect-overlay on

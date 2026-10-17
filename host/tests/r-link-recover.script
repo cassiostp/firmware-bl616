@@ -1,0 +1,22 @@
+# Same stall as u-link-poison, against verilated nestang. pad-churn raw
+# pushes a joy frame every 40 ms straight into the firmware (the core's
+# own ~46 ms interval can leave one hole over 50 ms, which would let the
+# old parser resync). Model traffic is on top of that. len=1024 stays
+# open past the combo on the old parser and is still a legal length for
+# the new one, so only the 1 s resync makes the menu open.
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+wait 300ms
+inject-rx aa040002
+pad-churn raw
+wait 1500ms
+hold select+start+l 400ms
+pad-churn off
+expect-screen "Close game"
+expect-core nestang
+expect-overlay on

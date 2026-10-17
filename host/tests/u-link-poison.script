@@ -1,0 +1,30 @@
+# QA5 NES stall shape, on the fake core: a header the old parser cannot
+# finish before the menu combo (len=1024, type 2) plus joy frames every
+# 40 ms. 40 ms is under the 50 ms mid-frame gap, so the old parser
+# swallows polls and pad frames for ~5 s. The menu combo at 1.5 s must
+# already work: the 1 s link resync resets the parser. No restart.
+# len=1024 is the largest length the new parser still accepts; a save
+# block is 515, so this is a shifted header, not a real frame.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+wait 300ms
+inject-rx aa040002
+pad-churn raw
+wait 1500ms
+# Churn stays on across the hold. cmd_hold sleeps 100 ms before the
+# buttons go down; without frames in that gap the old parser's 50 ms
+# check would resync and the combo would land on a healthy parser.
+hold select+start+l 400ms
+pad-churn off
+expect-screen "Close game"
+expect-core smstang
+expect-overlay on

@@ -433,6 +433,7 @@ run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms
 run_test u-link-resync sms:cgame.sms
+run_test u-link-poison sms:cgame.sms
 run_test v-mode-fresh-silent sms:cgame.sms
 run_test p-save-fail sms:game.sms
 run_test q-save-status sms:game.sms

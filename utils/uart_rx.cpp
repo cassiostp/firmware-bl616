@@ -27,6 +27,7 @@ static volatile uint32_t ring_head;     // next slot the interrupt fills
 static volatile uint32_t ring_tail;     // next slot the task reads
 static volatile uint32_t ring_lost;     // bytes dropped because the ring was full
 static volatile uint32_t ring_errs;     // interrupts that saw an RX error bit
+static volatile uint32_t rx_epoch;      // parser-reset requests (see uart_rx.h)
 
 void uart_rx_ring_reset(void) {
     ring_head = 0;
@@ -55,6 +56,19 @@ bool uart_rx_ring_get(uint8_t *ch) {
 
 uint32_t uart_rx_ring_dropped(void) {
     return ring_lost;
+}
+
+void uart_rx_ring_discard(void) {
+    uint32_t h = __atomic_load_n(&ring_head, __ATOMIC_ACQUIRE);
+    __atomic_store_n(&ring_tail, h, __ATOMIC_RELEASE);
+}
+
+void uart_rx_request_parser_reset(void) {
+    __atomic_fetch_add(&rx_epoch, 1, __ATOMIC_RELEASE);
+}
+
+uint32_t uart_rx_epoch(void) {
+    return __atomic_load_n(&rx_epoch, __ATOMIC_ACQUIRE);
 }
 
 uint32_t uart_rx_err_count(void) {
