@@ -140,6 +140,8 @@ class RtlBackend : public FpgaBackend {
         case 3:
             if (b == 0x12)
                 save_reqs.fetch_add(1, std::memory_order_relaxed);
+            if (b == 0x09)
+                hid_frames_.fetch_add(1, std::memory_order_relaxed);
             tx_type = b;
             tx_ps = (tx_plen <= 1) ? 0 : 4;
             tx_left = tx_plen > 1 ? tx_plen - 1 : 0;
@@ -173,6 +175,7 @@ class RtlBackend : public FpgaBackend {
     uint16_t tx_plen = 0, tx_left = 0;
     uint8_t tx_type = 0;
     std::atomic<uint64_t> save_reqs{0};
+    std::atomic<uint64_t> hid_frames_{0};
 
     bool rx_available() override {
         std::lock_guard<std::mutex> lk(rx_m);
@@ -296,6 +299,10 @@ class RtlBackend : public FpgaBackend {
 
     uint64_t save_requests() override {
         return save_reqs.load(std::memory_order_relaxed);
+    }
+
+    uint64_t hid_frames() override {
+        return hid_frames_.load(std::memory_order_relaxed);
     }
 
     void trigger_mode(int silence_ms) override {

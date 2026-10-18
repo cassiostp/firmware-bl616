@@ -359,6 +359,7 @@ static int menu_loadrom(const char *dir) {
 // keep sending HID state to core until OSD is turned on
 static void send_hid_to_core(void) {
     uint16_t hid1_old = 0, hid2_old = 0;
+    uint64_t last_hid_send = 0;
     bool first = true;
     uint64_t last_clock_send = bflb_mtimer_get_time_ms();
     dbg_log("hid loop: enter (game running)");
@@ -372,10 +373,17 @@ static void send_hid_to_core(void) {
         }
         uint16_t joy1=0, joy2=0, hid1=0, hid2=0;    
         get_joypad_states(&joy1, &joy2, &hid1, &hid2);
-        if (first || hid1 != hid1_old || hid2 != hid2_old) {    // send HID if changed
+        // Re-send the state every 100 ms even when nothing changed: every
+        // iosys holds the last 0x09 frame with no timeout, so one dropped
+        // frame would stick buttons until the pad changes again. 8 bytes
+        // at 10 Hz is 80 B/s on the 2 Mbaud link.
+        uint64_t now = bflb_mtimer_get_time_ms();
+        if (first || hid1 != hid1_old || hid2 != hid2_old ||
+            now - last_hid_send >= 100) {
             send_hid_state(hid1, hid2);
             hid1_old = hid1;
             hid2_old = hid2;
+            last_hid_send = now;
             first = false;
         }
         if (overlay_on()) {     // turned on by the keyboard's OSD key (F12)

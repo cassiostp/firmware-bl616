@@ -463,6 +463,7 @@ run_test menu-scroll manysms
 run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms
+run_test u-hid-resend sms:cgame.sms
 run_test u-link-resync sms:cgame.sms
 run_test u-link-poison sms:cgame.sms
 run_test v-mode-fresh-silent sms:cgame.sms

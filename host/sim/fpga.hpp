@@ -92,6 +92,8 @@ void set_churn(bool on);
 void set_save_channel(bool on);
 // Save-block requests received so far (wait-dump watches for a new one).
 uint64_t save_requests();
+// HID (0x09) frames received so far (the HID-resend test watches for more).
+uint64_t hid_frames();
 
 bool overlay_visible();
 uint64_t rom_bytes();

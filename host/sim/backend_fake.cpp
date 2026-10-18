@@ -251,6 +251,10 @@ class FakeBackend : public FpgaBackend {
         return save_reqs_.load(std::memory_order_relaxed);
     }
 
+    uint64_t hid_frames() override {
+        return hid_frames_.load(std::memory_order_relaxed);
+    }
+
     void trigger_mode(int silence_ms) override {
         {
             std::lock_guard<std::recursive_mutex> lk(m_);
@@ -362,6 +366,7 @@ class FakeBackend : public FpgaBackend {
     bool pad_churn_ = false;
     uint64_t pad_next_ = 0;
     std::atomic<uint64_t> save_reqs_{0};
+    std::atomic<uint64_t> hid_frames_{0};
     std::atomic<bool> verbose_{false};
     std::vector<std::string> log_;
     std::string log_cur_;
@@ -475,7 +480,8 @@ class FakeBackend : public FpgaBackend {
             if (!p.empty())
                 overlay_visible_ = p[0] != 0;
             break;
-        case 0x09: // joypad state: nothing to do with it
+        case 0x09: // joypad state: count it (HID-resend test), nothing to do
+            hid_frames_.fetch_add(1, std::memory_order_relaxed);
             break;
         case 0x0b: // PC/XT port write: not emulated
             break;
@@ -737,6 +743,9 @@ void set_save_channel(bool on) {
 }
 uint64_t save_requests() {
     return g_active->save_requests();
+}
+uint64_t hid_frames() {
+    return g_active->hid_frames();
 }
 bool overlay_visible() {
     return g_active->overlay_visible();

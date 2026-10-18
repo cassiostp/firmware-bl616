@@ -794,6 +794,22 @@ int run_script() {
             }
             if (!started)
                 script_fail(lineno, "no save dump started");
+        } else if (cmd == "expect-hid-frames") {
+            // expect-hid-frames <n> [timeout]: at least n 0x09 HID frames
+            // reached the core (the resend test watches identical,
+            // unchanged state get re-sent).
+            uint64_t to = 10000;
+            long n;
+            if ((t.size() != 2 && t.size() != 3) || !parse_num(t[1], n) || n <= 0)
+                script_fail(lineno, "usage: expect-hid-frames <n> [timeout]");
+            if (t.size() == 3 && !parse_dur(t[2], to))
+                script_fail(lineno, "bad timeout");
+            printf("[%d] expect-hid-frames %ld\n", lineno, n);
+            uint64_t t0 = now_ms();
+            while (fpga::hid_frames() < (uint64_t)n && now_ms() - t0 < to)
+                msleep(20);
+            if (fpga::hid_frames() < (uint64_t)n)
+                script_fail(lineno, "core saw fewer HID frames");
         } else if (cmd == "mode" || cmd == "mode-now") {
             long ms = 4000;
             if (t.size() > 2 || (t.size() == 2 && !parse_num(t[1], ms)))
