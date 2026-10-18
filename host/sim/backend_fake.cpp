@@ -255,6 +255,10 @@ class FakeBackend : public FpgaBackend {
         return hid_frames_.load(std::memory_order_relaxed);
     }
 
+    uint64_t blank_lines() override {
+        return blank_lines_.load(std::memory_order_relaxed);
+    }
+
     void trigger_mode(int silence_ms) override {
         {
             std::lock_guard<std::recursive_mutex> lk(m_);
@@ -367,6 +371,7 @@ class FakeBackend : public FpgaBackend {
     uint64_t pad_next_ = 0;
     std::atomic<uint64_t> save_reqs_{0};
     std::atomic<uint64_t> hid_frames_{0};
+    std::atomic<uint64_t> blank_lines_{0};
     std::atomic<bool> verbose_{false};
     std::vector<std::string> log_;
     std::string log_cur_;
@@ -464,6 +469,16 @@ class FakeBackend : public FpgaBackend {
         case 0x05: // overlay text
             for (uint8_t b : p)
                 osd_put(b);
+            if (p.size() == 32) {
+                // overlay_clear() blanks a row with 32 spaces; nothing
+                // else prints a full-blank line (ui/overlay.cpp).
+                bool blank = true;
+                for (uint8_t b : p)
+                    if (b != ' ')
+                        blank = false;
+                if (blank)
+                    blank_lines_.fetch_add(1, std::memory_order_relaxed);
+            }
             break;
         case 0x06: // loading state: nothing to track beyond the log
             break;
@@ -746,6 +761,9 @@ uint64_t save_requests() {
 }
 uint64_t hid_frames() {
     return g_active->hid_frames();
+}
+uint64_t blank_lines() {
+    return g_active->blank_lines();
 }
 bool overlay_visible() {
     return g_active->overlay_visible();

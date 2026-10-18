@@ -143,6 +143,12 @@ class RtlBackend : public FpgaBackend {
             if (b == 0x09)
                 hid_frames_.fetch_add(1, std::memory_order_relaxed);
             tx_type = b;
+            if (b == 0x05) {
+                // Overlay text: watch for a full-blank (32-space) line,
+                // which only overlay_clear() prints.
+                tx_text_total = tx_plen > 1 ? (uint16_t)(tx_plen - 1) : 0;
+                tx_text_spaces = 0;
+            }
             tx_ps = (tx_plen <= 1) ? 0 : 4;
             tx_left = tx_plen > 1 ? tx_plen - 1 : 0;
             if (tx_ps == 0 && verbose.load(std::memory_order_relaxed)) {
@@ -152,6 +158,8 @@ class RtlBackend : public FpgaBackend {
             }
             break;
         case 4:
+            if (tx_type == 0x05 && b == ' ')
+                tx_text_spaces++;
             if (tx_type == 0x07 && corrupt_armed.load(std::memory_order_relaxed) &&
                 !tx_queue.empty()) {
                 tx_queue.back() ^= 0x01; // one flipped wire bit, queued already
@@ -160,6 +168,8 @@ class RtlBackend : public FpgaBackend {
             }
             if (--tx_left == 0) {
                 tx_ps = 0;
+                if (tx_type == 0x05 && tx_text_total == 32 && tx_text_spaces == 32)
+                    blank_lines_.fetch_add(1, std::memory_order_relaxed);
                 if (verbose.load(std::memory_order_relaxed)) {
                     char msg[64];
                     snprintf(msg, sizeof(msg), "tx frame type=0x%02x len=%u", tx_type,
@@ -174,8 +184,10 @@ class RtlBackend : public FpgaBackend {
     int tx_ps = 0;
     uint16_t tx_plen = 0, tx_left = 0;
     uint8_t tx_type = 0;
+    uint16_t tx_text_total{0}, tx_text_spaces{0};
     std::atomic<uint64_t> save_reqs{0};
     std::atomic<uint64_t> hid_frames_{0};
+    std::atomic<uint64_t> blank_lines_{0};
 
     bool rx_available() override {
         std::lock_guard<std::mutex> lk(rx_m);
@@ -303,6 +315,10 @@ class RtlBackend : public FpgaBackend {
 
     uint64_t hid_frames() override {
         return hid_frames_.load(std::memory_order_relaxed);
+    }
+
+    uint64_t blank_lines() override {
+        return blank_lines_.load(std::memory_order_relaxed);
     }
 
     void trigger_mode(int silence_ms) override {

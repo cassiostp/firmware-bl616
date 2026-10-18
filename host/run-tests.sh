@@ -439,6 +439,7 @@ else
 fi
 
 run_test a-menu nes:test.nes
+run_test a-menu-quiet
 run_test b-hidden-message-mode gba
 run_test c-pause sms:cgame.sms
 run_test d-sms-save sms:game.sms
@@ -471,6 +472,7 @@ run_test p-save-fail sms:game.sms
 run_test q-save-status sms:game.sms
 run_test q-save-timing sms:game.sms
 run_test t-wedge-main
+run_test t-garbage-pads sms:cgame.sms
 run_test w-wedge-scanlines sms:cgame.sms
 run_test x-monitor-cores
 run_test y-diag-game-menu sms:cgame.sms

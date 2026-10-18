@@ -570,6 +570,21 @@ int run_script() {
             } else if (!poll_until(to, c_screen, &s)) {
                 script_fail(lineno, "screen never showed: " + s);
             }
+        } else if (cmd == "expect-no-clear") {
+            // No overlay_clear traffic for the whole window: only a full
+            // redraw blanks rows (a 32-space text line), so an idle menu
+            // sends none.
+            uint64_t to = 2000;
+            if (t.size() > 2 || (t.size() == 2 && !parse_dur(t[1], to)))
+                script_fail(lineno, "usage: expect-no-clear [timeout]");
+            uint64_t t0 = now_ms();
+            uint64_t f0 = fpga::blank_lines();
+            printf("[%d] expect-no-clear %lums\n", lineno, (unsigned long)to);
+            while (now_ms() - t0 < to) {
+                if (fpga::blank_lines() != f0)
+                    script_fail(lineno, "menu blanked itself while idle");
+                msleep(20);
+            }
         } else if (cmd == "expect-cursor-row") {
             long row;
             uint64_t to = 10000;

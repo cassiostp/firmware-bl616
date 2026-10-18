@@ -114,6 +114,10 @@ class FpgaBackend : public sim::Backend {
     virtual uint64_t save_requests() = 0;
     // Number of 0x09 HID frames received (the HID-resend test watches it).
     virtual uint64_t hid_frames() = 0;
+    // Number of full-blank overlay text lines received (a 32-space 0x05
+    // payload: only overlay_clear() prints one. The menu-quiet test
+    // watches an idle menu send none).
+    virtual uint64_t blank_lines() = 0;
 
     virtual bool overlay_visible() = 0;
     virtual uint64_t rom_bytes() = 0; // ROM payload bytes consumed

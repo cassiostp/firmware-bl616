@@ -1,0 +1,11 @@
+# The main menu must not blank itself every 5 s (#1): the periodic core-ID
+# poll redraws only when the core changes, so an idle menu never clears
+# the overlay. (With the old unconditional redraw, overlay_clear's 28
+# blank lines go out here and this fails.)
+expect-screen "TangCore"
+expect-cursor-row 9
+# The boot draw and the core-detected redraw settle first.
+wait 3s
+expect-no-clear 7s
+expect-screen "TangCore"
+expect-cursor-row 9
