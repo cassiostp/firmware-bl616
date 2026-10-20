@@ -400,6 +400,9 @@ struct CondFileText {
     std::string path;
     std::string text;
 };
+struct CondFilesEqual {
+    std::string a, b;
+};
 struct CondClock {
     long unix_lo, unix_hi;      // accepted range for the frame's unix field
     long byte_idx, byte_val;    // >= 0: also require payload[idx] == val
@@ -463,6 +466,22 @@ bool c_filetext(void *a) {
         all.append(b, n);
     fclose(f);
     return all.find(c->text) != std::string::npos;
+}
+bool c_filesequal(void *a) {
+    CondFilesEqual *c = (CondFilesEqual *)a;
+    auto read_all = [](const std::string &rel, std::string &out) {
+        FILE *f = fopen((g_sdroot + "/" + rel).c_str(), "rb");
+        if (!f)
+            return false;
+        char b[8192];
+        size_t n;
+        while ((n = fread(b, 1, sizeof(b), f)) > 0)
+            out.append(b, n);
+        fclose(f);
+        return true;
+    };
+    std::string x, y;
+    return read_all(c->a, x) && read_all(c->b, y) && !x.empty() && x == y;
 }
 bool c_clock(void *a) {
     CondClock *c = (CondClock *)a;
@@ -707,6 +726,17 @@ int run_script() {
             printf("[%d] expect-file-contains %s \"%s\"\n", lineno, t[1].c_str(), t[2].c_str());
             if (!poll_until(to, c_filetext, &c))
                 script_fail(lineno, "file never contained text: " + t[1]);
+        } else if (cmd == "expect-files-equal") {
+            // expect-files-equal <rel-a> <rel-b> [timeout]
+            uint64_t to = 15000;
+            if (t.size() < 3 || t.size() > 4)
+                script_fail(lineno, "usage: expect-files-equal <a> <b> [timeout]");
+            if (t.size() == 4 && !parse_dur(t[3], to))
+                script_fail(lineno, "bad timeout");
+            CondFilesEqual c{t[1], t[2]};
+            printf("[%d] expect-files-equal %s %s\n", lineno, t[1].c_str(), t[2].c_str());
+            if (!poll_until(to, c_filesequal, &c))
+                script_fail(lineno, "files never became equal: " + t[1] + " vs " + t[2]);
         } else if (cmd == "expect-clock") {
             // expect-clock "YYYY-MM-DD HH:MM" [solar <n>|flags <n>] [timeout]
             // The frame's unix must land in that minute + 120 s of slack

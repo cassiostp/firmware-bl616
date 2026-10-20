@@ -5,11 +5,14 @@
 #include "cores.h"
 #include "overlay.h"
 #include "saves.h"
+#include "savestates.h"
+#include "fastload.h"
 
 // Load a NES ROM
 // return 0 if successful
 int loadnes(const char *fname) {
     unsigned int off = 0, br, total = 0;
+    uint32_t rom_crc = 0xFFFFFFFFu;     // save-state ROM identity (zlib CRC32)
     unsigned int size;
     int r = 1;
     DEBUG("loadnes start\n");
@@ -53,6 +56,7 @@ int loadnes(const char *fname) {
     do {
         if ((r = f_read(&fcore, fbuf, 1024 /*BLOCK_SIZE*/, &br)) != FR_OK)
             break;
+        rom_crc = fast_crc32_update(rom_crc, fbuf, br);
         // start rom loading command
         send_fbuf_data(br);
         taskYIELD();                // allow gamepad polling to run
@@ -64,6 +68,7 @@ int loadnes(const char *fname) {
     } while (br == 1024 /*BLOCK_SIZE*/);
 
     DEBUG("loadnes: %d bytes\n", total);
+    savestates_set_rom_id(total, rom_crc ^ 0xFFFFFFFFu);
     overlay_status("Success");
     // The game's save RAM goes in now, while the core is still held in the
     // loading state: restore() sends the .sav, a recovered .sav.tmp, or the

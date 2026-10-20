@@ -33,6 +33,7 @@ set(FW_SOURCES
     ${FIRMWARE_DIR}/core/nes.cpp
     ${FIRMWARE_DIR}/core/pcxt.cpp
     ${FIRMWARE_DIR}/core/saves.cpp
+    ${FIRMWARE_DIR}/core/savestates.cpp
     ${FIRMWARE_DIR}/core/sms.cpp
     ${FIRMWARE_DIR}/core/snes.cpp
 )

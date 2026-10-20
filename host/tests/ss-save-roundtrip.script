@@ -1,0 +1,100 @@
+# Save-state round trip through the game menu: save slot 1,
+# power-cycle, reload the game, load slot 1 (must resume straight
+# into the game), save slot 2 -- the two files must be identical.
+# Slot 3 (empty) and slot 4 (seeded wrong-game state) are refused
+# cleanly in the menu. Exit path everywhere: Back, Back, Resume.
+expect-screen "TangCore"
+press b
+expect-screen "test.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+expect-screen "Load state"
+press a
+expect-screen "Slot 1  (empty)"
+press a
+expect-screen "Save: Done"
+expect-file saves/nes/test.ss1 size 22016
+press down
+press down
+press down
+press down
+press a
+press down
+press down
+press a
+press a
+expect-overlay off
+power-cycle
+expect-screen "TangCore"
+press b
+expect-screen "test.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+press down
+press a
+expect-screen "Slot 1  (21K)"
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+press a
+press down
+press a
+expect-screen "Save: Done"
+expect-file saves/nes/test.ss2 size 22016
+expect-files-equal saves/nes/test.ss1 saves/nes/test.ss2
+press down
+press down
+press down
+press a
+press down
+press down
+press a
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+press down
+press a
+press down
+press down
+press a
+expect-screen "Slot is empty"
+press down
+press a
+expect-screen "State is for another"
+press down
+press a
+press down
+press a
+press a
+expect-overlay off
+expect-alive 2s

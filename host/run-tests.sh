@@ -27,6 +27,22 @@ for arg in "$@"; do
 done
 RTL_COSIM="${RTL_COSIM#=}"
 
+seed_bad_ss() {
+    # $1 = dir, $2 = rom stem: a state file whose header names another
+    # mapper (firmware must refuse it before touching the core).
+    local dir="$1" stem="$2"
+    mkdir -p "$dir/saves/nes"
+    python3 - "$dir/saves/nes/$stem.ss4" <<'EOF'
+import sys
+h = bytearray(512)
+h[0:4] = b'TCSS'
+h[4] = 1; h[5] = 1; h[6] = 1
+h[8] = 4                      # mapper 4, not the running game's mapper 1
+h[16:20] = (22016).to_bytes(4, 'little')
+open(sys.argv[1], 'wb').write(bytes(h) + bytes(22016 - 512))
+EOF
+}
+
 add_nes_battery() {
     # $1 = dir, $2 = name: minimal iNES ROM (16 KB PRG + 8 KB CHR) WITH the
     # battery bit, so the firmware treats WRAM as battery-backed (needed by
@@ -154,7 +170,7 @@ add_many() {
 
 if [ -n "$RTL_CORE" ]; then
     case "$RTL_CORE" in
-        nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; add_nes_plain "$1" plain.nes; } ;;
+        nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; add_nes_plain "$1" plain.nes; seed_bad_ss "$1" game; } ;;
         snes) SUITE=n; add_rom() { add_snes "$1" game.smc; } ;;
         md)   SUITE=m; add_rom() { add_md "$1" game.md; } ;;
         gba)  SUITE=g-rtl; add_rom() { add_gba_sram "$1" game.gba; } ;;
@@ -374,6 +390,7 @@ run_test() {
     for spec in "$@"; do
         case "$spec" in
             nes:*) add_nes "$sd" "${spec#nes:}" ;;
+            ssbad:*) seed_bad_ss "$sd" "${spec#ssbad:}" ;;
             # snes:<variant> (chip-header tests) vs snes:<file>.smc (a plain
             # LoROM fixture): variant names carry no dot.
             snes:*) case "${spec#snes:}" in
@@ -439,6 +456,7 @@ else
 fi
 
 run_test a-menu nes:test.nes
+run_test ss-save-roundtrip nes:test.nes ssbad:test
 run_test a-menu-quiet
 run_test b-hidden-message-mode gba
 run_test c-pause sms:cgame.sms

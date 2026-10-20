@@ -93,6 +93,7 @@ class FakeBackend : public FpgaBackend {
         std::lock_guard<std::recursive_mutex> lk(m_);
         core_file_ = path ? path : "";
         core_id_ = id_for_file(core_file_);
+        ss_reset_image();           // a fresh core's state memory is pattern again
         program_tick_ = sim::now_ticks();
         // A freshly programmed core is silent while it starts. The firmware
         // must not mistake that for MODE (controls_reset/seen_answer).
@@ -364,6 +365,49 @@ class FakeBackend : public FpgaBackend {
     uint16_t pad1_ = 0, pad2_ = 0;
     std::vector<uint8_t> save_ram_;
     bool save_channel_ = true;
+    // Save-state channel fake (NES core only, mirroring src/savestate.v):
+    // a 22016-byte image whose payload is a fixed pattern until a load
+    // overwrites it, so save -> power-cycle -> load -> save round-trips
+    // byte-identically. Reprogrammed cores get a fresh pattern image.
+    static constexpr size_t SS_TOTAL = 22016;   // 43 blocks, like MMC1+WRAM+CHR-RAM
+    std::vector<uint8_t> ss_image_;
+    int ss_state_ = 0;              // engine FSM: 0 idle 2 save 3 hdr 5 load
+    bool ss_error_ = false;
+    void ss_reset_image() {
+        ss_image_.assign(SS_TOTAL, 0);
+        ss_build_header(ss_image_.data());
+        for (size_t i = 512; i < SS_TOTAL; i++)
+            ss_image_[i] = (uint8_t)(i * 31 + 7);
+        ss_state_ = 0;
+        ss_error_ = false;
+    }
+    static uint64_t ss_flags() {    // mapper 1, battery, CHR RAM (8K shift)
+        return 1ull | (1ull << 10) | (1ull << 15) | (7ull << 35);
+    }
+    void ss_build_header(uint8_t *h) {
+        memset(h, 0, 512);
+        memcpy(h, "TCSS", 4);
+        h[4] = 1; h[5] = 1; h[6] = 1; h[7] = 0;
+        uint64_t f = ss_flags();
+        for (int i = 0; i < 8; i++) h[8 + i] = (uint8_t)(f >> (8 * i));
+        auto w32 = [&](int o, uint32_t v) {
+            h[o] = (uint8_t)v; h[o+1] = (uint8_t)(v>>8);
+            h[o+2] = (uint8_t)(v>>16); h[o+3] = (uint8_t)(v>>24);
+        };
+        w32(16, (uint32_t)SS_TOTAL); w32(20, 8192); w32(24, 8192);
+    }
+    void ss_push_status() {
+        uint8_t st[16] = {};
+        st[0] = 1;
+        st[1] = (uint8_t)((ss_state_ == 2 || ss_state_ == 3 || ss_state_ == 5) |
+                          (ss_error_ ? 2 : 0) | (ss_state_ != 0 ? 4 : 0));
+        st[2] = 1; st[3] = 1;
+        st[4] = (uint8_t)(SS_TOTAL / 512); st[5] = 0;
+        uint64_t f = ss_flags();
+        for (int i = 0; i < 8; i++) st[6 + i] = (uint8_t)(f >> (8 * i));
+        st[15] = (uint8_t)ss_state_;
+        rx_push_frame(0x0E, st, sizeof(st));
+    }
     bool rx_stuck_ = false;
     uint32_t rx_stuck_bytes_ = 0;
     uint32_t stuck_hist_ = 0; // last four MCU bytes, for the 0x17 unstick
@@ -517,6 +561,59 @@ class FakeBackend : public FpgaBackend {
             size_t off = (size_t)blk * 512;
             if (off + 512 <= save_ram_.size())
                 memcpy(save_ram_.data() + off, p.data() + 2, 512);
+            break;
+        }
+        case 0x18: { // save-state control (NES fake engine only)
+            if (core_id_ != 1 || silenced() || p.empty())
+                break;              // old/other cores stay silent
+            if (ss_image_.empty()) ss_reset_image();
+            switch (p[0] & 7) {
+            case 1: ss_error_ = false; ss_state_ = 2; break;   // begin-save
+            case 2: ss_error_ = false; ss_state_ = 3; break;   // begin-load
+            case 3: ss_state_ = 0; break;                      // end
+            case 4: ss_state_ = 0; break;                      // abort
+            default: break;                                    // query
+            }
+            ss_push_status();
+            break;
+        }
+        case 0x19: { // save-state block write (load direction)
+            if (core_id_ != 1 || p.size() < 2 + 512)
+                break;
+            uint16_t blk = ((uint16_t)p[0] << 8) | p[1];
+            size_t off = (size_t)blk * 512;
+            if (ss_state_ == 3 && blk == 0) {
+                // header check, like the engine: magic + flags + total
+                uint8_t want[512];
+                ss_build_header(want);
+                bool ok = memcmp(p.data() + 2, "TCSS", 4) == 0 &&
+                          memcmp(p.data() + 2 + 8, want + 8, 8) == 0 &&
+                          memcmp(p.data() + 2 + 16, want + 16, 4) == 0;
+                if (ok) {
+                    memcpy(ss_image_.data(), p.data() + 2, 512);
+                    ss_state_ = 5;
+                } else {
+                    ss_error_ = true;   // stays in hdr; firmware aborts
+                }
+            } else if (ss_state_ == 5 && off + 512 <= ss_image_.size()) {
+                memcpy(ss_image_.data() + off, p.data() + 2, 512);
+            }
+            break;
+        }
+        case 0x1A: { // save-state block request: answer with 0x0F
+            if (core_id_ != 1 || p.size() < 2 || silenced())
+                break;
+            if (ss_image_.empty()) ss_reset_image();
+            uint16_t blk = ((uint16_t)p[0] << 8) | p[1];
+            size_t off = (size_t)blk * 512;
+            uint8_t payload[2 + 512];
+            payload[0] = p[0];
+            payload[1] = p[1];
+            if (off + 512 <= ss_image_.size())
+                memcpy(payload + 2, ss_image_.data() + off, 512);
+            else
+                memset(payload + 2, 0, 512);
+            rx_push_frame(0x0F, payload, sizeof(payload));
             break;
         }
         case 0x12: { // save request: answer with a 0x0A block

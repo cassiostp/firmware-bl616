@@ -35,6 +35,7 @@ extern "C" {
 #include "cores.h"
 #include "fastload.h"
 #include "saves.h"
+#include "savestates.h"
 #include "overlay.h"
 #include "init.h"
 #include "menu_manager.h"
@@ -220,6 +221,7 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
     // has its save RAM in the FPGA, so its unsaved save must be flushed before
     // programming a bitstream or streaming a new ROM.
     saves_set_game(rom.c_str(), core->id);
+    savestates_set_game(rom.c_str(), core->id);
 
     active_core = get_core_id();
 
@@ -320,6 +322,7 @@ static int menu_loadrom(const char *dir) {
     if (fname.find(string(drv) + "cores") == 0) {
         overlay_status("Core: %s", fname.c_str());
         saves_off();                    // the game in progress is dropped: flush its save
+        savestates_off();
         program_fpga(fname.c_str());
         forget_game();
         last_core_file = fname;
@@ -593,6 +596,8 @@ static const uint16_t RX_LEN_MAX = 1024;
 static void rx_gap_resync(uint8_t type, uint16_t pos, uint16_t len, uint64_t gap) {
     if (type == 0x0A && pos >= 4)
         saves_rx_bad_frame();
+    if (type == 0x0F && pos >= 4)
+        savestates_rx_bad_frame();
     dbg_log("uart resync: gap %lums mid-frame (type=%02x pos=%u len=%u)",
             (unsigned long)gap, type, (unsigned)pos, (unsigned)len);
 }
@@ -640,6 +645,24 @@ static void rx_payload_byte(uint8_t type, uint16_t len, uint16_t idx, uint8_t ch
     case 0x0D:
         if (idx < 8)
             buffer[idx] = ch;
+        break;
+    case 0x0E:
+        if (idx < 16)
+            buffer[idx] = ch;
+        break;
+    case 0x0F:
+        if (idx == 0 && len != 1 + 2 + 512 && !*sv_bad) {
+            savestates_rx_bad_frame();
+            *sv_bad = true;
+        }
+        if (len != 1 + 2 + 512)
+            break;
+        if (idx == 0)
+            *sv_blk = (uint16_t)ch << 8;
+        else if (idx == 1)
+            *sv_blk |= ch;
+        else if (idx < 2 + 512)
+            savestates_rx_byte(*sv_blk, idx - 2, ch);
         break;
     default:
         break;
@@ -693,6 +716,10 @@ static void rx_frame_done(uint8_t type, uint16_t len, const uint8_t *buffer, uin
         saves_rx_block_done(sv_blk);
     } else if (type == 0x0B && len == 2) {
         saves_rx_dirty();
+    } else if (type == 0x0E && len == 1 + 16) {
+        savestates_rx_status(buffer);
+    } else if (type == 0x0F && len == 1 + 2 + 512) {
+        savestates_rx_block_done(sv_blk);
     } else if (type == 0x0C && len >= 3) {
         if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
             fast_baud_ack = buffer[0];
@@ -714,7 +741,7 @@ static void rx_frame_done(uint8_t type, uint16_t len, const uint8_t *buffer, uin
 // Receive joypad updates and other UART responses from the FPGA
 static void uart1_rx_task(void *pvParameters)
 {
-    uint8_t buffer[8];              // biggest fixed reply: 0x0D's CRC32+count
+    uint8_t buffer[16];             // biggest fixed reply: the 0x0E status frame
     uint16_t pos = 0;               // 0=AA, 1=lenH, 2=lenL, 3=type, then payload
     uint8_t type = 0;
     uint16_t len = 0;               // type byte + payload
@@ -736,6 +763,8 @@ static void uart1_rx_task(void *pvParameters)
             if (ep != seen_epoch) {
                 if (type == 0x0A && pos >= 4)
                     saves_rx_bad_frame();
+                if (type == 0x0F && pos >= 4)
+                    savestates_rx_bad_frame();
                 seen_epoch = ep;
                 pos = 0;
                 got = 0;
@@ -803,6 +832,8 @@ static void uart1_rx_task(void *pvParameters)
             if (ep != seen_epoch) {
                 if (type == 0x0A && pos >= 4)
                     saves_rx_bad_frame();
+                if (type == 0x0F && pos >= 4)
+                    savestates_rx_bad_frame();
                 seen_epoch = ep;
                 pos = 0;
                 got = 0;
@@ -827,6 +858,7 @@ static void uart1_rx_task(void *pvParameters)
 static void close_game(void) {
     overlay(1);
     saves_off();            // the save RAM goes away with the monitor core: flush first
+    savestates_off();
     overlay_status("Closing game...");
     string fname;
     if (find_core_for_board(fname, "monitor.bin"))
@@ -871,6 +903,99 @@ static void reset_game(void) {
     saves_rearm();                      // the same game runs again
 }
 
+// Save-state submenus (Game menu -> Save states). Transfers run inline in
+// item_chosen (main_task, saves settled by show_game_menu); progress goes
+// to the status line from savestates.cpp, results to the menu footer.
+struct SavestateConfirmMenu : ScrollMenu {
+    int slot;
+    std::string message;
+    explicit SavestateConfirmMenu(int s_) : slot(s_) {
+        selected = 1;                   // default: keep the existing state
+    }
+    const char *menu_title() override { return "Overwrite state?"; }
+    int item_count() override { return 3; }
+    std::string item_text(int i) override {
+        char buf[24];
+        if (i == 0) snprintf(buf, sizeof buf, "Yes, overwrite slot %d", slot);
+        else if (i == 1) snprintf(buf, sizeof buf, "No, keep slot %d", slot);
+        else return "<< Back";
+        return buf;
+    }
+    bool item_chosen(int i) override {
+        if (i == 0) {
+            savestate_result r = savestates_save(slot);
+            overlay_status("Save state: %s", savestate_result_str(r));
+            return true;
+        }
+        return true;                    // No / Back: back to the slot list
+    }
+};
+
+struct SavestateSlotMenu : ScrollMenu {
+    bool saving;                        // true: save, false: load
+    std::string message;
+    explicit SavestateSlotMenu(bool sv) : saving(sv) {}
+    const char *menu_title() override { return saving ? "Save state to" : "Load state from"; }
+    int item_count() override { return 5; }   // 4 slots + back
+    std::string item_text(int i) override {
+        if (i == 4) return "<< Back";
+        uint32_t sz = savestates_slot_size(i + 1);
+        char buf[32];
+        if (sz == 0)
+            snprintf(buf, sizeof buf, "Slot %d  (empty)", i + 1);
+        else
+            snprintf(buf, sizeof buf, "Slot %d  (%dK)", i + 1, (int)(sz >> 10));
+        return buf;
+    }
+    void render_footer() override {
+        if (!message.empty()) {
+            overlay_cursor(2, MENU_FOOTER_ROW);
+            overlay_printf("%.30s", message.c_str());
+        }
+    }
+    bool item_chosen(int i) override {
+        if (i == 4) return true;
+        int slot = i + 1;
+        if (saving) {
+            if (savestates_slot_size(slot) != 0) {
+                push_menu(std::unique_ptr<Menu>(new SavestateConfirmMenu(slot)));
+                return false;
+            }
+            savestate_result r = savestates_save(slot);
+            message = std::string("Save: ") + savestate_result_str(r);
+            do_redraw();
+            return false;
+        }
+        savestate_result r = savestates_load(slot);
+        if (r == SS_OK) {
+            pending_action = ACTION_RESUME;     // straight back into the game
+            return true;
+        }
+        message = std::string("Load: ") + savestate_result_str(r);
+        if (savestates_last_load_disturbed()) {
+            // The core was reset from a partial state: restart the game
+            // cleanly instead of resuming garbage (battery save intact).
+            pending_action = ACTION_RESET;
+            return true;
+        }
+        do_redraw();
+        return false;
+    }
+};
+
+struct SavestateTopMenu : ScrollMenu {
+    const char *menu_title() override { return "Save states"; }
+    int item_count() override { return 3; }
+    std::string item_text(int i) override {
+        return i == 0 ? "Save state" : i == 1 ? "Load state" : "<< Back";
+    }
+    bool item_chosen(int i) override {
+        if (i == 2) return true;
+        push_menu(std::unique_ptr<Menu>(new SavestateSlotMenu(i == 0)));
+        return false;
+    }
+};
+
 // Menu over the running game: the menu combo opens it in game, and the main
 // menu links to it while a game is loaded.
 struct GameMenu: Menu {
@@ -905,7 +1030,7 @@ struct GameMenu: Menu {
         overlay_cursor(2, 12);
         overlay_printf("Game options (soon)");
         overlay_cursor(2, 13);
-        overlay_printf("Save states (soon)");
+        overlay_printf(savestates_supported() ? "Save states..." : "Save states (n/a)");
         if (pcxt) {
             overlay_cursor(2, 14);
             overlay_printf("Floppy drives...");
@@ -945,9 +1070,17 @@ struct GameMenu: Menu {
         } else if (row == 11) {
             push_menu(std::unique_ptr<Menu>(create_video_menu()));
             return false;
-        } else if (row == 12 || row == 13) {
+        } else if (row == 12) {
             message = "Not available yet";
             do_redraw();
+            return false;
+        } else if (row == 13) {
+            if (!savestates_supported()) {
+                message = "Save states not supported here";
+                do_redraw();
+                return false;
+            }
+            push_menu(std::unique_ptr<Menu>(new SavestateTopMenu()));
             return false;
         } else if (row == 14) {
             core_info *core = loaded_core();
@@ -976,6 +1109,7 @@ static void show_game_menu(void) {
     overlay(1);
     suppress_held_buttons();            // the button that opened it isn't a choice
     saves_settle();                     // flush the running game's save before the menu
+    savestates_probe();                 // once per game; ~ms if supported
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new GameMenu()));
     menu_current()->do_redraw();
@@ -1002,6 +1136,7 @@ static bool handle_game_action(void) {
             menu_clear();
             overlay(1);
             saves_discard();    // the save RAM went with the reload; flushing would time out per block
+            savestates_discard();
             overlay_status("MODE: reloading menu...");
             string fname;
             if (find_core_for_board(fname, "monitor.bin"))
