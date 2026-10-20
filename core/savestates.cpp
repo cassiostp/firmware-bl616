@@ -28,7 +28,18 @@ namespace {
 
 constexpr int kSlots = 4;
 constexpr uint8_t kFormatVer = 1;
-constexpr uint8_t kCoreStateVer = 1;   // NES and SNES core-state layout version
+// Per-core state layout versions, keyed by core id (monitortang core-id
+// space). The core echoes its id + version in the header and the status
+// frame; both are checked, so a state is only ever loaded on the core
+// build whose layout produced it.
+constexpr uint8_t ss_core_state_ver(int core_id) {
+    switch (core_id) {
+    case 1: return 1;   // NES
+    case 2: return 1;   // SNES (base console; expansion chips refuse)
+    case 5: return 1;   // SMS/GG
+    default: return 0;  // unknown: never matches a core's echo
+    }
+}
 
 // Per-block waits: a block is 512 B at 200 KB/s wire plus the engine's
 // SDRAM time while frozen -- milliseconds. 1 s is generous headroom; the
@@ -112,7 +123,7 @@ bool ss_op_status(int op, SsStatus *out, int timeout_ms) {
     uint64_t f = 0;
     for (int i = 0; i < 8; i++) f |= (uint64_t)p[6 + i] << (8 * i);
     out->flags = f;
-    return p[2] == kFormatVer && p[3] == kCoreStateVer;
+    return p[2] == kFormatVer && p[3] == ss_core_state_ver(ss_core);
 }
 
 // Poll query-status until the engine reaches `want_state`. Matching on the
@@ -374,7 +385,7 @@ savestate_result savestates_load(int slot) {
     for (int i = 0; i < 8; i++) hflags |= (uint64_t)hdr[8 + i] << (8 * i);
     uint32_t total = rd32(hdr + 16);
     if (memcmp(hdr, "TCSS", 4) != 0 || hdr[4] != kFormatVer ||
-        hdr[5] != kCoreStateVer || hdr[6] != ss_core ||
+        hdr[5] != ss_core_state_ver(ss_core) || hdr[6] != (uint8_t)ss_core ||
         hflags != ss_flags || total != ss_total_bytes || fsize != total ||
         (ss_rom_id_known &&
          (rd32(hdr + 28) != ss_rom_size || rd32(hdr + 32) != ss_rom_crc))) {
