@@ -225,7 +225,11 @@ EOF
         done
         add_rom "$sd" "$name"
         echo "=== test $name (sd: $sd) ==="
-        if timeout 400 "$SIM" --sd "$sd" --core "$BACKEND" \
+        # The SNES state case transfers two 273 KiB images and power-cycles;
+        # slower CI runners need more wall time, not longer link deadlines.
+        local wall_timeout=400
+        [ "$name" = n-ss-roundtrip ] && wall_timeout=900
+        if timeout "$wall_timeout" "$SIM" --sd "$sd" --core "$BACKEND" \
                 --script "$HOST_DIR/tests/$name.script"; then
             echo "--- PASS $name"
             PASS=$((PASS + 1))
