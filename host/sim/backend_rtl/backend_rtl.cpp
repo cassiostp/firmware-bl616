@@ -158,20 +158,6 @@ class RtlBackend : public FpgaBackend {
             }
             break;
         case 4:
-            if (tx_type == 0x18 && tx_plen == 2) {
-                uint64_t tick = pos.load(std::memory_order_relaxed);
-                if (b == 1 || b == 2) {
-                    ss_started = tick;
-                    ss_kind = b;
-                } else if ((b == 3 || b == 4) && ss_kind) {
-                    printf("state-transfer %s %s: %llu ticks, %.3f ms at 2 Mbaud\n",
-                           ss_kind == 1 ? "save" : "load", b == 3 ? "complete" : "abort",
-                           (unsigned long long)(tick - ss_started),
-                           double(tick - ss_started) * 1000.0 / SIM_TICKS_PER_S);
-                    fflush(stdout);
-                    ss_kind = 0;
-                }
-            }
             if (tx_type == 0x05 && b == ' ')
                 tx_text_spaces++;
             if (tx_type == 0x07 && corrupt_armed.load(std::memory_order_relaxed) &&
@@ -195,8 +181,6 @@ class RtlBackend : public FpgaBackend {
         }
     }
     // tx_push parser state (under tx_m) + 0x12 counter.
-    uint64_t ss_started = 0;
-    uint8_t ss_kind = 0;
     int tx_ps = 0;
     uint16_t tx_plen = 0, tx_left = 0;
     uint8_t tx_type = 0;
@@ -453,6 +437,9 @@ class RtlBackend : public FpgaBackend {
     };
     std::deque<SchedByte> sched;
     uint64_t line_free = 0;
+    uint64_t ss_started = 0;
+    uint8_t ss_kind = 0, ss_wire_stage = 0, ss_wire_type = 0;
+    uint16_t ss_wire_len = 0, ss_wire_left = 0;
 
     // FPGA -> MCU decode + frame parser state (run_until only).
     std::mutex rx_m;
@@ -651,6 +638,7 @@ class RtlBackend : public FpgaBackend {
         uint64_t bt = byte_ticks.load(std::memory_order_relaxed);
         // MCU waveform level at tick t (prunes consumed bytes).
         while (!sched.empty() && t >= sched.front().start + bt) {
+            observe_mcu_byte(sched.front().b, sched.front().start + bt);
             sched.pop_front();
             backlog.fetch_sub(1, std::memory_order_relaxed);
         }
@@ -667,6 +655,44 @@ class RtlBackend : public FpgaBackend {
                 return (b >> i) & 1;
         }
         return 1; // stop bit
+    }
+
+    // Passive timing at completed wire bytes, after the simulated UART FIFO.
+    void observe_mcu_byte(uint8_t b, uint64_t tick) {
+        switch (ss_wire_stage) {
+        case 0:
+            ss_wire_stage = b == 0xAA ? 1 : 0;
+            break;
+        case 1:
+            ss_wire_len = uint16_t(b) << 8;
+            ss_wire_stage = 2;
+            break;
+        case 2:
+            ss_wire_len |= b;
+            ss_wire_stage = ss_wire_len >= 1 && ss_wire_len <= 1024 ? 3 : 0;
+            break;
+        case 3:
+            ss_wire_type = b;
+            ss_wire_left = ss_wire_len - 1;
+            ss_wire_stage = ss_wire_left ? 4 : 0;
+            break;
+        case 4:
+            if (ss_wire_type == 0x18 && ss_wire_len == 2) {
+                if (b == 1 || b == 2) {
+                    ss_started = tick;
+                    ss_kind = b;
+                } else if ((b == 3 || b == 4) && ss_kind) {
+                    printf("state-transfer %s wire %s: %llu ticks, %.3f ms at 2 Mbaud\n",
+                           ss_kind == 1 ? "save" : "load", b == 3 ? "complete" : "abort",
+                           (unsigned long long)(tick - ss_started),
+                           double(tick - ss_started) * 1000.0 / SIM_TICKS_PER_S);
+                    fflush(stdout);
+                    ss_kind = 0;
+                }
+            }
+            if (--ss_wire_left == 0) ss_wire_stage = 0;
+            break;
+        }
     }
 
     uint64_t next_edge(uint64_t from) {
@@ -840,6 +866,7 @@ class RtlBackend : public FpgaBackend {
         backlog.fetch_sub(sched.size(), std::memory_order_relaxed);
         sched.clear();
         line_free = now;
+        ss_kind = ss_wire_stage = 0;
         dec_idle = true;
         fpos = 0;
         frame_pending.clear();
