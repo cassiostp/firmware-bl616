@@ -40,7 +40,8 @@ enum savestate_result {
 // records paths (no file I/O, no link traffic); probe queries the running
 // core once (250 ms timeout on cores that never answer) and caches the
 // result. set_rom_id records the loaded ROM's identity from the loader
-// that streamed it (NES only for now; other cores probe unsupported).
+// that streamed it (NES and SMS so far; other cores skip it, so loads of
+// their states check flags/size but not ROM identity).
 void savestates_set_game(const char *rom_path, int core_id);
 void savestates_set_rom_id(uint32_t size, uint32_t crc32);
 void savestates_probe(void);

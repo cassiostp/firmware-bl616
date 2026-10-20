@@ -4,6 +4,8 @@
 #include "utils.h"
 #include "cores.h"
 #include "saves.h"
+#include "savestates.h"
+#include "fastload.h"
 #include "overlay.h"
 
 int loadsms(const char *fname) {
@@ -24,6 +26,7 @@ int loadsms(const char *fname) {
     }
     unsigned int off = 0, br, total = 0;
     unsigned int size = get_file_size(fname);
+    uint32_t rom_crc = 0xFFFFFFFFu;     // save-state ROM identity (zlib CRC32)
     off = size % 1024;          // skipping 512-byte header if there is one
 
     // load actual ROM
@@ -44,6 +47,7 @@ int loadsms(const char *fname) {
     do {
         if ((r = f_read(&fcore, fbuf, 1024, &br)) != FR_OK)
             break;
+        rom_crc = fast_crc32_update(rom_crc, fbuf, br);
         send_fbuf_data(br);
         total += br;
         if ((total & 0xfff) == 0) {	// display progress every 4KB
@@ -53,6 +57,7 @@ int loadsms(const char *fname) {
     } while (br == 1024);
 
     DEBUG("loadsms: %d bytes\n", total);
+    savestates_set_rom_id(total, rom_crc ^ 0xFFFFFFFFu);
     overlay_status("Success");
     // The game's save RAM goes in now, while the core is still held in the
     // loading state: restore() sends the .sav, a recovered .sav.tmp, or the

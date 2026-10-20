@@ -43,6 +43,25 @@ open(sys.argv[1], 'wb').write(bytes(h) + bytes(22016 - 512))
 EOF
 }
 
+seed_bad_ss_sms() {
+    # $1 = dir, $2 = rom stem: a state file for another game/build, which
+    # the firmware must refuse before touching the core (GG flag set while
+    # the running game is SMS, plus zero ROM identity).
+    local dir="$1" stem="$2"
+    mkdir -p "$dir/saves/sms"
+    python3 - "$dir/saves/sms/$stem.ss4" <<'EOF'
+import sys
+h = bytearray(512)
+h[0:4] = b'TCSS'
+h[4] = 1; h[5] = 1; h[6] = 5
+h[8] = 1                       # GG mode, not the running SMS game
+h[16:20] = (58880).to_bytes(4, 'little')
+h[20:24] = (16384).to_bytes(4, 'little')
+h[24:28] = (8192).to_bytes(4, 'little')
+open(sys.argv[1], 'wb').write(bytes(h) + bytes(58880 - 512))
+EOF
+}
+
 add_nes_battery() {
     # $1 = dir, $2 = name: minimal iNES ROM (16 KB PRG + 8 KB CHR) WITH the
     # battery bit, so the firmware treats WRAM as battery-backed (needed by
@@ -176,7 +195,8 @@ if [ -n "$RTL_CORE" ]; then
         gba)  SUITE=g-rtl; add_rom() { add_gba_sram "$1" game.gba; } ;;
         sms)  SUITE=s; add_rom() {    # $2 = test: s-gg-config gets a Game Gear file
                   local f=game.sms; [ "$2" = s-gg-config ] && f=game.gg
-                  mkdir -p "$1/sms"; head -c 8192 /dev/zero > "$1/sms/$f"; } ;;
+                  mkdir -p "$1/sms"; head -c 8192 /dev/zero > "$1/sms/$f"
+                  seed_bad_ss_sms "$1" game; } ;;
         *) echo "unknown RTL core: $RTL_CORE"; exit 2 ;;
     esac
     BACKEND="${RTL_CORE}tang-rtl"
