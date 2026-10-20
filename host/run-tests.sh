@@ -171,7 +171,25 @@ add_many() {
 if [ -n "$RTL_CORE" ]; then
     case "$RTL_CORE" in
         nes)  SUITE=r; add_rom() { add_nes_battery "$1" game.nes; add_nes_plain "$1" plain.nes; seed_bad_ss "$1" game; } ;;
-        snes) SUITE=n; add_rom() { add_snes "$1" game.smc; } ;;
+        snes) SUITE=n; add_rom() {
+            add_snes "$1" game.smc
+            mkdir -p "$1/saves/snes"
+            python3 - "$1" <<'EOF'
+import sys, pathlib, zlib
+root=pathlib.Path(sys.argv[1]); total=279040
+h=bytearray(512); h[:4]=b'TCSS'; h[4]=1; h[5]=1; h[6]=2
+flags=(0x1fff<<40)|(0x7fff<<16)|(3<<12)|(5<<8)
+h[8:16]=flags.to_bytes(8,'little'); h[16:20]=total.to_bytes(4,'little')
+h[20:24]=(8192).to_bytes(4,'little'); h[24:28]=(65536).to_bytes(4,'little')
+rom=(root/'snes/game.smc').read_bytes()
+h[28:32]=len(rom).to_bytes(4,'little'); h[32:36]=zlib.crc32(rom).to_bytes(4,'little')
+# Correct identity, deliberately wrong payload CRC: firmware must reject
+# before begin-load, so neither RAM nor the game can be disturbed.
+(root/'saves/snes/game.ss3').write_bytes(h+bytes(total-512))
+h[6]=1  # foreign core, also refused before begin-load
+(root/'saves/snes/game.ss4').write_bytes(h+bytes(total-512))
+EOF
+        } ;;
         md)   SUITE=m; add_rom() { add_md "$1" game.md; } ;;
         gba)  SUITE=g-rtl; add_rom() { add_gba_sram "$1" game.gba; } ;;
         sms)  SUITE=s; add_rom() {    # $2 = test: s-gg-config gets a Game Gear file

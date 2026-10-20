@@ -28,8 +28,7 @@ namespace {
 
 constexpr int kSlots = 4;
 constexpr uint8_t kFormatVer = 1;
-constexpr uint8_t kCoreStateVer = 1;   // NES core-state layout version
-constexpr uint8_t kCoreId = 1;         // NES (monitortang core-id space)
+constexpr uint8_t kCoreStateVer = 1;   // NES and SNES core-state layout version
 
 // Per-block waits: a block is 512 B at 200 KB/s wire plus the engine's
 // SDRAM time while frozen -- milliseconds. 1 s is generous headroom; the
@@ -375,7 +374,7 @@ savestate_result savestates_load(int slot) {
     for (int i = 0; i < 8; i++) hflags |= (uint64_t)hdr[8 + i] << (8 * i);
     uint32_t total = rd32(hdr + 16);
     if (memcmp(hdr, "TCSS", 4) != 0 || hdr[4] != kFormatVer ||
-        hdr[5] != kCoreStateVer || hdr[6] != kCoreId ||
+        hdr[5] != kCoreStateVer || hdr[6] != ss_core ||
         hflags != ss_flags || total != ss_total_bytes || fsize != total ||
         (ss_rom_id_known &&
          (rd32(hdr + 28) != ss_rom_size || rd32(hdr + 32) != ss_rom_crc))) {

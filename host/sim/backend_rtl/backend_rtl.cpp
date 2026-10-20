@@ -158,6 +158,20 @@ class RtlBackend : public FpgaBackend {
             }
             break;
         case 4:
+            if (tx_type == 0x18 && tx_plen == 2) {
+                uint64_t tick = pos.load(std::memory_order_relaxed);
+                if (b == 1 || b == 2) {
+                    ss_started = tick;
+                    ss_kind = b;
+                } else if ((b == 3 || b == 4) && ss_kind) {
+                    printf("state-transfer %s %s: %llu ticks, %.3f ms at 2 Mbaud\n",
+                           ss_kind == 1 ? "save" : "load", b == 3 ? "complete" : "abort",
+                           (unsigned long long)(tick - ss_started),
+                           double(tick - ss_started) * 1000.0 / SIM_TICKS_PER_S);
+                    fflush(stdout);
+                    ss_kind = 0;
+                }
+            }
             if (tx_type == 0x05 && b == ' ')
                 tx_text_spaces++;
             if (tx_type == 0x07 && corrupt_armed.load(std::memory_order_relaxed) &&
@@ -181,6 +195,8 @@ class RtlBackend : public FpgaBackend {
         }
     }
     // tx_push parser state (under tx_m) + 0x12 counter.
+    uint64_t ss_started = 0;
+    uint8_t ss_kind = 0;
     int tx_ps = 0;
     uint16_t tx_plen = 0, tx_left = 0;
     uint8_t tx_type = 0;

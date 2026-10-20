@@ -1,0 +1,108 @@
+# Save-state round trip through the game menu: save slot 1,
+# power-cycle, reload the game, load slot 1 (must resume straight
+# into the game), save slot 2 -- the two files must be identical.
+# Slot 3 (bad payload CRC) and slot 4 (foreign core) are refused
+# cleanly in the menu. Exit path everywhere: Back, Back, Resume.
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+poke-save 0x10 0x42
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+expect-screen "Load state"
+press a
+expect-screen "Slot 1  (empty)"
+press a
+expect-screen "Save: Done" 30s
+expect-file saves/snes/game.ss1 size 279040
+press down
+press down
+press down
+press down
+press a
+press down
+press down
+press a
+press a
+expect-overlay off
+power-cycle
+expect-screen "TangCore"
+press down
+press b
+expect-screen "game.smc"
+press down
+press a
+expect-overlay off
+expect-core snestang
+poke-save 0x10 0x99
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+press down
+press a
+expect-screen "Slot 1  (272K)"
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+wait-dump
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+press a
+press down
+press a
+expect-screen "Save: Done" 30s
+expect-file saves/snes/game.ss2 size 279040
+expect-files-equal saves/snes/game.ss1 saves/snes/game.ss2
+press down
+press down
+press down
+press a
+press down
+press down
+press a
+press a
+expect-overlay off
+hold select+start+l 400ms
+expect-screen "Save states..."
+press down
+press down
+press down
+press down
+press a
+press down
+press a
+press down
+press down
+press a
+expect-screen "State file corrupt"
+press down
+press a
+expect-screen "State is for another"
+press down
+press a
+press down
+press a
+press a
+expect-overlay off
+expect-save-ram 0x10 0x42
+expect-config-bit 17 0
+expect-alive 2s

@@ -5,6 +5,8 @@
 #include "utils.h"
 #include "cores.h"
 #include "saves.h"
+#include "savestates.h"
+#include "fastload.h"
 #include "overlay.h"
 // return 0 if snes header is successfully parsed at off
 // typ 0: LoROM, 1: HiROM, 2: ExHiROM
@@ -137,6 +139,7 @@ int loadsnes(const char *fname) {
         return r;
     }
     unsigned int br, total = 0;
+    uint32_t rom_crc = 0xFFFFFFFFu;
     int size = get_file_size(fname);
     int map_ctrl, rom_type_header, rom_size, ram_size, company;
     // parse SNES header from ROM file
@@ -194,6 +197,7 @@ int loadsnes(const char *fname) {
         if ((r = f_read(&fcore, fbuf, 1024, &br)) != FR_OK)
             break;
         if (br == 0) break;
+        rom_crc = fast_crc32_update(rom_crc, fbuf, br);
         send_fbuf_data(br);
         total += br;
         if ((total & 0xffff) == 0) {	// display progress every 64KB
@@ -209,6 +213,7 @@ int loadsnes(const char *fname) {
         }
     } while (br == 1024);
 
+    savestates_set_rom_id(total, rom_crc ^ 0xFFFFFFFFu);
     overlay_status("Success");
     // The game's save RAM goes in now, while the core is still held in the
     // loading state. The size comes from the header's SRAM size byte (2^n KB,
