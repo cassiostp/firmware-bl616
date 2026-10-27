@@ -6,6 +6,7 @@
 #include "overlay.h"
 #include "saves.h"
 #include "savestates.h"
+#include "dbg_log.h"
 #include "fastload.h"
 
 // Load a NES ROM
@@ -29,6 +30,7 @@ int loadnes(const char *fname) {
         goto loadnes_end;
     }
     size = get_file_size(fname);
+    diag_step("nes: file open, %u bytes", size);
 
     // iNES header byte 6 bit 1: battery-backed WRAM. nestang reports every CPU
     // write to the $6000-$7FFF window as a save-RAM write (the core cannot
@@ -68,12 +70,15 @@ int loadnes(const char *fname) {
     } while (br == 1024 /*BLOCK_SIZE*/);
 
     DEBUG("loadnes: %d bytes\n", total);
+    diag_step("nes: rom sent, %u bytes", total);
     savestates_set_rom_id(total, rom_crc ^ 0xFFFFFFFFu);
     overlay_status("Success");
     // The game's save RAM goes in now, while the core is still held in the
     // loading state: restore() sends the .sav, a recovered .sav.tmp, or the
     // blank image, so the previous game's RAM cannot leak into this one.
+    diag_step("nes: restoring save");
     saves_restore();
+    diag_step("nes: save restored");
     core_running = true;
 
     overlay(0);		// turn off OSD

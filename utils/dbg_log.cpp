@@ -6,9 +6,10 @@
 #include <string.h>
 
 #ifndef TANGCORE_HOST
-// newlib may declare mallinfo without providing it (heap_3): weak, so the
-// null check in dbg_log_heap_free() says whether it exists.
-extern "C" __attribute__((weak)) struct mallinfo mallinfo(void);
+// malloc is the SDK's own heap (components/libc/newlib/port_memory.c:
+// _malloc_r -> bflb_malloc), not newlib's, so mallinfo says nothing.
+// kfree_size() is that heap's free byte count.
+extern "C" uint32_t kfree_size(void);
 #endif
 
 extern "C" {
@@ -126,9 +127,7 @@ int32_t dbg_log_heap_free(void) {
 #ifdef TANGCORE_HOST
     return (int32_t)mallinfo2().fordblks;   // glibc: mallinfo() is deprecated
 #else
-    if (&mallinfo)
-        return (int32_t)mallinfo().fordblks;
-    return -1;
+    return (int32_t)kfree_size();
 #endif
 }
 
@@ -229,6 +228,10 @@ bool dbg_log_dump_postmortem(const char *dir) {
     rename_over(older, oldest);
     rename_over(newest, older);
     return write_ring_to(newest);
+}
+
+bool dbg_log_save_as(const char *path) {
+    return write_ring_to(path);
 }
 
 bool dbg_log_save(const char *dir) {

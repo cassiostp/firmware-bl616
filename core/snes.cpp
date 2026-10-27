@@ -6,6 +6,7 @@
 #include "cores.h"
 #include "saves.h"
 #include "savestates.h"
+#include "dbg_log.h"
 #include "fastload.h"
 #include "overlay.h"
 // return 0 if snes header is successfully parsed at off
@@ -138,6 +139,7 @@ int loadsnes(const char *fname) {
         overlay_status("Cannot open file");
         return r;
     }
+    diag_step("snes: file open");
     unsigned int br, total = 0;
     uint32_t rom_crc = 0xFFFFFFFFu;
     int size = get_file_size(fname);
@@ -181,6 +183,7 @@ int loadsnes(const char *fname) {
         }
     }
 
+    diag_step("snes: header ok, map %02x type %02x rom %d ram %d", map_ctrl, rom_type_header, rom_size, ram_size);
     // load actual ROM
     set_loading_state(1);		// enable game loading, this resets SNES
     core_running = false;
@@ -213,6 +216,7 @@ int loadsnes(const char *fname) {
         }
     } while (br == 1024);
 
+    diag_step("snes: rom sent, %u bytes", total);
     savestates_set_rom_id(total, rom_crc ^ 0xFFFFFFFFu);
     overlay_status("Success");
     // The game's save RAM goes in now, while the core is still held in the
@@ -253,7 +257,9 @@ int loadsnes(const char *fname) {
             saves_set_menu_only(sa1_save);
         }
     }
+    diag_step("snes: restoring save");
     saves_restore();
+    diag_step("snes: save restored");
     core_running = true;
 
     overlay(0);		// turn off OSD

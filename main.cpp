@@ -212,18 +212,23 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
     // Check the extension before touching the FPGA. Programming the core
     // first and then rejecting the file leaves the new core running with
     // nothing loaded and an undismissable error box.
+    diag_step("load_game %s on %s, force %d", rom.c_str(), core->display_name, force_program ? 1 : 0);
     if (!core_supports_file(core, rom.c_str())) {
         overlay_message("Unsupported file type", 1);
         return -1;
     }
+    diag_step("file type ok");
 
     // Move the save engine to the new game now: the game being replaced still
     // has its save RAM in the FPGA, so its unsaved save must be flushed before
     // programming a bitstream or streaming a new ROM.
     saves_set_game(rom.c_str(), core->id);
+    diag_step("saves_set_game done");
     savestates_set_game(rom.c_str(), core->id);
+    diag_step("savestates_set_game done");
 
     active_core = get_core_id();
+    diag_step("active core %d, want %d", active_core, core->id);
 
     if (force_program || active_core != core->id) {
         string fname_core;
@@ -241,8 +246,10 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
             }
             found = find_core_for_board(fname_core, core->core_file);
         }
+        diag_step("core file %s found %d", fname_core.c_str(), found ? 1 : 0);
         if (found) {
             program_fpga(fname_core.c_str());
+            diag_step("programmed");
             forget_game();                  // new bitstream, nothing loaded yet
             last_core_file = fname_core;
             _overlay_on = 1;
@@ -258,25 +265,33 @@ static int load_game(core_info *core, const string &rom, bool force_program) {
             }
         }
     }
+    diag_step("core answered %d", active_core);
     controls_prime_core_id(active_core);    // it answered: not a MODE reload
+    diag_step("controls primed");
 
     if (active_core == core->id) {
         dbg_log("rom load start: %s on %s", rom.c_str(), core->display_name);
         overlay_status("Loading ROM: %s\n", rom.c_str());
         string loading = rom;               // rom may be last_rom itself
+        diag_step("calling load_rom");
         if (core->load_rom(loading.c_str()) != 0) {
             dbg_log("rom load FAILED: %s", loading.c_str());
+            diag_step("load_rom failed");
             return -1;                      // the loader showed the error
         }
         dbg_log("rom load ok: %s", loading.c_str());
+        diag_step("load_rom ok");
         // Drive the video options now that the core runs. A fresh core
         // defaults every core_config bit to 0, and the low 16 bits stay as
         // they are (core specific).
         apply_core_config();
+        diag_step("core config sent");
         clock_send_to_core(core->id == 3 ? gba_current_gpio_flags() : 0);
+        diag_step("clock sent");
         last_core = core;
         last_rom = loading;
         saves_rearm();                  // the game starts: dirty notices matter again
+        diag_step("game started");
         return 1;
     } else {
         overlay_status("Core failed to load\n");
@@ -310,6 +325,7 @@ static int menu_loadrom(const char *dir) {
         }
     }
     bool r = file_chooser.choose_file(fname);
+    diag_step("chooser returned %d: %s", r ? 1 : 0, r ? fname.c_str() : "");
     if (!r) {
         overlay_status("No file chosen");
         return 1;
@@ -465,6 +481,7 @@ int joy_choice(int start_line, int len, int *active, int *wrapped) {
         return 0;                  // its buttons aren't navigation
 
     if (!overlay_on()) {           // keep sending HID state to core when OSD is off
+        diag_step("hid loop next");
         send_hid_to_core();
         return 0;
     }
@@ -531,6 +548,26 @@ static unsigned stack_free_words(TaskHandle_t h)
 #else
     return h ? (unsigned)uxTaskGetStackHighWaterMark(h) : 0;
 #endif
+}
+
+void diag_step(const char *fmt, ...) {
+    char msg[160];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    dbg_log("diag: %s (heap free %ld, stk main %u)", msg,
+            (long)dbg_log_heap_free(), stack_free_words(main_task_handle));
+    if (saves_busy()) {                 // FatFs isn't reentrant
+        dbg_log("diag: save in flight, ring not written");
+        return;
+    }
+    char path[48];
+    snprintf(path, sizeof path, "%stangcore", drv);
+    f_mkdir(path);                      // FR_EXIST is fine
+    snprintf(path, sizeof path, "%stangcore/diaglog.txt", drv);
+    if (!dbg_log_save_as(path))
+        dbg_log("diag: could not write %s", path);
 }
 
 // Recover from a wedged firmware by restarting the MCU through

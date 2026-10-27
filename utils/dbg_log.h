@@ -67,6 +67,13 @@ uint32_t dbg_crc32(const void *data, size_t n);
 // no save is in flight. Returns false on a file error.
 bool dbg_log_dump_postmortem(const char *dir);
 bool dbg_log_save(const char *dir);
+bool dbg_log_save_as(const char *path);  // the same, to an exact file
+
+// Diagnostic build: log one step of a game start, with the free heap and
+// main_task's stack margin, and write the whole ring to
+// <drive>tangcore/diaglog.txt at once. A hang right after a step still
+// leaves that step on the card. Defined in main.cpp.
+void diag_step(const char *fmt, ...);
 
 #ifdef __cplusplus
 }
