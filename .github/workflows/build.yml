@@ -91,6 +91,9 @@ jobs:
           riscv64-unknown-elf-gcc --version | head -n 1
           make TANG_BOARD="$TANG_BOARD"
 
+      - name: Check for globals that need constructors
+        run: sh scripts/check-static-init.sh build/build_out/tangcore_bl616.map
+
       - name: Collect outputs
         env:
           BOARD: ${{ matrix.board }}
@@ -98,6 +101,10 @@ jobs:
           mkdir -p out
           # project(tangcore) + CHIP=bl616 -> build/build_out/tangcore_bl616.bin
           cp build/build_out/tangcore_bl616.bin "out/tangcore_${BOARD}.bin"
+          # ELF and map, to turn a fault address from the board into a line
+          for f in build/build_out/tangcore_bl616.elf build/build_out/tangcore_bl616.map; do
+            [ -f "$f" ] && cp "$f" "out/$(basename "$f" | sed "s/bl616/${BOARD}/")"
+          done
           # Same transformation as buildall.bat applies to flash.ini
           sed -e "s/bl616_fpga_partner\.bin/bl616_fpga_partner_${BOARD}.bin/" \
               -e "s/tangcore\.bin/tangcore_${BOARD}.bin/" \
@@ -120,4 +127,6 @@ jobs:
             out/tangcore_${{ matrix.board }}.bin
             out/flash_${{ matrix.board }}.ini
             out/bl616_fpga_partner_${{ matrix.board }}.bin
+            out/tangcore_${{ matrix.board }}.elf
+            out/tangcore_${{ matrix.board }}.map
           if-no-files-found: error

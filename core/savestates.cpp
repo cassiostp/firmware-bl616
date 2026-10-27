@@ -48,8 +48,12 @@ constexpr int kStatusTimeoutMs = 150;
 constexpr int kBlockTimeoutMs = 1000;
 constexpr int kReadyTimeoutMs = 3000;
 
-std::string ss_base[kSlots];        // ".../<rom>.ssN" (empty: no game)
-std::string ss_saves_dir;           // "<drv>saves/<geom>", for mkdirs
+// Plain char arrays, as in saves.cpp, never std::string: the SDK's linker
+// script keeps no .init_array, so global constructors never run, and a
+// global std::string starts with a null data pointer (assigning a short
+// path to it writes to address 0).
+char ss_base[kSlots][256];          // ".../<rom>.ssN" ("": no game)
+char ss_saves_dir[256];             // "<drv>saves/<geom>", for mkdirs
 int ss_core = -1;
 uint32_t ss_rom_size = 0, ss_rom_crc = 0;
 bool ss_rom_id_known = false;
@@ -203,10 +207,10 @@ const char *ss_geom_dir(int core_id) {
 }
 
 bool ss_mkdirs(void) {
-    if (ss_saves_dir.empty()) return false;
+    if (!ss_saves_dir[0]) return false;
     std::string root = std::string(drv) + "saves";
     FRESULT r1 = f_mkdir(root.c_str());
-    FRESULT r2 = f_mkdir(ss_saves_dir.c_str());
+    FRESULT r2 = f_mkdir(ss_saves_dir);
     return r1 == FR_OK || r1 == FR_EXIST || r2 == FR_OK || r2 == FR_EXIST;
 }
 
@@ -216,18 +220,26 @@ void savestates_set_game(const char *rom_path, int core_id) {
     savestates_discard();
     const char *geom = ss_geom_dir(core_id);
     if (!geom || !rom_path) return;
-    ss_saves_dir = std::string(drv) + "saves/" + geom;
     // Same base-name rule as saves.cpp: last path component, extension off.
     const char *base = strrchr(rom_path, '/');
     base = base ? base + 1 : rom_path;
-    std::string stem(base);
-    size_t dot = stem.rfind('.');
-    if (dot != std::string::npos) stem.resize(dot);
-    if (stem.empty()) return;
+    const char *dot = strrchr(base, '.');
+    int stem_len = dot ? (int)(dot - base) : (int)strlen(base);
+    if (stem_len == 0) return;
+    int n = snprintf(ss_saves_dir, sizeof ss_saves_dir, "%ssaves/%s", drv, geom);
+    if (n < 0 || n >= (int)sizeof ss_saves_dir) {
+        ss_saves_dir[0] = 0;
+        return;
+    }
     for (int i = 0; i < kSlots; i++) {
-        char ext[8];
-        snprintf(ext, sizeof(ext), ".ss%d", i + 1);
-        ss_base[i] = ss_saves_dir + "/" + stem + ext;
+        // A path too long for the buffer: no save states for this game,
+        // rather than a truncated name that points at another file.
+        n = snprintf(ss_base[i], sizeof ss_base[i], "%s/%.*s.ss%d",
+                     ss_saves_dir, stem_len, base, i + 1);
+        if (n < 0 || n >= (int)sizeof ss_base[i]) {
+            savestates_discard();
+            return;
+        }
     }
     ss_core = core_id;
 }
@@ -239,8 +251,8 @@ void savestates_set_rom_id(uint32_t size, uint32_t crc32) {
 }
 
 void savestates_discard(void) {
-    for (auto &p : ss_base) p.clear();
-    ss_saves_dir.clear();
+    for (auto &p : ss_base) p[0] = 0;
+    ss_saves_dir[0] = 0;
     ss_core = -1;
     ss_rom_size = ss_rom_crc = 0;
     ss_rom_id_known = false;
@@ -281,12 +293,12 @@ bool savestates_supported(void) {
 }
 
 uint32_t savestates_slot_size(int slot) {
-    if (slot < 1 || slot > kSlots || ss_base[slot - 1].empty()) return 0;
-    return get_file_size(ss_base[slot - 1].c_str());
+    if (slot < 1 || slot > kSlots || !ss_base[slot - 1][0]) return 0;
+    return get_file_size(ss_base[slot - 1]);
 }
 
 savestate_result savestates_save(int slot) {
-    if (slot < 1 || slot > kSlots || ss_base[slot - 1].empty()) return SS_NO_GAME;
+    if (slot < 1 || slot > kSlots || !ss_base[slot - 1][0]) return SS_NO_GAME;
     if (!ss_probed) savestates_probe();
     if (!ss_ok) return SS_UNSUPPORTED;
     if (!ss_mkdirs()) return SS_SD_ERROR;
@@ -307,7 +319,7 @@ savestate_result savestates_save(int slot) {
     }
     int blocks = st.total_blocks;
 
-    std::string tmp = ss_base[slot - 1] + ".tmp";
+    std::string tmp = std::string(ss_base[slot - 1]) + ".tmp";
     if (f_open(&fss, tmp.c_str(), FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
         ss_send_op(4);
         return SS_SD_ERROR;
@@ -349,8 +361,8 @@ savestate_result savestates_save(int slot) {
     f_close(&fss);
     heartbeat_bump();
     if (res == SS_OK) {
-        f_unlink(ss_base[slot - 1].c_str());
-        if (f_rename(tmp.c_str(), ss_base[slot - 1].c_str()) != FR_OK)
+        f_unlink(ss_base[slot - 1]);
+        if (f_rename(tmp.c_str(), ss_base[slot - 1]) != FR_OK)
             res = SS_SD_ERROR;
     }
     if (res != SS_OK)
@@ -365,11 +377,11 @@ bool savestates_last_load_disturbed(void) { return ss_last_disturbed; }
 
 savestate_result savestates_load(int slot) {
     ss_last_disturbed = false;
-    if (slot < 1 || slot > kSlots || ss_base[slot - 1].empty()) return SS_NO_GAME;
+    if (slot < 1 || slot > kSlots || !ss_base[slot - 1][0]) return SS_NO_GAME;
     if (!ss_probed) savestates_probe();
     if (!ss_ok) return SS_UNSUPPORTED;
 
-    const char *path = ss_base[slot - 1].c_str();
+    const char *path = ss_base[slot - 1];
     uint32_t fsize = get_file_size(path);
     if (fsize == 0) return SS_EMPTY;
     if (f_open(&fss, path, FA_READ) != FR_OK) return SS_SD_ERROR;
