@@ -81,6 +81,9 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
   the whole timeout, never contains) the substring.
 - `expect-no-clear [timeout]` — no overlay_clear traffic for the whole
   window (an idle menu never blanks; 2 s default).
+- `mark-clears`, then `expect-no-clear-since-mark` — no overlay_clear
+  traffic since the mark, presses included (a cursor step inside a menu's
+  window only moves the `>`).
 - `expect-cursor-row 9` — the `>` cursor is on that OSD row.
 - `expect-core smstang` — the programmed core (`monitor nestang snestang
   gbatang mdtang smstang pctang`).

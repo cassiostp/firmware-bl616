@@ -461,6 +461,7 @@ run_test hz120-fallback sms:cgame.sms
 run_test hz120-video sms:cgame.sms hz120
 run_test hz120-video60 sms:cgame.sms
 run_test menu-scroll manysms
+run_test menu-step-noclear
 run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms

@@ -1,0 +1,45 @@
+# A step inside a scrolling menu's window only moves the > marker: no
+# overlay_clear, so Options and the save-state menus don't blink on every
+# press. A step that moves the window still redraws it.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "--- Options ---"
+expect-cursor-row 9
+wait 1s
+mark-clears
+press down
+expect-cursor-row 10
+press down
+expect-cursor-row 11
+press up
+expect-cursor-row 10
+expect-no-clear-since-mark
+# Down to the window's last row, still no redraw...
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 20
+expect-no-screen "<< Back" 500ms
+expect-no-clear-since-mark
+# ...and one more scrolls, which redraws.
+press down
+expect-screen "<< Back"
+expect-screen "^"
+expect-cursor-row 20
+press a
+expect-screen "TangCore"

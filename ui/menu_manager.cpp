@@ -31,6 +31,25 @@ bool menu_is_active() {
     return !menu_stack.empty();
 } 
 
+// After a scrolling menu took an Up/Down step. Only a step that moved the
+// window redraws (overlay_clear blanks the screen, so redrawing on every
+// step made these menus blink); otherwise the > marker just moves, drawn
+// by the loop like any menu's. A moved window redraws at once: the cursor
+// can sit still while the list moves, so without the redraw one tap would
+// step twice. Its debounce is here, as the loop's only covers a cursor
+// that changed row.
+static void scroll_menu_moved(std::vector<int> &options, int &active) {
+    Menu *m = menu_current();
+    if (m->redraw) {
+        m->render();
+        m->redraw = false;
+        options = m->get_options();
+        delay(100);
+    }
+    active = m->cursor_index();
+    suppress_held_buttons();            // one press, one step
+}
+
 void menu_input_loop() {
     if (!menu_is_active())
         return;
@@ -60,15 +79,7 @@ void menu_input_loop() {
 
         if ((joy1 & 0x10) || (joy2 & 0x10)) {   // up: wrap to the last item
             if (menu_current()->move_cursor(-1)) {
-                // A scrolling menu redraws at once: the cursor can sit
-                // still while the list moves, so without an immediate
-                // redraw one tap would step twice. Debounce like a move.
-                menu_current()->render();
-                menu_current()->redraw = false;
-                options = menu_current()->get_options();
-                active = menu_current()->cursor_index();
-                suppress_held_buttons();    // one press, one step
-                delay(100);
+                scroll_menu_moved(options, active);
             } else if (active > 0) {
                 active--;
                 suppress_held_buttons();    // one press, one step
@@ -79,12 +90,7 @@ void menu_input_loop() {
         }
         if ((joy1 & 0x20) || (joy2 & 0x20)) {   // down: wrap to the first item
             if (menu_current()->move_cursor(+1)) {
-                menu_current()->render();
-                menu_current()->redraw = false;
-                options = menu_current()->get_options();
-                active = menu_current()->cursor_index();
-                suppress_held_buttons();    // one press, one step
-                delay(100);
+                scroll_menu_moved(options, active);
             } else if (active < (int)options.size() - 1) {
                 active++;
                 suppress_held_buttons();    // one press, one step
@@ -185,12 +191,14 @@ bool ScrollMenu::move_cursor(int dir) {
     int n = item_count();
     if (n <= 0)
         return true;
+    int old_scroll = scroll;
     selected += dir;
     if (selected < 0) selected = n - 1;    // wrap
     if (selected >= n) selected = 0;
     if (selected < scroll) scroll = selected;
     if (selected >= scroll + MENU_LIST_ROWS) scroll = selected - MENU_LIST_ROWS + 1;
-    do_redraw();
+    if (scroll != old_scroll)
+        do_redraw();                        // the window moved
     return true;
 }
 

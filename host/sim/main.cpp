@@ -502,6 +502,7 @@ int run_script() {
         lines.push_back(buf);
     fclose(f);
 
+    uint64_t clear_mark = 0;            // overlay_clear count at mark-clears
     for (long i = g_script_pos; i < (long)lines.size(); i++) {
         std::string line = lines[(size_t)i];
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
@@ -585,6 +586,19 @@ int run_script() {
                     script_fail(lineno, "menu blanked itself while idle");
                 msleep(20);
             }
+        } else if (cmd == "mark-clears") {
+            if (t.size() != 1)
+                script_fail(lineno, "usage: mark-clears");
+            printf("[%d] mark-clears\n", lineno);
+            clear_mark = fpga::blank_lines();
+        } else if (cmd == "expect-no-clear-since-mark") {
+            // Unlike expect-no-clear this covers presses: a press returns
+            // only after the screen changed, so a redraw it caused is over.
+            if (t.size() != 1)
+                script_fail(lineno, "usage: expect-no-clear-since-mark");
+            printf("[%d] expect-no-clear-since-mark\n", lineno);
+            if (fpga::blank_lines() != clear_mark)
+                script_fail(lineno, "overlay cleared since mark-clears");
         } else if (cmd == "expect-cursor-row") {
             long row;
             uint64_t to = 10000;
