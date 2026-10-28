@@ -18,6 +18,13 @@ uint32_t uart_rx_err_count(void);
 // Raw UART_INTSTS snapshot and the ring's current fill, for link diagnostics.
 uint32_t uart_rx_intsts(void);
 uint32_t uart_rx_ring_level(void);
+// The parser task's current frame (written per byte by uart1_rx_task, read
+// only for the link-stall log line): type, declared length, payload bytes
+// taken, and when the frame's 0xAA was processed (mtimer ms, 0 = no frame).
+extern volatile uint8_t uart_rx_dbg_type;
+extern volatile uint16_t uart_rx_dbg_len;
+extern volatile uint16_t uart_rx_dbg_got;
+extern volatile uint64_t uart_rx_dbg_start_ms;
 
 // The ring and the interrupt handler's body, split from the hardware access so
 // the host tests can run them against a modelled FIFO.
