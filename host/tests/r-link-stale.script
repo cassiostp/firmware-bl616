@@ -1,0 +1,25 @@
+# Same trap as u-link-stale, against verilated nestang: a truncated
+# 1024-byte save-block header (the largest length the parser accepts;
+# model traffic rides on top of the scripted joy frames, so a 515 frame
+# would fill before the combo) fed by joy frames closer than the 50 ms
+# gap. The frame-age cap must free the parser well inside the 1 s link
+# resync: the combo at 300 ms opens the menu and no "fpga silent" line
+# is logged. Before the fix the combo is eaten by the open frame.
+expect-screen "TangCore"
+press b
+expect-screen "game.nes"
+press down
+press a
+expect-overlay off
+expect-core nestang
+wait 300ms
+log-mark
+inject-rx aa04000a0010000102030405060708090a0b0c0d0e0f
+pad-churn raw
+wait 300ms
+hold select+start+l 400ms
+pad-churn off
+expect-screen "Close game"
+expect-core nestang
+expect-overlay on
+expect-no-log "fpga silent"

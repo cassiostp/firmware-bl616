@@ -1,0 +1,28 @@
+# A truncated save-block frame (header + a few payload bytes, as when a
+# byte is lost mid-dump or the core abandons a block) must not trap the
+# parser for the whole 1 s link-resync window: joy frames arrive every
+# 40 ms here, under the 50 ms mid-frame gap, so only the frame-age cap
+# frees the parser. The menu combo 300 ms after the injection must work
+# (before the fix it lands inside the open 515-byte frame and is eaten).
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+wait 300ms
+log-mark
+inject-rx aa02030a0010000102030405060708090a0b0c0d0e0f
+pad-churn raw
+wait 300ms
+hold select+start+l 400ms
+pad-churn off
+expect-screen "Close game"
+expect-core smstang
+expect-overlay on
+expect-no-log "fpga silent"
