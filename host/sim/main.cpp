@@ -324,6 +324,19 @@ void cmd_hold(uint16_t bits, uint64_t ms) {
     msleep(150);
 }
 
+// Quick taps with no settle around them, as a fast thumb makes: `count`
+// presses `on` long and `off` apart (press and hold settle before and after).
+void cmd_taps(uint16_t bits, long count, uint64_t on, uint64_t off) {
+    for (long i = 0; i < count; i++) {
+        pads_add(bits);
+        msleep(on);
+        pads_remove(bits);
+        if (i + 1 < count)
+            msleep(off);
+    }
+    msleep(300);
+}
+
 // Fault injection: buttons that stay held in the firmware's pad state, as
 // when a release frame is lost on the wire (FPGA pads only report changes).
 // `unstuck` releases them again (the next change frame reaches the firmware).
@@ -536,6 +549,16 @@ int run_script() {
                 script_fail(lineno, "usage: hold <buttons> <dur>");
             printf("[%d] hold %s %s\n", lineno, t[1].c_str(), t[2].c_str());
             cmd_hold(bits, ms);
+        } else if (cmd == "taps") {
+            uint16_t bits;
+            long count;
+            uint64_t on, off;
+            if (t.size() != 5 || !parse_btns(t[1], bits) || !parse_num(t[2], count) ||
+                count < 1 || !parse_dur(t[3], on) || !parse_dur(t[4], off))
+                script_fail(lineno, "usage: taps <buttons> <count> <on> <off>");
+            printf("[%d] taps %s %ld %s %s\n", lineno, t[1].c_str(), count,
+                   t[3].c_str(), t[4].c_str());
+            cmd_taps(bits, count, on, off);
         } else if (cmd == "stuck") {
             uint16_t bits;
             if (t.size() != 2 || !parse_btns(t[1], bits))

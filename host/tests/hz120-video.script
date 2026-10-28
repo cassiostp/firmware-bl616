@@ -22,7 +22,6 @@ press down
 press down
 press down
 press down
-press down
 press a
 expect-screen "Saved"
 press down

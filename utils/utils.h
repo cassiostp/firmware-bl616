@@ -102,6 +102,10 @@ extern void draw_diag_line(uint16_t joy1, uint16_t joy2, uint16_t hid1, uint16_t
 // Ignore the buttons held right now until each is released, so a button that
 // triggered something doesn't also act on whatever comes next.
 extern void suppress_held_buttons(void);
+// A menu's debounce: wait `ms` while still watching the pads, so a release
+// and a new press inside the wait count as a second press (a plain delay
+// loses it). The press comes back from the next get_joypad_states().
+extern void pad_wait(uint32_t ms);
 extern void send_blank_packet(void);
 
 static inline void delay(uint32_t ms)

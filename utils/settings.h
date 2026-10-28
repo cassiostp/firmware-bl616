@@ -41,7 +41,6 @@ struct Settings {
     uint8_t lcd_grid_strength;  // 0..3: the grid dims 1/8, 1/4, 3/8, 1/2 (video_config bits 17:16)
     bool display120;            // load the 120 Hz (480p) core build when one is on the card
     uint8_t bfi_mode;           // 0..3: off, black, dim, rolling (video_config bits 21:20)
-    bool pause_in_menu;         // pause the game while a menu is shown over it (core_config bit 17)
     uint32_t clock_unix;        // wall clock anchor: unix seconds at the last save (0 = never set)
     uint32_t clock_hbn;         // HBN RTC counter (seconds) at that same instant
     uint8_t solar_pct;          // 0..100: Boktai solar sensor level (frame 0x14)
@@ -54,7 +53,7 @@ void settings_load();           // call after the drive is mounted. missing file
 bool settings_save();
 
 // Send the options to the running core: scanlines, and pause while a menu is
-// shown over a running game (if pause_in_menu). Keeps the low 16 bits.
+// shown over a running game. Keeps the low 16 bits.
 // overlay() calls it on every change.
 void apply_core_config();
 

@@ -198,6 +198,8 @@ void heartbeat_bump(void) {
 }
 
 static uint16_t suppress_mask[4];   // per pad: buttons ignored until released
+static uint16_t wait_prev[4];       // pad_wait: the state at its previous look
+static uint16_t wait_press[4];      // pad_wait: presses seen, not yet returned
 
 // read joypad states, without suppressed buttons
 void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t *hid2)
@@ -220,6 +222,8 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
             if (raw[i] != last_raw[i])
                 changed = true;
             suppress_mask[i] &= *pads[i];       // released: stop ignoring
+            *pads[i] |= wait_press[i];          // pressed during a pad_wait: once
+            wait_press[i] = 0;
             *pads[i] &= ~suppress_mask[i];
         }
         if (changed)
@@ -232,6 +236,35 @@ void get_joypad_states(uint16_t *joy1, uint16_t *joy2, uint16_t *hid1, uint16_t 
                 raw[0] & 0xfff, raw[1] & 0xfff, raw[2] & 0xfff, raw[3] & 0xfff,
                 supp[0] & 0xfff, supp[1] & 0xfff, supp[2] & 0xfff, supp[3] & 0xfff);
     heartbeat_bump();       // every menu/input loop calls this: alive
+}
+
+// Pads only report changes, and menus read the current state, so a blind
+// debounce delay loses input: a release and a new press inside it never
+// clear the "one press, one step" suppression (the new press reads as the
+// old one still held), and a whole tap inside it is never seen at all.
+// Keep looking every 10 ms instead: a release clears the suppression as
+// get_joypad_states() would, and a new press is kept for its next call.
+void pad_wait(uint32_t ms)
+{
+    uint64_t t0 = bflb_mtimer_get_time_ms();
+    bool first = true;
+    for (;;) {
+        if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+            uint16_t now[4] = {joy1_state, joy2_state, hid1_state, hid2_state};
+            for (int i = 0; i < 4; i++) {
+                suppress_mask[i] &= now[i];
+                if (!first)
+                    wait_press[i] |= now[i] & ~wait_prev[i] & ~suppress_mask[i];
+                wait_prev[i] = now[i];
+            }
+            xSemaphoreGive(state_mutex);
+        }
+        first = false;
+        uint64_t spent = bflb_mtimer_get_time_ms() - t0;
+        if (spent >= ms)
+            break;
+        delay(ms - spent < 10 ? (uint32_t)(ms - spent) : 10);
+    }
 }
 
 void suppress_held_buttons(void)

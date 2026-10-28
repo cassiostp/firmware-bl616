@@ -44,7 +44,7 @@ static void scroll_menu_moved(std::vector<int> &options, int &active) {
         m->render();
         m->redraw = false;
         options = m->get_options();
-        delay(100);
+        pad_wait(100);
     }
     active = m->cursor_index();
     suppress_held_buttons();            // one press, one step
@@ -143,7 +143,7 @@ void menu_input_loop() {
         }
 
         if (last != active)
-            delay(100);
+            pad_wait(100);
         last = active;
     }
     dbg_log("menu loop: exit, depth=%d overlay=%d pending=%d",
