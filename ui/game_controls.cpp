@@ -265,13 +265,19 @@ static void check_mode_button(bool in_game, bool game_loaded) {
                 link_flushed = true;
                 link_flush_at = bflb_mtimer_get_time_ms();
                 dbg_log("link: fpga silent %lums with a game loaded, resync "
-                        "(ringdrop %lu fifovf %d uarerr %lu intsts %08lx ring %lu)",
+                        "(ringdrop %lu fifovf %d uarerr %lu intsts %08lx ring %lu "
+                        "parser type=%02x got=%u len=%u age=%lums)",
                         (unsigned long)(poll_start - silent_since),
                         (unsigned long)uart_rx_ring_dropped(),
                         uart_rx_fifo_overflowed() ? 1 : 0,
                         (unsigned long)uart_rx_err_count(),
                         (unsigned long)uart_rx_intsts(),
-                        (unsigned long)uart_rx_ring_level());
+                        (unsigned long)uart_rx_ring_level(),
+                        uart_rx_dbg_type, (unsigned)uart_rx_dbg_got,
+                        (unsigned)uart_rx_dbg_len,
+                        (unsigned long)(uart_rx_dbg_start_ms
+                            ? bflb_mtimer_get_time_ms() - uart_rx_dbg_start_ms
+                            : 0));
                 fpga_link_flush();
             }
         }

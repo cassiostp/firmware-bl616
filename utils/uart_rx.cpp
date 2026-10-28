@@ -28,6 +28,10 @@ static volatile uint32_t ring_tail;     // next slot the task reads
 static volatile uint32_t ring_lost;     // bytes dropped because the ring was full
 static volatile uint32_t ring_errs;     // interrupts that saw an RX error bit
 static volatile uint32_t rx_epoch;      // parser-reset requests (see uart_rx.h)
+volatile uint8_t uart_rx_dbg_type;      // parser snapshot for the stall log
+volatile uint16_t uart_rx_dbg_len;
+volatile uint16_t uart_rx_dbg_got;
+volatile uint64_t uart_rx_dbg_start_ms;
 
 void uart_rx_ring_reset(void) {
     ring_head = 0;

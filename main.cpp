@@ -592,6 +592,13 @@ static void watchdog_task(void *pvParameters)
 // len counts the command byte plus the payload. 0 has no command byte.
 // 1024 is above a save/floppy frame (515) and below a minutes-long swallow.
 static const uint16_t RX_LEN_MAX = 1024;
+// A real frame's bytes arrive back to back at 2 Mbaud: the longest (515)
+// spans 2.6 ms on the wire, and the core pauses mid-block for at most its
+// per-byte fetch wait (< 1 ms). A frame still open 100 ms after its 0xAA
+// is not a frame, it is byte trickle (joy polls at 46.5 ms cadence) being
+// swallowed into a truncated or shifted length -- the round-7c stall,
+// which the 50 ms gap resync cannot see and the 1 s link resync masked.
+static const uint32_t RX_FRAME_MAX_MS = 100;
 
 static void rx_gap_resync(uint8_t type, uint16_t pos, uint16_t len, uint64_t gap) {
     if (type == 0x0A && pos >= 4)
@@ -600,6 +607,17 @@ static void rx_gap_resync(uint8_t type, uint16_t pos, uint16_t len, uint64_t gap
         savestates_rx_bad_frame();
     dbg_log("uart resync: gap %lums mid-frame (type=%02x pos=%u len=%u)",
             (unsigned long)gap, type, (unsigned)pos, (unsigned)len);
+}
+
+static void rx_stale_resync(uint8_t type, uint16_t pos, uint16_t len,
+                            uint16_t got, uint64_t age) {
+    if (type == 0x0A && pos >= 4)
+        saves_rx_bad_frame();
+    if (type == 0x0F && pos >= 4)
+        savestates_rx_bad_frame();
+    dbg_log("uart resync: stale frame %lums (type=%02x pos=%u len=%u got=%u)",
+            (unsigned long)age, type, (unsigned)pos, (unsigned)len,
+            (unsigned)got);
 }
 
 // Side effects of one payload byte. `idx` is 0 for the first payload byte.
@@ -749,6 +767,7 @@ static void uart1_rx_task(void *pvParameters)
     uint16_t sv_blk = 0;
     bool sv_bad = false;
     uint64_t last_byte = 0;
+    uint64_t frame_start = 0;       // when the open frame's 0xAA was taken
     uint32_t seen_epoch = uart_rx_epoch();
 
     while (1) {
@@ -769,6 +788,7 @@ static void uart1_rx_task(void *pvParameters)
                 pos = 0;
                 got = 0;
                 sv_bad = false;
+                frame_start = 0;
                 uart_rx_ring_discard();
                 continue;
             }
@@ -782,12 +802,26 @@ static void uart1_rx_task(void *pvParameters)
                 pos = 0;
                 got = 0;
                 sv_bad = false;
+                frame_start = 0;
+            }
+            // Trickle at the joy cadence defeats the gap check: a truncated
+            // 515-byte block fed by 46.5 ms joy frames and poll replies
+            // stays "mid-frame" for seconds. No real frame spans 100 ms,
+            // however its bytes are spaced (RX_FRAME_MAX_MS above).
+            if (pos != 0 && frame_start && now - frame_start > RX_FRAME_MAX_MS) {
+                rx_stale_resync(type, pos, len, got, now - frame_start);
+                pos = 0;
+                got = 0;
+                sv_bad = false;
+                frame_start = 0;
             }
             last_byte = now;
 
             if (pos == 0) {
-                if (ch == 0xAA)
+                if (ch == 0xAA) {
                     pos = 1;
+                    frame_start = now;
+                }
             } else if (pos == 1) {
                 len = (uint16_t)ch << 8;
                 pos = 2;
@@ -797,6 +831,7 @@ static void uart1_rx_task(void *pvParameters)
                     dbg_log("uart resync: length %u", (unsigned)len);
                     pos = 0;
                     got = 0;
+                    frame_start = 0;
                 } else {
                     pos = 3;
                 }
@@ -808,6 +843,7 @@ static void uart1_rx_task(void *pvParameters)
                 if (len == 1) {
                     rx_frame_done(type, len, buffer, sv_blk);
                     pos = 0;
+                    frame_start = 0;
                 } else {
                     pos = 4;
                 }
@@ -820,8 +856,13 @@ static void uart1_rx_task(void *pvParameters)
                     pos = 0;
                     got = 0;
                     sv_bad = false;
+                    frame_start = 0;
                 }
             }
+            uart_rx_dbg_type = type;
+            uart_rx_dbg_len = len;
+            uart_rx_dbg_got = got;
+            uart_rx_dbg_start_ms = frame_start;
         }
 
         // The gap check above only runs when a byte arrives. A stream
@@ -838,6 +879,7 @@ static void uart1_rx_task(void *pvParameters)
                 pos = 0;
                 got = 0;
                 sv_bad = false;
+                frame_start = 0;
                 uart_rx_ring_discard();
             } else if (pos != 0) {
                 uint64_t now = bflb_mtimer_get_time_ms();
@@ -846,6 +888,7 @@ static void uart1_rx_task(void *pvParameters)
                     pos = 0;
                     got = 0;
                     sv_bad = false;
+                    frame_start = 0;
                 }
             }
         }

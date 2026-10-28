@@ -26,6 +26,7 @@
 #include "ff.h"
 #include "utils.h"
 #include "overlay.h"
+#include "dbg_log.h"
 
 #include "fpga.hpp"
 #include "host.h"
@@ -54,6 +55,7 @@ std::string g_sdroot;
 std::string g_script;
 std::string g_core = "fake";
 long g_script_pos = 0;
+uint64_t g_log_mark = 0;   // dbg_log position at the last log-mark verb
 bool g_verbose = false;
 
 std::atomic<int> g_current_line{0};
@@ -920,6 +922,39 @@ int run_script() {
                 script_fail(lineno, "usage: drop-id <count>");
             printf("[%d] drop-id %ld (drop next core-ID replies)\n", lineno, n);
             fpga::drop_ids((int)n);
+        } else if (cmd == "log-mark") {
+            // Snapshot the dbg_log write position: expect-no-log and
+            // dump-log only look at lines written after the mark.
+            if (t.size() != 1)
+                script_fail(lineno, "usage: log-mark");
+            g_log_mark = dbg_log_total();
+            printf("[%d] log-mark at %llu\n", lineno,
+                   (unsigned long long)g_log_mark);
+        } else if (cmd == "dump-log") {
+            if (t.size() != 1)
+                script_fail(lineno, "usage: dump-log");
+            printf("[%d] dump-log (since mark %llu)\n", lineno,
+                   (unsigned long long)g_log_mark);
+            uint64_t cur = g_log_mark;
+            std::vector<char> buf(DBG_LOG_SIZE + 1);
+            size_t n = dbg_log_read_since(&cur, buf.data(), DBG_LOG_SIZE);
+            buf[n] = '\0';
+            printf("--- firmware log ---\n%s--- end of firmware log ---\n",
+                   buf.data());
+        } else if (cmd == "expect-no-log") {
+            // expect-no-log "<substr>": the firmware's dbg_log must not
+            // have gained the substring since log-mark (or boot). Checked
+            // at once, when this line runs: put it after the soak window.
+            if (t.size() != 2)
+                script_fail(lineno, "usage: expect-no-log \"<substr>\"");
+            printf("[%d] expect-no-log \"%s\"\n", lineno, t[1].c_str());
+            uint64_t cur = g_log_mark;
+            std::vector<char> buf(DBG_LOG_SIZE + 1);
+            size_t n = dbg_log_read_since(&cur, buf.data(), DBG_LOG_SIZE);
+            buf[n] = '\0';
+            if (strstr(buf.data(), t[1].c_str()))
+                script_fail(lineno,
+                            "firmware log gained forbidden text: " + t[1]);
         } else if (cmd == "inject-rx") {
             std::vector<uint8_t> bytes;
             if (t.size() != 2 || !parse_hex_bytes(t[1], bytes))

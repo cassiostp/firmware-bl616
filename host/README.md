@@ -129,6 +129,11 @@ Script commands (one per line, `#` comments, `"quoted strings"`):
 - `power-cycle` — reboot the sim with the same SD; the script resumes after
   this line.
 - `host-rm <relpath>` — delete a file from the virtual SD mid-run.
+- `log-mark` — snapshot the firmware `dbg_log` write position.
+- `expect-no-log "<substr>"` — fail if the firmware log gained the text
+  since `log-mark` (checked when the line runs; the ring holds 12 KB, so
+  mark again between long soak windows).
+- `dump-log` — print the firmware log since `log-mark`.
 - `echo <text>` — log line.
 
 Every `expect-*` polls (10 s default; `expect-no-*` 2 s; `expect-file` 15 s;
@@ -182,6 +187,9 @@ bitstreams), and runs `host/tests/*.script`:
   game, so one dropped `0x09` frame cannot stick buttons.
 - `u-link-resync` — a core stuck mid-frame in game (silent, `rx-stuck`)
   comes back via the 1 s RX flush, without a restart, menu working.
+- `u-link-stale` / `r-link-stale` — a truncated save-block frame fed by
+  joy-cadence trickle is abandoned by the parser's frame-age cap, well
+  inside the 1 s resync: the menu combo at 300 ms still opens.
 - `v-mode-fresh-silent` — a freshly programmed (still silent) core does not
   restart.
 - `p-save-fail` — a save whose block requests go unanswered is reported in the
