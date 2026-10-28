@@ -1,0 +1,25 @@
+# The 5-minute wall-clock checkpoint must not run on the way back into a
+# running game (tangcore#71). It settled the save there: that dumped it with
+# the game already unpaused, and left background saves disarmed, so a save
+# written after a resume never reached the card until the next menu.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "game.sms"
+press down
+press a
+expect-overlay off
+expect-core smstang
+# Past the checkpoint's 5 minutes, then one game-menu round trip: the main
+# loop runs once on the way back into the game.
+wait 310s
+hold select+start+l 400ms
+expect-screen "Resume"
+press a
+expect-overlay off
+# A save written now must be dumped in the background (1 s debounce).
+poke-save 0x10 0x42
+expect-file saves/sms/game.sav size 32768 5s

@@ -60,7 +60,6 @@ void settings_defaults(Settings &s) {
     s.lcd_grid_strength = 1;
     s.display120 = false;         // 60 Hz (720p) until the user picks 120 Hz
     s.bfi_mode = 1;               // black: every other refresh is black
-    s.pause_in_menu = true;
     s.clock_unix = 0;
     s.clock_hbn = 0;
     s.solar_pct = 50;
@@ -203,7 +202,7 @@ static void apply_setting(Settings &s, const char *key, const char *val) {
         else if (strcasecmp(val, "rolling") == 0 || strcmp(val, "3") == 0)
             s.bfi_mode = 3;
     } else if (strcasecmp(key, "pause_in_menu") == 0) {
-        s.pause_in_menu = strtol(val, NULL, 10) != 0;
+        // Older files: a menu now always pauses the game, so this is ignored.
     } else if (strcasecmp(key, "clock_unix") == 0) {
         s.clock_unix = (uint32_t)strtoul(val, NULL, 10);
     } else if (strcasecmp(key, "clock_hbn") == 0) {
@@ -293,8 +292,6 @@ bool settings_save() {
         "# off, black, dim or rolling (video_config bits 21:20).\n"
         "display=%s\n"
         "bfi=%s\n"
-        "# 0 keeps the game running while a menu is shown over it.\n"
-        "pause_in_menu=%d\n"
         "# Wall clock anchor (Options -> Date & time): unix seconds and the\n"
         "# HBN RTC counter at the last save. solar_pct is Boktai's light 0-100.\n"
         "clock_unix=%lu\n"
@@ -308,7 +305,6 @@ bool settings_save() {
         settings.video_gamma, settings.crt_mask, settings.crt_mask_strength,
         settings.lcd_grid ? 1 : 0, settings.lcd_grid_strength,
         settings.display120 ? "120" : "60", bfi_mode_name(settings.bfi_mode),
-        settings.pause_in_menu ? 1 : 0,
         (unsigned long)settings.clock_unix, (unsigned long)settings.clock_hbn,
         settings.solar_pct);
     if (len <= 0 || len >= SETTINGS_BUF_SIZE)
@@ -329,7 +325,7 @@ static Preview preview;
 
 void apply_core_config() {
     bool pause = core_running &&
-                 (preview == PREVIEW_PAUSED || (settings.pause_in_menu && _overlay_on));
+                 (preview == PREVIEW_PAUSED || _overlay_on);
     bool mute = core_running && preview == PREVIEW_LIVE;
     set_core_config((get_core_config() & 0xffff) |
                     (settings.scanlines ? CORE_CFG_SCANLINES : 0) |

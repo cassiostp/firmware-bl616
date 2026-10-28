@@ -620,7 +620,7 @@ struct OptionsMenu: ScrollMenu {
     }
 
     int item_count() override {
-        return 13;
+        return 12;
     }
 
     std::string item_text(int i) override {
@@ -632,8 +632,7 @@ struct OptionsMenu: ScrollMenu {
         case 3: snprintf(buf, sizeof buf, "Hold to close: %lu s", (unsigned long)(edit.close_hold_ms / 1000)); break;
         case 4: snprintf(buf, sizeof buf, "Diagnostics: %s", edit.diag ? "ON" : "OFF"); break;
         case 5: snprintf(buf, sizeof buf, "Display: %s", edit.display120 ? "120 Hz (480p)" : "60 Hz (720p)"); break;
-        case 6: snprintf(buf, sizeof buf, "Pause in game menu: %s", edit.pause_in_menu ? "ON" : "OFF"); break;
-        case 7: {
+        case 6: {
             DateTime dt;
             clock_now(dt);
             char when[20];
@@ -641,10 +640,10 @@ struct OptionsMenu: ScrollMenu {
             snprintf(buf, sizeof buf, "Date & time: %s", when);
             break;
         }
-        case 8: snprintf(buf, sizeof buf, "Flash mode..."); break;
-        case 9: snprintf(buf, sizeof buf, "USB debug console: %s", usb_console_enabled() ? "ON" : "OFF"); break;
-        case 10: snprintf(buf, sizeof buf, "Save debug log"); break;
-        case 11: snprintf(buf, sizeof buf, "Save"); break;
+        case 7: snprintf(buf, sizeof buf, "Flash mode..."); break;
+        case 8: snprintf(buf, sizeof buf, "USB debug console: %s", usb_console_enabled() ? "ON" : "OFF"); break;
+        case 9: snprintf(buf, sizeof buf, "Save debug log"); break;
+        case 10: snprintf(buf, sizeof buf, "Save"); break;
         default: snprintf(buf, sizeof buf, "<< Back"); break;
         }
         return buf;
@@ -700,19 +699,16 @@ struct OptionsMenu: ScrollMenu {
             message = "Takes effect on next load";
             break;
         case 6:
-            edit.pause_in_menu = !edit.pause_in_menu;
-            break;
-        case 7:
             if (edit_datetime()) {
                 extern int16_t active_core;
                 message = settings_save() ? "Clock set" : "Save failed. Read-only drive?";
                 clock_send_to_core(active_core == 3 ? gba_current_gpio_flags() : 0);
             }
             break;
-        case 8:
+        case 7:
             push_menu(std::unique_ptr<Menu>(new FlashModeMenu()));
             return false;
-        case 9:                     // USB debug console on/off
+        case 8:                     // USB debug console on/off
             if (usb_console_enabled()) {
                 usb_console_set_enabled(false);
                 message = "USB console OFF; host back";
@@ -722,7 +718,7 @@ struct OptionsMenu: ScrollMenu {
                 message = "Needs the SD card (USB drive)";
             }
             break;
-        case 10: {                  // Save debug log
+        case 9: {                  // Save debug log
             if (saves_busy()) {
                 message = "Save in progress, retry";
                 break;
@@ -736,7 +732,7 @@ struct OptionsMenu: ScrollMenu {
             dbg_log("options: save debug log -> %s", message.c_str());
             break;
         }
-        case 11:
+        case 10:
             settings = edit;
             message = settings_save() ? "Saved" : "Save failed. Read-only drive?";
             apply_core_config();    // the running core gets them right away

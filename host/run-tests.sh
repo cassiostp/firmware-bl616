@@ -410,6 +410,11 @@ open(sys.argv[1], 'w').write("clock_unix=%d\nclock_hbn=0\nsolar_pct=50\n" % u)
 EOF
 }
 
+seed_old_pause() {
+    # $1 = dir: a tangcore.cfg from when the game menu's pause was optional.
+    printf 'pause_in_menu=0\n' > "$1/tangcore.cfg"
+}
+
 seed_old_scale() {
     # $1 = dir: a tangcore.cfg as the firmware before Scale moved wrote it.
     printf 'scanline_full=0\nsmoothing=1\n' > "$1/tangcore.cfg"
@@ -448,6 +453,7 @@ run_test() {
             gba-solar) add_gba_rtc "$sd" U3IE EEPROM_V ;;
             cfg-clock) seed_clock "$sd" ;;
             cfg-oldscale) seed_old_scale "$sd" ;;
+            cfg-oldpause) seed_old_pause "$sd" ;;
             md:*) add_md "$sd" "${spec#md:}" ;;
             mdjam:*) add_md_quirk "$sd" "${spec#mdjam:}" 'T-81406 ' ;;
             mdwb:*) add_md_quirk "$sd" "${spec#mdwb:}" 'G-4060  ' ;;
@@ -502,6 +508,7 @@ run_test ss-save-roundtrip nes:test.nes ssbad:test
 run_test a-menu-quiet
 run_test b-hidden-message-mode gba
 run_test c-pause sms:cgame.sms
+run_test c-pause-oldcfg cfg-oldpause sms:cgame.sms
 run_test d-sms-save sms:game.sms
 run_test e-options-persist
 run_test f-md-save md:game.md
@@ -521,6 +528,8 @@ run_test hz120-fallback sms:cgame.sms
 run_test hz120-video sms:cgame.sms hz120
 run_test hz120-video60 sms:cgame.sms
 run_test menu-scroll manysms
+run_test menu-step-noclear
+run_test menu-quick-taps
 run_test p-mode-game-short sms:cgame.sms
 run_test q-mode-menu-short
 run_test u-mode-drop-once sms:cgame.sms
@@ -530,6 +539,7 @@ run_test u-link-poison sms:cgame.sms
 run_test v-mode-fresh-silent sms:cgame.sms
 run_test p-save-fail sms:game.sms
 run_test q-save-status sms:game.sms
+run_test w-checkpoint-ingame sms:game.sms
 run_test q-save-timing sms:game.sms
 run_test t-wedge-main
 run_test t-garbage-pads sms:cgame.sms

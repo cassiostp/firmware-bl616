@@ -507,7 +507,7 @@ int joy_choice(int start_line, int len, int *active, int *wrapped) {
         // no debounce needed here (and it would push that redraw into the
         // next press's snapshot).
         if (!wrapped || !*wrapped)
-            delay(100);     // button debounce
+            pad_wait(100);  // button debounce
     }
     return 0;
 }
@@ -1104,11 +1104,30 @@ struct GameMenu: Menu {
     }
 };
 
+// Checkpoint the wall clock every 5 minutes, so a power cycle loses at most
+// that much time. Only while a menu is up: the game is paused then, and the
+// save is settled first (never inside FatFs at the same time as a save dump).
+// On the way back into a running game the settle would dump its save with the
+// game unpaused (a Super FX or SA-1 save is the coprocessor's work RAM, which
+// is only dumped while paused: tangcore#71), and would leave the background
+// saves disarmed until the next menu.
+static uint32_t last_clock_persist;
+
+static bool clock_checkpoint_due(void) {
+    uint32_t now = bflb_mtimer_get_time_ms();
+    if (now - last_clock_persist < 5u * 60u * 1000u)
+        return false;
+    last_clock_persist = now;
+    return true;
+}
+
 static void show_game_menu(void) {
     dbg_log("game menu open");
     overlay(1);
     suppress_held_buttons();            // the button that opened it isn't a choice
     saves_settle();                     // flush the running game's save before the menu
+    if (clock_checkpoint_due())         // paused and settled: a safe moment
+        settings_save();
     savestates_probe();                 // once per game; ~ms if supported
     menu_clear();
     push_menu(std::unique_ptr<Menu>(new GameMenu()));
@@ -1231,7 +1250,7 @@ static void main_task(void *pvParameters)
 
     controls_reset();
 
-    uint32_t last_clock_persist = (uint32_t)bflb_mtimer_get_time_ms();
+    last_clock_persist = (uint32_t)bflb_mtimer_get_time_ms();
     while (1) {
         bool redraw = true;
         int choice = 0;
@@ -1240,11 +1259,9 @@ static void main_task(void *pvParameters)
         int line_start = 0;
         for (;;) {
             uint32_t now = bflb_mtimer_get_time_ms();
-            // Checkpoint the wall clock every 5 minutes idle in the menu,
-            // so a power cycle loses at most that much time. Settled first:
-            // never inside FatFs at the same time as a save dump.
-            if (now - last_clock_persist >= 5u * 60u * 1000u) {
-                last_clock_persist = now;
+            // This loop also runs on the way back into a game, with the
+            // overlay already off: checkpoint only while a menu is up.
+            if (overlay_on() && clock_checkpoint_due()) {
                 saves_settle();
                 settings_save();
             }

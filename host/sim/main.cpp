@@ -324,6 +324,19 @@ void cmd_hold(uint16_t bits, uint64_t ms) {
     msleep(150);
 }
 
+// Quick taps with no settle around them, as a fast thumb makes: `count`
+// presses `on` long and `off` apart (press and hold settle before and after).
+void cmd_taps(uint16_t bits, long count, uint64_t on, uint64_t off) {
+    for (long i = 0; i < count; i++) {
+        pads_add(bits);
+        msleep(on);
+        pads_remove(bits);
+        if (i + 1 < count)
+            msleep(off);
+    }
+    msleep(300);
+}
+
 // Fault injection: buttons that stay held in the firmware's pad state, as
 // when a release frame is lost on the wire (FPGA pads only report changes).
 // `unstuck` releases them again (the next change frame reaches the firmware).
@@ -521,6 +534,7 @@ int run_script() {
         lines.push_back(buf);
     fclose(f);
 
+    uint64_t clear_mark = 0;            // overlay_clear count at mark-clears
     for (long i = g_script_pos; i < (long)lines.size(); i++) {
         std::string line = lines[(size_t)i];
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
@@ -554,6 +568,16 @@ int run_script() {
                 script_fail(lineno, "usage: hold <buttons> <dur>");
             printf("[%d] hold %s %s\n", lineno, t[1].c_str(), t[2].c_str());
             cmd_hold(bits, ms);
+        } else if (cmd == "taps") {
+            uint16_t bits;
+            long count;
+            uint64_t on, off;
+            if (t.size() != 5 || !parse_btns(t[1], bits) || !parse_num(t[2], count) ||
+                count < 1 || !parse_dur(t[3], on) || !parse_dur(t[4], off))
+                script_fail(lineno, "usage: taps <buttons> <count> <on> <off>");
+            printf("[%d] taps %s %ld %s %s\n", lineno, t[1].c_str(), count,
+                   t[3].c_str(), t[4].c_str());
+            cmd_taps(bits, count, on, off);
         } else if (cmd == "stuck") {
             uint16_t bits;
             if (t.size() != 2 || !parse_btns(t[1], bits))
@@ -604,6 +628,19 @@ int run_script() {
                     script_fail(lineno, "menu blanked itself while idle");
                 msleep(20);
             }
+        } else if (cmd == "mark-clears") {
+            if (t.size() != 1)
+                script_fail(lineno, "usage: mark-clears");
+            printf("[%d] mark-clears\n", lineno);
+            clear_mark = fpga::blank_lines();
+        } else if (cmd == "expect-no-clear-since-mark") {
+            // Unlike expect-no-clear this covers presses: a press returns
+            // only after the screen changed, so a redraw it caused is over.
+            if (t.size() != 1)
+                script_fail(lineno, "usage: expect-no-clear-since-mark");
+            printf("[%d] expect-no-clear-since-mark\n", lineno);
+            if (fpga::blank_lines() != clear_mark)
+                script_fail(lineno, "overlay cleared since mark-clears");
         } else if (cmd == "expect-cursor-row") {
             long row;
             uint64_t to = 10000;

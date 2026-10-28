@@ -1,0 +1,23 @@
+# Quick taps aren't lost to a menu's debounce (firmware-bl616#53): three
+# Down taps, 40 ms long and 40 ms apart, move the cursor three rows. In the
+# main menu (joy_choice) a whole tap used to fall inside the blind 100 ms
+# delay; in Options ("one press, one step") the release and the next press
+# both fell inside it, so the press read as the old one still held.
+expect-screen "TangCore"
+expect-cursor-row 9
+wait 1s
+taps down 3 40ms 40ms
+wait 300ms
+expect-cursor-row 12 200ms
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "--- Options ---"
+expect-cursor-row 9
+wait 1s
+taps down 3 40ms 40ms
+wait 300ms
+expect-cursor-row 12 200ms

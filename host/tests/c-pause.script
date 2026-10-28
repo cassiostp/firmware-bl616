@@ -1,6 +1,5 @@
-# The game menu pauses the game (core_config bit 17) while "Pause in game
-# menu" is on (the default); Resume clears the bit. No save file may appear:
-# nothing wrote the save RAM.
+# The game menu pauses the game (core_config bit 17), always: Resume clears
+# the bit. No save file may appear: nothing wrote the save RAM.
 expect-screen "TangCore"
 press down
 press down

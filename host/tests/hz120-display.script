@@ -24,13 +24,12 @@ press down
 press down
 press down
 press down
-press down
 press a
 expect-screen "Saved"
-# Back sits below the 12-row window: scrolling down to it shows the ^ marker.
+# All 12 items fit the window: Back is one row down, with no ^ marker.
 press down
 expect-screen "<< Back"
-expect-screen "^"
+expect-no-screen "^"
 press a
 expect-screen "TangCore"
 # Wrap: Up on the first main-menu item goes to the last.

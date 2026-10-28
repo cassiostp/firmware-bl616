@@ -1,0 +1,44 @@
+# A step inside a scrolling menu's window only moves the > marker: no
+# overlay_clear, so Options and the save-state menus don't blink on every
+# press.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 16
+press b
+expect-screen "--- Options ---"
+expect-cursor-row 9
+wait 1s
+mark-clears
+press down
+expect-cursor-row 10
+press down
+expect-cursor-row 11
+press up
+expect-cursor-row 10
+expect-no-clear-since-mark
+# Down to the last item and wrapping to the first: all 12 items fit the
+# window, so no step redraws.
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+press down
+expect-cursor-row 20
+press down
+expect-cursor-row 9
+expect-no-clear-since-mark
+press up
+expect-cursor-row 20
+press a
+expect-screen "TangCore"

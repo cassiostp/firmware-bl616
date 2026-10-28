@@ -1,0 +1,20 @@
+# A tangcore.cfg from before the "Pause in game menu" option was removed,
+# with pause_in_menu=0: the game menu still pauses the game (core_config bit
+# 17), and Resume clears the bit. No save file may appear.
+expect-screen "TangCore"
+press down
+press down
+press down
+press down
+press b
+expect-screen "cgame.sms"
+press down
+press a
+expect-overlay off
+expect-no-file saves/sms/cgame.sav
+hold select+start+l 400ms
+expect-screen "Resume"
+expect-config-bit 17 1
+press a
+expect-overlay off
+expect-config-bit 17 0
